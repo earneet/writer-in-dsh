@@ -1,3 +1,6 @@
 [submodule "references/novel-writer"]
 	path = references/novel-writer
 	url = https://github.com/earneet/novel-writer.git
+[submodule "references/deepseek-harness"]
+	path = references/deepseek-harness
+	url = https://github.com/deepseek-ai/deepseek-harness.git
