@@ -1,0 +1,3 @@
+[submodule "references/novel-writer"]
+	path = references/novel-writer
+	url = https://github.com/earneet/novel-writer.git
