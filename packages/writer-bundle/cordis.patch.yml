@@ -7,6 +7,13 @@
       name: dsh-writer-store
       config:
         projectRoot: !!js process.cwd()
+    # 写作引擎：provider/model 是部署相关可调参数，此处给 deepseek 官方路由默认值，
+    # 更高层（profile/home/overlay patch）可按实际模型路由覆盖。
+    - id: writer-engine
+      name: dsh-writer-engine
+      config:
+        provider: deepseek-official
+        model: deepseek-chat
     - id: writer-skills
       name: dsh-writer-skills
     - id: writer-tools

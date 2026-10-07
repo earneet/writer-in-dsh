@@ -5,6 +5,11 @@
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
       config:
         projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project'
+    - id: writer-engine
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-engine/src/index.ts'
+      config:
+        provider: deepseek-official
+        model: deepseek-chat
     - id: writer-skills
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
     - id: writer-tools

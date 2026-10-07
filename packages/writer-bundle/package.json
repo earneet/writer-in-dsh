@@ -10,6 +10,7 @@
     "dsh-writer-domain": "*",
     "dsh-writer-core": "*",
     "dsh-writer-store": "*",
+    "dsh-writer-engine": "*",
     "dsh-writer-skills": "*",
     "dsh-writer-tools": "*"
   },
