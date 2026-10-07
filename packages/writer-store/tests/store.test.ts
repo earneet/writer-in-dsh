@@ -170,3 +170,59 @@ test('N3 回归：store 层拒绝写入 project 配置', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('P2：(kind,id) 串行化——同 hash 并发双写恰一成功（TOCTOU 关闭）', async () => {
+  const { store, root } = await makeStore()
+  try {
+    const saved = await store.save('chapter', '001', { content: '初稿。' })
+    const results = await Promise.allSettled([
+      store.save('chapter', '001', { content: '版本甲。' }, saved.hash),
+      store.save('chapter', '001', { content: '版本乙。' }, saved.hash),
+    ])
+    const ok = results.filter((r) => r.status === 'fulfilled')
+    const rejected = results.filter((r) => r.status === 'rejected')
+    assert.equal(ok.length, 1, '并发同 hash 双写恰一成功')
+    assert.equal(rejected.length, 1)
+    assert.match(String((rejected[0] as PromiseRejectedResult).reason), /乐观锁失败/)
+    const disk = await readFile(join(root, 'chapters/001.md'), 'utf8')
+    assert.ok(disk.includes('版本甲。') || disk.includes('版本乙。'))
+    assert.ok(!(disk.includes('版本甲。') && disk.includes('版本乙。')), '无交错混写')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('P2：串行化链不因前一环失败而阻断后续 save', async () => {
+  const { store, root } = await makeStore()
+  try {
+    const saved = await store.save('chapter', '001', { content: '原文。' })
+    const [, later] = await Promise.allSettled([
+      store.save('chapter', '001', { content: '坏 hash' }, 'stale'),
+      store.save('chapter', '001', { content: '新文。' }, saved.hash),
+    ])
+    assert.equal(later.status, 'fulfilled', '前环失败不阻断排队中的合法 save')
+    const got = await store.get('chapter', '001')
+    assert.equal(got?.content, '新文。\n')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('P2：并发 create（双无 expectHash）恰一成功（"实体已存在"分支）', async () => {
+  const { store, root } = await makeStore()
+  try {
+    const results = await Promise.allSettled([
+      store.save('chapter', '001', { content: '版本甲。' }),
+      store.save('chapter', '001', { content: '版本乙。' }),
+    ])
+    const ok = results.filter((r) => r.status === 'fulfilled')
+    const rejected = results.filter((r) => r.status === 'rejected')
+    assert.equal(ok.length, 1)
+    assert.equal(rejected.length, 1)
+    assert.match(String((rejected[0] as PromiseRejectedResult).reason), /实体已存在/)
+    const got = await store.get('chapter', '001')
+    assert.ok(got?.content === '版本甲。\n' || got?.content === '版本乙。\n')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

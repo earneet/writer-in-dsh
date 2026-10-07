@@ -86,6 +86,24 @@ export default class WriterStoreService extends WriterService {
   }
 
   async save(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
+    // (kind,id) promise 链串行化：同键并发 save 排队执行，关闭读-改-写窗口的 TOCTOU
+    // （上一环失败不阻断后续排队，仅传递落点）
+    const key = `${kind}/${id}`
+    const prev = this.saveChains.get(key) ?? Promise.resolve()
+    const run = prev.then(() => this.saveLocked(kind, id, patch, expectHash), () => this.saveLocked(kind, id, patch, expectHash))
+    const tail = run.then(() => undefined, () => undefined)
+    this.saveChains.set(key, tail)
+    void tail.then(() => {
+      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
+    })
+    return run
+  }
+
+  /** 并发 save 串行化链：key = `${kind}/${id}`；链条空时清理防泄漏。 */
+  private saveChains = new Map<string, Promise<void>>()
+
+  /** 串行化保护下的实际保存（read→校验→原子写→索引→emit 的临界区）。 */
+  private async saveLocked(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
     // project（writer.yaml）是项目配置而非创作实体，store 层即只读（tools/engine 任何路径都不可覆盖）
     if (kind === 'project') throw new Error('project 实体（writer.yaml）为项目配置，只读不可写入')
     assertSafeId(kind, id)
@@ -131,7 +149,22 @@ export default class WriterStoreService extends WriterService {
     return entity
   }
 
-  async rebuildIndex(): Promise<void> {
+  /** 全量重建派生索引（公开入口与内部缺省触发共享同一次 in-flight 重建，防并发互踩）。 */
+  rebuildIndex(): Promise<void> {
+    this.indexPromise ??= this.doRebuildIndex().finally(() => {
+      this.indexPromise = undefined
+    })
+    return this.indexPromise
+  }
+
+  private indexPromise: Promise<void> | undefined
+
+  /** 每次读写前刷新索引（P1 语义：list 恒反映磁盘现状；in-flight 去重共享同一次重建）。 */
+  private ensureIndex(): Promise<void> {
+    return this.rebuildIndex()
+  }
+
+  private async doRebuildIndex(): Promise<void> {
     const next = new Map<EntityKind, Map<string, WriterEntity>>()
     for (const kind of Object.keys(KIND_LAYOUT) as EntityKind[]) {
       next.set(kind, new Map())
@@ -140,16 +173,6 @@ export default class WriterStoreService extends WriterService {
       }
     }
     this.index = next
-  }
-
-  private indexPromise: Promise<void> | undefined
-
-  private async ensureIndex(): Promise<void> {
-    // in-flight 去重：并发 list/get/save 共享同一次重建，防止 save 的索引更新被并发 rebuild 丢弃
-    this.indexPromise ??= this.rebuildIndex().finally(() => {
-      this.indexPromise = undefined
-    })
-    await this.indexPromise
   }
 
   /** 扫描某 kind 的全部实体文件（索引重建的单一实现）。 */
