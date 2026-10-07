@@ -6,7 +6,8 @@
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {
-  ChapterWriteRequest, ChapterWriteResult, EntityKind, Frontmatter, ReviewReport, WriterEntity,
+  ChapterWriteRequest, ChapterWriteResult, ConsistencyReport, EntityKind, Frontmatter,
+  MaintenanceExtraction, ReviewReport, WriterEntity,
 } from 'dsh-writer-domain'
 
 /** 实体写入补丁：frontmatter 与正文均可选，至少提供其一。 */
@@ -19,6 +20,7 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     writer: WriterService
     writerEngine: EngineService
+    writerExport: ExportService
   }
   interface Events {
     /**
@@ -32,6 +34,12 @@ declare module '@deepseek-ai/cordis' {
      * @mode event
      */
     'writer/chapter-written'(result: ChapterWriteResult): void
+    /**
+     * 维护 pass 完成一次章节的派生数据写回后发出（emit；含 up-to-date 跳过）。
+     * @param result - 维护结果（章节 id + 锚定 hash + 状态）。
+     * @mode event
+     */
+    'writer/maintenance-pass'(result: MaintenancePassResult): void
   }
 }
 
@@ -58,6 +66,55 @@ export abstract class WriterService extends Service {
 
   /** 全量重建派生索引（索引是纯缓存，可随时删除重建）。 */
   abstract rebuildIndex(): Promise<void>
+
+  /** 项目根目录的绝对路径（导出/存档点等文件系统消费方使用）。 */
+  abstract get root(): string
+
+  /**
+   * 读取派生数据缓存（.writer/derived/<kind>/<id>.json）；不存在返回 undefined。
+   * @param kind - 派生数据种类（如 "maintenance"）。
+   * @param id - 实体 id（如章节三位序号）。
+   */
+  abstract readDerived(kind: string, id: string): Promise<unknown | undefined>
+
+  /** 写入派生数据缓存（JSON 可序列化值；覆盖写）。 */
+  abstract writeDerived(kind: string, id: string, value: unknown): Promise<void>
+
+  /** 删除派生数据缓存（改稿期标记过期 = 删除，重建走维护 pass）。 */
+  abstract deleteDerived(kind: string, id: string): Promise<void>
+
+  /** 列出某类派生数据的全部 id（统计派生覆盖率用）。 */
+  abstract listDerived(kind: string): Promise<string[]>
+
+  /** 向 pending.md 追加一节待办（维护 pass 产出，供人确认；原子写）。 */
+  abstract appendPending(section: string): Promise<void>
+}
+
+/**
+ * 维护 pass 结果：done = 本次完成两次调用并写回；up-to-date = hash 锚定命中跳过（防读己之写重复触发）。
+ */
+export interface MaintenancePassResult {
+  chapterId: string
+  status: 'done' | 'up-to-date'
+  /** 锚定的章节 content_hash。 */
+  sourceHash: string
+  summary?: string
+  extraction?: MaintenanceExtraction
+  /** 经过按节重试才收敛的节名。 */
+  retriedSections?: string[]
+}
+
+/** 一致性检查范围（章节 id 区间，缺省全书已写章节）。 */
+export interface ConsistencyScope {
+  from?: string
+  to?: string
+}
+
+/** 改稿期重算的单章结果。 */
+export interface RecomputeDerivedResult {
+  chapterId: string
+  /** recomputed = 重算完成；up-to-date = 派生新鲜无需重算；marked = 仅标记（删除过期派生）；no-chapter = 章节不存在。 */
+  status: 'recomputed' | 'up-to-date' | 'marked' | 'no-chapter'
 }
 
 /**
@@ -83,4 +140,57 @@ export abstract class EngineService extends Service {
    * @param signal - 取消信号。
    */
   abstract reviewChapter(chapterId: string, focus?: readonly string[], signal?: AbortSignal): Promise<ReviewReport>
+
+  /**
+   * 维护 pass（保存后异步，默认两次调用）：①章节摘要 ②事实/伏笔/人物状态抽取（分节校验 + 按节重试）。
+   * 同章 inflight 去重；完成 hash 锚定（派生与当前章节一致时返回 up-to-date 不再调用）。
+   * @param chapterId - 三位序号章节 id。
+   * @param opts - force=true 忽略 hash 锚定强制重算；signal 取消。
+   */
+  abstract maintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }): Promise<MaintenancePassResult>
+
+  /**
+   * 一致性检查：全书（plot/outline/key_events/principles vs 已写章节），按预算分批，
+   * 输出结构化矛盾报告（预览不自动持久化）。
+   */
+  abstract consistencyCheck(scope?: ConsistencyScope, signal?: AbortSignal): Promise<ConsistencyReport>
+
+  /**
+   * 改稿期派生重算：对章节区间标记（删除过期派生）或重算（重跑维护 pass）下游派生物。
+   * @param range - 章节 id（"002"）或区间（"001-003"）。
+   * @param opts - mode 默认 recompute；mark 仅删除过期派生不调 LLM。
+   */
+  abstract recomputeDerived(range: string, opts?: { mode?: 'mark' | 'recompute'; signal?: AbortSignal }): Promise<RecomputeDerivedResult[]>
+}
+
+/** 导出请求：格式 + 可选卷过滤/附录 + 输出路径。 */
+export interface ExportRequest {
+  format: 'txt' | 'html' | 'epub'
+  /** 只导出该卷（卷名或卷号字符串；缺省全书）。 */
+  volume?: string
+  includeOutline?: boolean
+  includeCharacters?: boolean
+  /** 相对项目根的输出路径（缺省 exports/book.<format>）。 */
+  outputPath?: string
+}
+
+/** 导出结果：落盘路径 + 章节数 + 字节数。 */
+export interface ExportResult {
+  path: string
+  chapters: number
+  bytes: number
+}
+
+/**
+ * 导出服务抽象基线（TXT/HTML/ePub）。P3 由 `dsh-writer-export`（Consumer，inject writer）实现并发布
+ * `ctx.writerExport`；tools 经 `ctx.get('writerExport')` 可选消费（缺席时 export_book 返回「导出未启用」，
+ * 独立禁用不阻塞核心写作）。
+ */
+export abstract class ExportService extends Service {
+  protected constructor(ctx: Context) {
+    super(ctx, 'writerExport')
+  }
+
+  /** 导出全书（按卷组织，XSS/XML 转义），写入项目内输出文件并返回路径与统计。 */
+  abstract exportBook(request: ExportRequest): Promise<ExportResult>
 }
