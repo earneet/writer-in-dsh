@@ -1,0 +1,19 @@
+{
+  "name": "dsh-writer-export",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "dsh-writer-domain": "*",
+    "dsh-writer-core": "*"
+  },
+  "devDependencies": {
+    "dsh-writer-store": "*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*"
+  }
+}
