@@ -12,6 +12,7 @@
     "dsh-writer-store": "*",
     "dsh-writer-engine": "*",
     "dsh-writer-skills": "*",
+    "dsh-writer-export": "*",
     "dsh-writer-tools": "*"
   },
   "dsh": {

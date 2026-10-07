@@ -12,5 +12,7 @@
         model: deepseek-chat
     - id: writer-skills
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
+    - id: writer-export
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-export/src/index.ts'
     - id: writer-tools
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'
