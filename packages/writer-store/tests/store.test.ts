@@ -150,6 +150,18 @@ test('N1 回归：坏 frontmatter 文件不毒化全局索引', async () => {
   }
 })
 
+test('N1 回归（单文件实体）：坏 principles 不阻塞其他 kind 的 list/save', async () => {
+  const { store, root } = await makeStore()
+  try {
+    await writeFile(join(root, 'principles.md'), '---\n没有冒号的坏行\n---\nx', 'utf8')
+    await store.save('chapter', '001', { content: 'a' })
+    assert.equal((await store.list('chapter')).length, 1, 'save 与 list 未被坏单文件毒化')
+    assert.deepEqual(await store.list('principles'), [], '坏单文件实体返回空清单')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('N3 回归：store 层拒绝写入 project 配置', async () => {
   const { store, root } = await makeStore()
   try {

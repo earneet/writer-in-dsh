@@ -157,8 +157,14 @@ export default class WriterStoreService extends WriterService {
     const layout = KIND_LAYOUT[kind]
     if ('file' in layout) {
       const abs = join(this.projectRoot, layout.file)
-      const entity = await this.readRaw(kind, layout.file, abs)
-      return entity === undefined ? [] : [entity]
+      // 单文件实体坏 frontmatter 同样不毒化全局索引（与目录分支同款隔离）
+      try {
+        const entity = await this.readRaw(kind, layout.file, abs)
+        return entity === undefined ? [] : [entity]
+      } catch (err) {
+        this.warnSkipped(layout.file, err)
+        return []
+      }
     }
     const dirAbs = join(this.projectRoot, layout.dir)
     let names: string[]
