@@ -6,7 +6,8 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"`n    "test": "node --test packages/*/tests/*.test.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test packages/*/tests/*.test.ts"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
