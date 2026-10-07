@@ -62,7 +62,7 @@ export function renderTxt(book: ExportBook): string {
   }
   if (book.outlineAppendix !== undefined) parts.push('# 附录：大纲', '', book.outlineAppendix.trimEnd(), '')
   if (book.charactersAppendix !== undefined) parts.push('# 附录：人物小传', '', book.charactersAppendix.trimEnd(), '')
-  return `${parts.filter((p) => p !== undefined).join('\n').replace(/\n{3,}/g, '\n\n')}\n`
+  return `${parts.join('\n').replace(/\n{3,}/g, '\n\n')}\n`
 }
 
 /** 打印友好的内嵌 CSS（HTML→浏览器打印→PDF 路径）。 */
@@ -124,7 +124,7 @@ export function renderChapterXhtml(chapter: ExportChapter): string {
   ].join('\n')
 }
 
-/** 卷首 XHTML（navmap 里卷作 part，正文文件跳过卷首文档，减少碎片）。 */
+/** 卷首 XHTML（进 manifest 与 spine，作为该卷的分节标题页；NCX 目录同序引用）。 */
 export function renderVolumeXhtml(volume: ExportVolume): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -184,30 +184,25 @@ export function renderContentOpf(book: ExportBook, items: readonly EpubManifestI
   ].join('\n')
 }
 
-/** toc.ncx 渲染（EPUB2 目录；卷为 part 级 navPoint，章节为顶层 navPoint——扁平目录对阅读器兼容最好）。 */
-export function renderTocNcx(book: ExportBook, volumeHrefs: readonly { name: string; href: string }[], chapterHrefs: readonly { label: string; href: string }[], uuid: string): string {
-  let playOrder = 1
-  const navPoints: string[] = []
-  for (const volume of volumeHrefs) {
-    const order = playOrder++
-    navPoints.push(`    <navPoint id="vol${order}" playOrder="${order}"><navLabel><text>${escapeHtml(volume.name)}</text></navLabel><content src="${escapeXmlAttr(volume.href)}"/></navPoint>`)
-  }
-  const chapterPoints = chapterHrefs.map((c) => {
-    const order = playOrder++
-    return `    <navPoint id="chap${order}" playOrder="${order}"><navLabel><text>${escapeHtml(c.label)}</text></navLabel><content src="${escapeXmlAttr(c.href)}"/></navPoint>`
+/** toc.ncx 渲染（EPUB2 目录）。navPoint 顺序 = spine 顺序（卷首与所属章节交错，阅读器「下一项」不跳卷）；
+ * content src 相对 NCX 文件自身（NCX 在 OEBPS/ 内，故用不带目录前缀的文件名）。 */
+export function renderTocNcx(book: ExportBook, tocItems: readonly { label: string; href: string }[], uuid: string): string {
+  const navPoints = tocItems.map((item, i) => {
+    const order = i + 1
+    return `    <navPoint id="nav${order}" playOrder="${order}"><navLabel><text>${escapeHtml(item.label)}</text></navLabel><content src="${escapeXmlAttr(item.href)}"/></navPoint>`
   })
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">',
     '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">',
     '  <head>',
-    `    <meta name="dtb:uid">${escapeHtml(uuid)}</meta>`,
-    '    <meta name="dtb:depth">1</meta>',
+    // NCX 2005-1 DTD：meta 为空元素，值在 content 属性
+    `    <meta name="dtb:uid" content="${escapeXmlAttr(uuid)}"/>`,
+    '    <meta name="dtb:depth" content="1"/>',
     '  </head>',
     `  <docTitle><text>${escapeHtml(book.title)}</text></docTitle>`,
     '  <navMap>',
     ...navPoints,
-    ...chapterPoints,
     '  </navMap>',
     '</ncx>',
     '',

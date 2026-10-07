@@ -34,7 +34,15 @@ export interface ZipEntry {
  * @returns 完整 zip 文件的字节。
  */
 export function buildZip(entries: readonly ZipEntry[]): Uint8Array {
+  // stored-only 格式字段是 32 位（大小/偏移）与 16 位（条目数）：超限响亮失败而非静默截断（小说规模远不触发，守门断言）
+  if (entries.length > 0xffff) throw new Error(`zip 条目数超限：${entries.length} > 65535`)
   const encoder = new TextEncoder()
+  const estimatedTotal = entries.reduce((sum, e) => {
+    const size = typeof e.data === 'string' ? encoder.encode(e.data).length : e.data.byteLength
+    if (size > 0xffffffff) throw new Error(`zip 单条目过大：${e.name}（${size} 字节 > 4GB，stored-only 格式不支持）`)
+    return sum + size + 76 + encoder.encode(e.name).length
+  }, 0)
+  if (estimatedTotal > 0xffffffff) throw new Error(`zip 总大小超限（约 ${estimatedTotal} 字节 > 4GB，stored-only 格式不支持）`)
   const locals: Uint8Array[] = []
   const centrals: Uint8Array[] = []
   let offset = 0
@@ -83,12 +91,13 @@ export function buildZip(entries: readonly ZipEntry[]): Uint8Array {
     offset += local.length + data.length
   }
   const centralBytes = centrals.map((c) => [...c])
+  const centralSize = centralBytes.reduce((sum, c) => sum + c.length, 0)
   const end = new Uint8Array(22)
   const ev = new DataView(end.buffer)
   ev.setUint32(0, 0x06054b50, true)
   ev.setUint16(8, entries.length, true)
   ev.setUint16(10, entries.length, true)
-  ev.setUint32(12, offset > 0 ? centralBytes.reduce((sum, c) => sum + c.length, 0) : 0, true)
+  ev.setUint32(12, centralSize, true)
   ev.setUint32(16, offset, true)
   const parts: number[][] = [...locals.map((l) => [...l]), ...centralBytes, [...end]]
   const total = parts.reduce((sum, p) => sum + p.length, 0)

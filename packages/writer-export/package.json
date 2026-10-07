@@ -10,6 +10,8 @@
     "dsh-writer-core": "*"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*",
     "dsh-writer-store": "*"
   },
   "peerDependencies": {

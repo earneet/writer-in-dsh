@@ -7,8 +7,8 @@
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
-import { dirname, join, relative, sep } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { ExportService, type ExportRequest, type ExportResult } from 'dsh-writer-core'
 import type { WriterEntity } from 'dsh-writer-domain'
 import {
@@ -95,7 +95,12 @@ export default class WriterExportServiceImpl extends ExportService {
     }
 
     const relPath = request.outputPath ?? join(this.defaultOutputDir, `book.${request.format}`)
+    // 输出路径限制在项目根内：绝对路径或 ../ 逃逸拒绝（虽有 ask 门禁，纵深防御）
     const absPath = join(this.ctx.writer.root, relPath)
+    const relCheck = relative(this.ctx.writer.root, absPath)
+    if (isAbsolute(relPath) || relCheck.startsWith('..') || isAbsolute(relCheck)) {
+      throw new Error(`输出路径必须在项目根内（相对路径，不得含 ../ 或为绝对路径）：${JSON.stringify(relPath)}`)
+    }
     await mkdir(dirname(absPath), { recursive: true })
     let bytes: number
     if (request.format === 'epub') {
@@ -114,46 +119,52 @@ export default class WriterExportServiceImpl extends ExportService {
 
 /** 组装 EPUB zip 字节：mimetype 首个且不压缩（OPF/OCF 规范要求）。 */
 function buildEpub(book: ExportBook): Uint8Array {
-  const uuid = `urn:uuid:${createHash('sha256').update(book.title).digest('hex').slice(0, 8)}-writer-in-dsh`
+  // dc:identifier 用真 UUID（书名派生会随改名漂移且同题冲突）
+  const uuid = `urn:uuid:${randomUUID()}`
   const items: EpubManifestItem[] = []
   const spine: string[] = []
-  const volumeHrefs: { name: string; href: string }[] = []
-  const chapterHrefs: { label: string; href: string }[] = []
+  // tocItems 顺序 = spine 顺序（卷首与所属章节交错）；href 相对 NCX 自身（同在 OEBPS/ 内，不带前缀）
+  const tocItems: { label: string; href: string }[] = []
   const files: { name: string; data: string }[] = []
   let chapterIdx = 0
   for (const volume of book.volumes) {
-    const volId = `vol${volumeHrefs.length + 1}`
-    const volHref = `OEBPS/${volId}.xhtml`
-    volumeHrefs.push({ name: volume.name, href: volHref })
+    const volId = `vol${volumeHrefCount(tocItems) + 1}`
     items.push({ id: volId, href: `${volId}.xhtml`, mediaType: 'application/xhtml+xml' })
     spine.push(volId)
-    files.push({ name: volHref, data: renderVolumeXhtml(volume) })
+    tocItems.push({ label: volume.name, href: `${volId}.xhtml` })
+    files.push({ name: `OEBPS/${volId}.xhtml`, data: renderVolumeXhtml(volume) })
     for (const chapter of volume.chapters) {
       chapterIdx++
       const chapId = `chap${String(chapterIdx).padStart(3, '0')}`
-      const chapHref = `OEBPS/${chapId}.xhtml`
-      chapterHrefs.push({ label: chapterLabel(chapter), href: chapHref })
       items.push({ id: chapId, href: `${chapId}.xhtml`, mediaType: 'application/xhtml+xml' })
       spine.push(chapId)
-      files.push({ name: chapHref, data: renderChapterXhtml(chapter) })
+      tocItems.push({ label: chapterLabel(chapter), href: `${chapId}.xhtml` })
+      files.push({ name: `OEBPS/${chapId}.xhtml`, data: renderChapterXhtml(chapter) })
     }
   }
   if (book.outlineAppendix !== undefined) {
     items.push({ id: 'appendix-outline', href: 'appendix-outline.xhtml', mediaType: 'application/xhtml+xml' })
     spine.push('appendix-outline')
+    tocItems.push({ label: '附录：大纲', href: 'appendix-outline.xhtml' })
     files.push({ name: 'OEBPS/appendix-outline.xhtml', data: renderPlainXhtml('附录：大纲', book.outlineAppendix) })
   }
   if (book.charactersAppendix !== undefined) {
     items.push({ id: 'appendix-characters', href: 'appendix-characters.xhtml', mediaType: 'application/xhtml+xml' })
     spine.push('appendix-characters')
+    tocItems.push({ label: '附录：人物小传', href: 'appendix-characters.xhtml' })
     files.push({ name: 'OEBPS/appendix-characters.xhtml', data: renderPlainXhtml('附录：人物小传', book.charactersAppendix) })
   }
   items.push({ id: 'ncx', href: 'toc.ncx', mediaType: 'application/x-dtbncx+xml' })
-  files.push({ name: 'OEBPS/toc.ncx', data: renderTocNcx(book, volumeHrefs, chapterHrefs, uuid) })
+  files.push({ name: 'OEBPS/toc.ncx', data: renderTocNcx(book, tocItems, uuid) })
   files.push({ name: 'OEBPS/content.opf', data: renderContentOpf(book, items, spine, uuid) })
   files.push({ name: 'META-INF/container.xml', data: renderContainerXml('OEBPS/content.opf') })
   // mimetype 必须首个且不压缩（stored-only 构建器天然满足）
   return buildZip([{ name: 'mimetype', data: 'application/epub+zip' }, ...files])
+}
+
+/** 卷 id 计数辅助（卷首文档已入 tocItems 的数量即当前卷序号）。 */
+function volumeHrefCount(tocItems: readonly { href: string }[]): number {
+  return tocItems.filter((t) => t.href.startsWith('vol')).length
 }
 
 /** 附录类 XHTML（预格式文本）。 */
