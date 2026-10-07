@@ -1,7 +1,9 @@
 ---
-status: planned
+hint: "绿焰与地底之物的关联"
+milestones: "[{\"type\":\"partial_reveal\",\"chapter\":\"002\",\"note\":\"旧档载丙寅霜月第七号灯焰色转绿，与封砌完工同期\"}]"
 planned_chapter: "002"
-hint: 绿焰与地底之物的关联
+planted_chapter: "002"
+status: "planted"
 ---
 
 # 伏笔：绿焰的本质
