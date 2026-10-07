@@ -26,6 +26,9 @@ test('bundled provider 经真实 SkillRegistry 列出并加载 writer-onboarding
   assert.equal(onboarding.invocation.modelInvocable, true)
   assert.equal(onboarding.invocation.userInvocable, true)
   assert.ok(onboarding.description.length > 0 && onboarding.description.length <= 500)
+  // P2 新增技能（chapter-writing / foreshadow-guide）一并注册可见
+  assert.ok(list.some((skill) => skill.name === 'chapter-writing'), '目录中可见 chapter-writing')
+  assert.ok(list.some((skill) => skill.name === 'foreshadow-guide'), '目录中可见 foreshadow-guide')
   const definition = await ctx.skills.get('writer-onboarding')
   assert.ok(definition, '可加载技能体')
   assert.ok(definition!.content.includes('read-before-update'), '正文含写作纪律')
@@ -41,6 +44,9 @@ test('资产目录束自洽：frontmatter name 与目录名一致且为 kebab-ca
     assert.ok(body.startsWith('---\n'), `${dir.name}/SKILL.md 有 frontmatter`)
     assert.ok(body.includes(`name: ${dir.name}\n`), `${dir.name}/SKILL.md frontmatter name 与目录名一致`)
     assert.ok(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(dir.name), `${dir.name} 为 kebab-case`)
+    // description 非空且 ≤500 对全部资产生效（与 onboarding 断言同约束）
+    const desc = body.match(/^description:\s*(.+)$/m)?.[1] ?? ''
+    assert.ok(desc.trim().length > 0 && desc.length <= 500, `${dir.name}/SKILL.md description 非空且 ≤500`)
   }
 })
 
