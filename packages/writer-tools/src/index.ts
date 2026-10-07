@@ -8,6 +8,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { ENTITY_KINDS, type EntityKind, type Frontmatter } from 'dsh-writer-domain'
+// 引入 dsh-writer-core 的模块副作用类型（ctx.writer 的 declaration merging 单包编译也可见）
+import type {} from 'dsh-writer-core'
 
 export const name = 'writer-tools'
 export const inject = ['tools', 'writer']
@@ -45,7 +47,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'writer_update',
-    description: '写入小说项目实体（创建或修改，Markdown 落盘）。必须先 writer_read 获取当前 hash 并填入 expectHash（read-before-update 防护；创建新实体时 expectHash 填 "new"）。',
+    description: '写入小说项目实体（创建或修改，Markdown 原子落盘）。创建新实体时 expectHash 填 "new"；修改已存在实体必须先 writer_read 取回完整 hash 并填入 expectHash（read-before-update 乐观锁；hash 不符或误用 "new" 都会被拒绝）。',
     parameters: {
       entity: { type: 'string', required: true, description: `实体种类：${ENTITY_KINDS.join(' / ')}` },
       id: { type: 'string', required: true, description: '实体 id' },
@@ -59,6 +61,7 @@ export function apply(ctx: Context): void {
     },
     async execute(args) {
       const kind = assertKind(args.entity)
+      if (kind === 'project') return 'project 实体（writer.yaml）为项目配置，只可 read 不可 update。'
       if (args.content === undefined && args.frontmatter === undefined) {
         throw new Error('content 与 frontmatter 至少提供其一')
       }
@@ -84,7 +87,7 @@ function assertKind(raw: string): EntityKind {
   throw new Error(`未知实体种类：${raw}（可选：${ENTITY_KINDS.join(' / ')}）`)
 }
 
-/** 模型提供的 frontmatter 值收敛到域库标量值域（丢弃数组/对象/null 并提示）。 */
+/** 模型提供的 frontmatter 值收敛到域库标量值域（数组/对象/null 以 JSON 文本保留，可无损回读）。 */
 function sanitizeFrontmatter(raw: Record<string, unknown> | undefined): Frontmatter | undefined {
   if (raw === undefined) return undefined
   const out: Frontmatter = {}

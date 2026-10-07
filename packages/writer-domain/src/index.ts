@@ -16,9 +16,10 @@ export type EntityKind =
   | 'event'
   | 'idea'
   | 'style'
+  | 'worldbuilding'
 
 export const ENTITY_KINDS: readonly EntityKind[] = [
-  'project', 'principles', 'outline', 'chapter', 'character', 'plot', 'event', 'idea', 'style',
+  'project', 'principles', 'outline', 'chapter', 'character', 'plot', 'event', 'idea', 'style', 'worldbuilding',
 ]
 
 /** frontmatter 值域：flat 标量 + JSON 内联（数组/对象经 JSON.parse）。 */
@@ -45,11 +46,13 @@ export interface WriterEntity {
  * 无 frontmatter 块时返回空对象与全文。
  */
 export function parseFrontmatter(raw: string): { frontmatter: Frontmatter; content: string } {
-  if (!raw.startsWith('---\n')) return { frontmatter: {}, content: raw }
-  const end = raw.indexOf('\n---\n', 4)
-  if (end < 0) return { frontmatter: {}, content: raw }
-  const block = raw.slice(4, end)
-  const content = raw.slice(end + 5)
+  // CRLF 归一：外部编辑器（Windows）保存的文件统一按 \n 语义解析
+  const text = raw.startsWith('\uFEFF') ? raw.slice(1).replaceAll('\r\n', '\n') : raw.replaceAll('\r\n', '\n')
+  if (!text.startsWith('---\n')) return { frontmatter: {}, content: text }
+  const end = text.indexOf('\n---\n', 4)
+  if (end < 0) return { frontmatter: {}, content: text }
+  const block = text.slice(4, end)
+  const content = text.slice(end + 5)
   const frontmatter: Frontmatter = {}
   for (const line of block.split('\n')) {
     const trimmed = line.trim()
@@ -64,9 +67,17 @@ export function parseFrontmatter(raw: string): { frontmatter: Frontmatter; conte
 }
 
 function parseValue(valueRaw: string): FrontmatterValue {
+  // 引号包裹优先（我们序列化的字符串值恒为 JSON 引号形式，杜绝 "true"/"5" 被字面量推断）
+  if (valueRaw.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(valueRaw)
+      if (typeof parsed === 'string') return parsed
+    } catch { /* 落回字面量推断 */ }
+  }
   if (valueRaw === 'true') return true
   if (valueRaw === 'false') return false
-  if (valueRaw !== '' && !Number.isNaN(Number(valueRaw))) return Number(valueRaw)
+  // 纯十进制数字才转 number（排除 0x/1e3/1_000 等宽推断）
+  if (/^-?\d+(\.\d+)?$/.test(valueRaw)) return Number(valueRaw)
   if (valueRaw.startsWith('{') || valueRaw.startsWith('[')) return valueRaw // JSON 内联保留原文（域库不做深解析）
   return stripQuotes(valueRaw)
 }
@@ -87,7 +98,8 @@ export function serializeEntity(frontmatter: Frontmatter, content: string): stri
 }
 
 function formatValue(value: FrontmatterValue): string {
-  if (typeof value === 'string') return value
+  // 字符串值恒以 JSON 引号形式落盘：杜绝 "true"/"5" 字面量漂移、转义 \n 与特殊字符（配合 parseValue 引号优先）
+  if (typeof value === 'string') return JSON.stringify(value)
   return String(value)
 }
 

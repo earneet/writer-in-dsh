@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "dsh-writer-domain": "*"
+    "dsh-writer-domain": "*",
+    "dsh-writer-core": "*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
