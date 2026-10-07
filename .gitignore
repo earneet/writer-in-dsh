@@ -1,3 +1,5 @@
 node_modules/
 .writer/index/
 *.log
+.pnpm-probe/
+.pnpm-probe2/

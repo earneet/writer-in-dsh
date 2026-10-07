@@ -5,5 +5,7 @@
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
       config:
         projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project'
+    - id: writer-skills
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
     - id: writer-tools
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'
