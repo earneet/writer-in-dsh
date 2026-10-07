@@ -28,6 +28,7 @@ packages/
 - 实体类型：Project / Principles / OutlineNode（含 volume 卷级）/ Chapter（含 storyline/POV、故事内时间锚）/ Character（含关系邻接、状态时间线条目）/ PlotPoint（伏笔状态机）/ KeyEvent（含 stale）/ Idea / StyleRef / WritingStat。
 - frontmatter 解析与序列化（gray-matter 语义自实现，避免依赖）；content_hash 规范化（正文 + frontmatter 稳定序列化）。
 - 伏笔状态机 `planned→planted→resolved/abandoned` + milestones 纯转换函数（非法迁移抛错）。
+- **领域公理（显式约束函数）**：①「未写章节大纲自由调整 / 已写章节情节变更须一致性检查」二分（`assertOutlineEditable(chapter)`：已写章节的大纲变更必须携带 consistency 标记）；② ideas→plot_points→outline **单向流**（plot 可溯源 idea，反向仅经「整理」入口，禁止 outline 直接改写 ideas 原文）。
 - rewrite 补丁协议：`{find,replace}` 锚点匹配（空白归一、唯一命中才替换）、丢句守卫（原句保留率检测）、补丁不命中降级。
 - 上下文组装器（纯函数）：输入实体集 + 模型窗口预算 → 预注入清单（principles 全量、本章大纲永不截断、窗口化大纲降级序、前文按线感知注入、防剧透过滤、人物精简摘要、伏笔指令、事件注入）。预算是**参数**而非常量（R-改进：32K 时代精打细算层不复制，大窗口直接注原文）。
 - 维护 pass 的分节 JSON schema 定义 + 抽取引用存在性校验函数（章节/人物/伏笔 id 必须存在于实体集，否则拒收该节——R-改进：堵原项目「引用脏值致入库失败」复发病）。
@@ -57,7 +58,7 @@ packages/
 default-export `WriterEngineService` 发布 `ctx.writerEngine`（写作/审稿/一致性/维护 pass 的领域 LLM 编排；全部 LLM 经宿主 `ctx.llm` 缝调用——R-改进：插件内直连 SDK 会使 watchdog/abort 论证失效）：
 
 - **write_chapter 三模式**：full（整章 + 工具白名单上下文）/ assist（轻上下文续写）/ rewrite（补丁协议优先、大改回退全文）。manual 无需引擎（直接 store 保存）。**节拍模式不做**（R-改进：降为可选后置，首版不实现）。
-- **维护 pass（保存后异步）**：**默认两次调用**——①章节摘要（流畅文本）②事实/伏笔/人物状态抽取（分节 JSON schema + 引用存在性校验 + 按节重试）；产出写回派生数据 + Markdown 待办清单（`pending.md`）供人确认（R-改进：不复制六维抽取管道与 settle/水位/幂等全套加固；抽取节做存在性校验根治引用脏值）。
+- **维护 pass（保存后异步）**：**默认两次调用**——①章节摘要（流畅文本）②事实/伏笔/人物状态抽取（分节 JSON schema + 引用存在性校验 + 按节重试）；产出写回派生数据 + Markdown 待办清单（`pending.md`）供人确认（R-改进：不复制六维抽取管道与水位/幂等键体系；**保留轻量收敛语义**——同章 inflight 去重 + 完成 hash 锚定，防重复触发读己之写）。
 - **一致性检查**：全书（plot/outline/key_events/principles vs 已写章节）+ 世界观条目间/条目 vs 章节；输出结构化矛盾报告（预览不自动持久化）。**改进原项目已知缺陷**：原实现 12 章/8000 字截断且维度与契约不符（w10 审计）——改为按预算分批检查、维度与 schema 对齐。
 - **改稿期一致性（新增，最高优先领域缺口）**：`recomputeDerived(chapterId | range)` 标记/重算下游派生物（摘要、人物状态时间线、伏笔 milestone、事件描述）；与原 impact-analysis 语义合并。
 - 人物状态时间线维护（新增 #4 缺口）；断更恢复快照（从章节/事件派生项目快照 Markdown，时距取 git log 时间）。
@@ -79,7 +80,7 @@ default-export `WriterEngineService` 发布 `ctx.writerEngine`（写作/审稿/�
 | `export_book(format, options)` | 委托 writer-export |
 
 权限：allow/ask 经 `tools/pre-execute` 类型化决策 + `ctx.tools.guard()`（`writer_update` destructive action、`export_book` 默认 ask；R-改进：不建 PermissionManager，落点在 pre-execute 决策层而非 policy 旋钮）。
-`inject: ['writer', 'writerEngine', 'tools']`（write_chapter/review/consistency/recompute 委托 engine；export 委托 writer-export）。
+`inject: ['writer', 'tools']`（write_chapter/review/consistency/recompute 委托 engine；export 委托 writer-export）。**engine 为可选依赖**：经 `ctx.get('writerEngine')` 获取（dsh 惯例：可选服务用 `ctx.get` 而非 inject 属性代理），缺席时写作类工具正常注册但执行返回「引擎未启用」——保证 P1 仅装 core+store+tools 即可跑通读写闭环（第 1 轮对抗审查修正的注入断链）。
 
 ### 1.6 `writer-skills`（bundled skills + 注册插件）
 
@@ -106,7 +107,7 @@ TXT / HTML（打印 PDF）/ ePub 导出；按卷组织、可选含人物小传/�
 | `@deepseek-ai/cordis` | peer + dev（全部插件包） | 所有包（Context/Service/事件） |
 | `@deepseek-ai/dsh-tools` | peer + dev | writer-tools（defineTool） |
 | `dsh-writer-domain` | workspace 依赖（普通库） | core/store/engine/tools/export |
-| `dsh-writer-core` | workspace 依赖 | store/engine/tools/export（注入 `ctx.writer`） |
+| `dsh-writer-core` | workspace 依赖 | store/engine/tools/export（engine/tools 对 `ctx.writer` 为必选注入；tools 对 `ctx.writerEngine` 为可选 `ctx.get`） |
 | gray-matter 语义 | **不引入**，frontmatter 解析在 domain 自实现 | —（避免外部解析器依赖，掌控规范化） |
 | 宿主 `ctx.llm` / `ctx.tools` / skills 机制 / approval | 运行时注入，非包依赖 | engine/tools |
 
@@ -146,4 +147,4 @@ TXT / HTML（打印 PDF）/ ePub 导出；按卷组织、可选含人物小传/�
 ## 8. 迭代记录
 
 - 轮次 0（完成）：初稿（本文档）。
-- 轮次 1（进行中）：自我复审修正 3 处（core 改为抽象基类 + 事件声明、store 为服务实现发布方、engine 发布 `ctx.writerEngine` 并明确对外接口）；对抗审查进行中。
+- 轮次 1（完成）：自我复审修正 3 处（core 改为抽象基类 + 事件声明、store 为服务实现发布方、engine 发布 `ctx.writerEngine` 并明确对外接口）；宿主先例预检（抽象基类 17 例、pre-execute ask 机制、llm 直连路径）。对抗审查（初版委派超时中断后收窄重发）返回 3 组发现，逐条二次确认全部成立并修订：① P1 注入断链——tools 的 engine 改可选 `ctx.get`；② §6.1-14 settle 收敛语义恢复为轻量版（inflight 去重 + hash 锚定）；③ §6.1-7 二分公理与 §6.1-11 单向流补显式领域约束函数。审查同时确认：§6.1/§6.4 无遗漏、§6.3 无偷建、依赖图无环、P1-P3 验收可检验。**裁定：修订后可用（已修订），规划定稿。**
