@@ -8,7 +8,7 @@
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join, dirname, posix } from 'node:path'
+import { join, dirname, posix, relative, sep } from 'node:path'
 import {
   contentHash, parseFrontmatter, serializeEntity,
   type EntityKind, type Frontmatter, type WriterEntity,
@@ -42,6 +42,11 @@ const KIND_LAYOUT: Readonly<Record<EntityKind, { dir: string } | { file: string 
 const FILE_KINDS = new Set<EntityKind>(['project', 'principles', 'outline', 'event', 'idea'])
 /** Windows 保留设备名（大小写不敏感），作实体 id 会引发诡异文件系统行为。 */
 const WINDOWS_RESERVED = new Set(['con', 'prn', 'aux', 'nul', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9'])
+
+/** 绝对路径 → 项目根相对的 POSIX 展示路径（错误消息用）。 */
+function relativePathOf(root: string, absPath: string): string {
+  return relative(root, absPath).split(sep).join('/')
+}
 
 /**
  * 实体 id 安全校验：拒绝路径分隔符、`..`、Windows 非法字符与保留名（防 path traversal）。
@@ -155,6 +160,85 @@ export default class WriterStoreService extends WriterService {
       this.indexPromise = undefined
     })
     return this.indexPromise
+  }
+
+  get root(): string {
+    return this.projectRoot
+  }
+
+  async readDerived(kind: string, id: string): Promise<unknown | undefined> {
+    const abs = this.derivedPath(kind, id)
+    let raw: string
+    try {
+      raw = await readFile(abs, 'utf8')
+    } catch {
+      return undefined
+    }
+    try {
+      return JSON.parse(raw) as unknown
+    } catch (err) {
+      // 派生缓存是纯缓存：坏文件按缺失处理（删除后维护 pass 重建），不阻塞读取方
+      this.warnSkipped(relativePathOf(this.projectRoot, abs), err)
+      return undefined
+    }
+  }
+
+  async writeDerived(kind: string, id: string, value: unknown): Promise<void> {
+    const abs = this.derivedPath(kind, id)
+    await mkdir(dirname(abs), { recursive: true })
+    const tmpPath = `${abs}.tmp`
+    await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf8')
+    try {
+      await rename(tmpPath, abs)
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      throw new Error(`派生数据落盘失败：${relativePathOf(this.projectRoot, abs)}：${String(err)}`)
+    }
+  }
+
+  async deleteDerived(kind: string, id: string): Promise<void> {
+    await rm(this.derivedPath(kind, id), { force: true })
+  }
+
+  async listDerived(kind: string): Promise<string[]> {
+    const dirAbs = join(this.projectRoot, '.writer', 'derived', kind)
+    let names: string[]
+    try {
+      names = await readdir(dirAbs)
+    } catch {
+      return []
+    }
+    return names.filter((n) => n.endsWith('.json')).map((n) => n.replace(/\.json$/, '')).sort()
+  }
+
+  async appendPending(section: string): Promise<void> {
+    const abs = join(this.projectRoot, 'pending.md')
+    let existing = ''
+    try {
+      existing = await readFile(abs, 'utf8')
+    } catch {
+      // 首次创建
+    }
+    const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
+    const tmpPath = `${abs}.tmp`
+    await writeFile(tmpPath, next, 'utf8')
+    try {
+      await rename(tmpPath, abs)
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      throw new Error(`pending.md 追加失败：${String(err)}`)
+    }
+  }
+
+  /** 派生数据路径：.writer/derived/<kind>/<id>.json（kind/id 做路径安全校验）。 */
+  private derivedPath(kind: string, id: string): string {
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind)) {
+      throw new Error(`派生数据 kind 非法：${JSON.stringify(kind)}（小写字母开头，仅小写字母/数字/下划线/连字符）`)
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(id) || WINDOWS_RESERVED.has(id.toLowerCase())) {
+      throw new Error(`派生数据 id 非法：${JSON.stringify(id)}`)
+    }
+    return join(this.projectRoot, '.writer', 'derived', kind, `${id}.json`)
   }
 
   private indexPromise: Promise<void> | undefined
