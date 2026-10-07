@@ -6,19 +6,30 @@
  * @module dsh-writer-tools
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool, type PreToolDecision, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
   ENTITY_KINDS, parseMilestones, transitionForeshadow,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
-import { EngineService } from 'dsh-writer-core'
+import { EngineService, ExportService } from 'dsh-writer-core'
 // 引入 dsh-writer-core 的模块副作用类型（ctx.writer 的 declaration merging 单包编译也可见）
 import type {} from 'dsh-writer-core'
+
+const execFileAsync = promisify(execFile)
 
 export const name = 'writer-tools'
 export const inject = ['tools', 'writer']
 
 export function apply(ctx: Context): void {
+  // export_book 默认走 ask 权限路径（R-改进：落点在 pre-execute 决策层而非 policy 旋钮；
+  // 审批策略 never 时宿主会自动拒绝，allow 时放行——本插件不自带 PermissionManager）
+  ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
+    if (exec.name === 'export_book') return { kind: 'ask' }
+    return next()
+  })
+
   ctx.tools.register(defineTool({
     name: 'writer_read',
     description: `读取小说项目实体。entity 为实体种类（${ENTITY_KINDS.join(' / ')}）；省略 id 时列出该类实体的清单，提供 id 时返回完整正文与 frontmatter。`,
@@ -188,6 +199,201 @@ export function apply(ctx: Context): void {
       return `已更新伏笔 ${saved.id}（status=${String(saved.frontmatter['status'] ?? currentStatus)}，hash=${saved.hash}）`
     },
   }))
+
+  ctx.tools.register(defineTool({
+    name: 'consistency_check',
+    description: '全书一致性检查：以创作准则/大纲/伏笔档案/关键事件为基准审读已写章节，输出结构化矛盾报告（只报告不自动改稿）。按上下文预算自动分批覆盖全部章节（无章数/字数硬截断）；scope 可选 "001-003" 限定章节区间，缺省全书。',
+    parameters: {
+      scope: { type: 'string', description: '章节区间（"002" 单章或 "001-003"；缺省全书已写章节）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const engine = getEngine(ctx)
+      if ('unavailable' in engine) return engine.unavailable
+      const scope = args.scope !== undefined ? parseScope(args.scope) : undefined
+      const report = await engine.consistencyCheck(scope, exec.signal)
+      const lines = [
+        `一致性检查完成（${report.batches.length} 批：${report.batches.map((b) => `${b.chapters[0]}-${b.chapters[b.chapters.length - 1]}${b.truncated ? '（材料截断）' : ''}`).join('、')}），发现 ${report.issues.length} 条矛盾。`,
+      ]
+      if (report.summary.length > 0) lines.push('', `总评：${report.summary}`)
+      for (const [i, issue] of report.issues.entries()) {
+        lines.push(`${i + 1}. [${issue.severity}] ${issue.dimension}${issue.refs.length > 0 ? `（${issue.refs.join('、')}）` : ''}：${issue.description}`)
+        if (issue.evidence !== undefined) lines.push(`   证据：${issue.evidence}`)
+      }
+      lines.push('', '报告为预览，未自动持久化；确认后用 writer_update / foreshadow_update 修订。')
+      return lines.join('\n')
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'recompute_derived',
+    description: '改稿期派生重算：章节改稿后重算（mode=recompute，重跑维护 pass）或标记过期（mode=mark，仅删除过期派生不调模型）下游派生物（摘要/事实/伏笔事件/人物状态）。派生与当前章节 hash 一致的章节自动跳过（up-to-date）。',
+    parameters: {
+      chapter_range: { type: 'string', required: true, description: '章节 id 或区间（"002" 或 "001-003"）' },
+      mode: { type: 'string', description: 'recompute（默认，重算）/ mark（仅标记过期）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const engine = getEngine(ctx)
+      if ('unavailable' in engine) return engine.unavailable
+      const mode = args.mode === 'mark' ? 'mark' : 'recompute'
+      const results = await engine.recomputeDerived(args.chapter_range, { mode, signal: exec.signal })
+      return [
+        `派生重算完成（range=${args.chapter_range}，mode=${mode}）：`,
+        ...results.map((r) => `- chapter/${r.chapterId}：${r.status}`),
+      ].join('\n')
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'writer_stats',
+    description: '写作统计：章节数/总字数/卷分布/伏笔状态分布/维护派生覆盖率（哪些章节的摘要与抽取已过期）。',
+    parameters: {},
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute() {
+      const [chapters, characters, plots, events, derivedIds] = await Promise.all([
+        ctx.writer.list('chapter'),
+        ctx.writer.list('character'),
+        ctx.writer.list('plot'),
+        ctx.writer.get('event', 'event'),
+        ctx.writer.listDerived('maintenance'),
+      ])
+      if (chapters.length === 0) return '项目暂无已写章节。'
+      const derivedSet = new Set(derivedIds)
+      const totalChars = chapters.reduce((sum, c) => sum + c.content.length, 0)
+      const volumes = new Map<string, number>()
+      for (const c of chapters) {
+        const v = String(c.frontmatter['volume'] ?? '').trim()
+        const name = v.length > 0 ? v : '正文'
+        volumes.set(name, (volumes.get(name) ?? 0) + 1)
+      }
+      const status = new Map<string, number>()
+      for (const p of plots) {
+        const s = String(p.frontmatter['status'] ?? 'planned')
+        status.set(s, (status.get(s) ?? 0) + 1)
+      }
+      const stale = chapters.filter((c) => !derivedSet.has(c.id)).map((c) => c.id)
+      const lines = [
+        `章节：${chapters.length} 章，共约 ${totalChars} 字`,
+        `卷分布：${[...volumes.entries()].map(([v, n]) => `${v}×${n}`).join('、')}`,
+        `人物：${characters.length} 个`,
+        plots.length > 0 ? `伏笔：${[...status.entries()].map(([s, n]) => `${s}×${n}`).join('、')}` : '伏笔：无',
+        events !== undefined ? '关键事件：已记录' : '关键事件：未记录',
+        `维护派生覆盖：${chapters.length - stale.length}/${chapters.length}${stale.length > 0 ? `（待维护 pass：${stale.join('、')}）` : ''}`,
+      ]
+      return lines.join('\n')
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'archive_point',
+    description: '显式存档点：在小说项目目录执行 git add -A + git commit（默认任何写入路径都不自动提交，只有本工具显式存档）。message 缺省为 "archive point <时间戳>"。项目目录不是 git 仓库时返回错误指引。',
+    parameters: {
+      message: { type: 'string', description: '提交信息（缺省自动生成）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const root = ctx.writer.root
+      const message = args.message !== undefined && args.message.trim().length > 0
+        ? args.message.trim()
+        : `archive point ${new Date().toISOString()}`
+      try {
+        await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root })
+      } catch {
+        return `项目目录不是 git 仓库：${root}。请先在项目目录执行 git init 后再使用存档点。`
+      }
+      await execFileAsync('git', ['add', '-A'], { cwd: root })
+      // 无变更预检：git commit 在工作区干净时以非零退出且提示走 stdout——预检避免把正常空存档当错误
+      const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: root })
+      if (status.stdout.trim().length === 0) {
+        return '没有可存档的变更（工作区干净）。'
+      }
+      try {
+        const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: root })
+        const hash = (await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root })).stdout.trim()
+        return `已创建存档点 ${hash}：${firstLine(stdout).length > 0 ? firstLine(stdout) : message}`
+      } catch (err) {
+        // 并发场景下 add 后仍可能被外部清空；提示文本在 message/stdout/stderr 三处都可能出现
+        const text = [String(err), stdTextOf(err), errTextOf(err)].join('\n')
+        if (text.includes('nothing to commit') || text.includes('no changes added')) {
+          return '没有可存档的变更（工作区干净）。'
+        }
+        throw err
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'export_book',
+    description: '导出全书：format=txt / html（浏览器打印为 PDF）/ epub；按卷组织，正文经 XSS/XML 转义。可选 volume 只导某一卷、include_outline/include_characters 附附录、output_path 指定输出路径（相对项目根，缺省 exports/book.<format>）。需要导出插件（dsh-writer-export）启用。该操作默认需要用户确认。',
+    parameters: {
+      format: { type: 'string', required: true, description: 'txt / html / epub' },
+      volume: { type: 'string', description: '只导出该卷（卷名；缺省全书）' },
+      include_outline: { type: 'boolean', description: '附大纲附录（默认否）' },
+      include_characters: { type: 'boolean', description: '附人物小传附录（默认否）' },
+      output_path: { type: 'string', description: '输出文件相对路径（缺省 exports/book.<format>）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const exporter: ExportService | undefined = ctx.get('writerExport')
+      if (exporter === undefined) {
+        return '导出插件未启用（profile 需安装 dsh-writer-export；核心读写不受影响）。'
+      }
+      const format = args.format === 'txt' || args.format === 'html' || args.format === 'epub' ? args.format : undefined
+      if (format === undefined) throw new Error(`未知导出格式：${String(args.format)}（可选 txt / html / epub）`)
+      const result = await exporter.exportBook({
+        format,
+        ...(args.volume !== undefined ? { volume: args.volume } : {}),
+        ...(args.include_outline !== undefined ? { includeOutline: args.include_outline } : {}),
+        ...(args.include_characters !== undefined ? { includeCharacters: args.include_characters } : {}),
+        ...(args.output_path !== undefined ? { outputPath: args.output_path } : {}),
+      })
+      return `已导出 ${result.chapters} 章到 ${result.path}（${result.bytes} 字节）。`
+    },
+  }))
+}
+
+/** 章节区间 scope 解析："002" 或 "001-003" → {from,to}（倒序抛错）。 */
+function parseScope(raw: string): { from: string; to: string } {
+  const single = raw.match(/^(\d{3})$/)
+  if (single !== null) return { from: single[1], to: single[1] }
+  const span = raw.match(/^(\d{3})-(\d{3})$/)
+  if (span === null) throw new Error(`章节区间格式非法：${JSON.stringify(raw)}（应为 "002" 或 "001-003"）`)
+  if (span[2] < span[1]) throw new Error(`章节区间倒序：${raw}`)
+  return { from: span[1], to: span[2] }
+}
+
+/** git 输出首行（Windows CRLF 归一）。 */
+function firstLine(text: string): string {
+  return text.split('\r\n')[0].split('\n')[0]
+}
+
+/** execFile 错误对象的 stdout/stderr 提取（git 的「nothing to commit」提示走 stdout）。 */
+function stdTextOf(err: unknown): string {
+  return String((err as { stdout?: unknown }).stdout ?? '')
+}
+
+function errTextOf(err: unknown): string {
+  return String((err as { stderr?: unknown }).stderr ?? '')
 }
 
 function assertMode(raw: string): 'full' | 'assist' | 'rewrite' {
