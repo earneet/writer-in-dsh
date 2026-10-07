@@ -5,8 +5,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  detectTimeAnchorInversions, parseConsistencyBatchOutput, parseDayAnchor, planConsistencyBatches,
+  detectTimeAnchorInversions, parseConsistencyBatchOutput, parseChapterRange, parseDayAnchor,
+  planConsistencyBatches, truncateBatchBodies,
 } from '../src/consistency.ts'
+import { truncateCodePoints } from '../src/index.ts'
 
 function chapter(id: string, chars: number, summary?: string): { id: string; content: string; summary?: string } {
   return { id, content: 'x'.repeat(chars), ...(summary !== undefined ? { summary } : {}) }
@@ -76,4 +78,35 @@ test('parseDayAnchor / detectTimeAnchorInversions：第 N 日倒序检测', () =
   assert.equal(inversions.length, 1)
   assert.equal(inversions[0].earlier.chapterId, '001')
   assert.equal(inversions[0].later.chapterId, '002')
+})
+
+test('truncateBatchBodies：总量不超预算原样；超预算水fill 截断且总量收敛', () => {
+  const within = truncateBatchBodies(['短', '中等长度'.repeat(10)], 1000)
+  assert.deepEqual(within.map((b) => b.truncated), [false, false])
+  assert.equal(within[0].body, '短')
+  const over = truncateBatchBodies(['甲'.repeat(800), '乙'.repeat(100)], 500)
+  assert.equal(over[0].truncated, true, '长文截断')
+  assert.equal(over[1].truncated, false, '短文原样保留')
+  assert.ok(over[0].body.length <= 401, `长文截到预算内（实际 ${over[0].body.length}）`)
+  assert.ok(over[0].body.startsWith('甲'))
+  assert.throws(() => truncateBatchBodies(['x'], 0), /正数/)
+})
+
+test('truncateBatchBodies：码点安全（不切开代理对）', () => {
+  const bodies = ['🎯'.repeat(100)]
+  const out = truncateBatchBodies(bodies, 10)
+  assert.ok(Array.from(out[0].body).length <= 11, '截断按码点计')
+  assert.ok(!/\uD83D$/.test(out[0].body), '不产生孤立高位代理')
+})
+
+test('truncateCodePoints：emoji 代理对完整', () => {
+  assert.equal(truncateCodePoints('🎯🎯🎯', 2), '🎯🎯')
+  assert.equal(truncateCodePoints('中文abc', 4), '中文ab')
+})
+
+test('parseChapterRange：单章/区间/非法输入', () => {
+  assert.deepEqual(parseChapterRange('002'), ['002'])
+  assert.deepEqual(parseChapterRange('001-003'), ['001', '002', '003'])
+  assert.throws(() => parseChapterRange('2'), /格式非法/)
+  assert.throws(() => parseChapterRange('003-001'), /倒序/)
 })

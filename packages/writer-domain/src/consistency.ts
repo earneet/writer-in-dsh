@@ -131,6 +131,62 @@ export interface TimeAnchorObserved {
   raw: string
 }
 
+/** 章节区间解析："002" 单章或 "001-003" 区间 → 章节三位 id 列表（含端点）；倒序/格式非法抛错（单一实现，engine/tools 共用）。 */
+export function parseChapterRange(range: string): string[] {
+  const single = range.match(/^(\d{3})$/)
+  if (single !== null) return [single[1]]
+  const span = range.match(/^(\d{3})-(\d{3})$/)
+  if (span === null) throw new Error(`章节区间格式非法：${JSON.stringify(range)}（应为 "002" 或 "001-003"）`)
+  if (span[2] < span[1]) throw new Error(`章节区间倒序：${range}`)
+  const ids: string[] = []
+  for (let n = Number(span[1]); n <= Number(span[2]); n++) ids.push(String(n).padStart(3, '0'))
+  return ids
+}
+
+/** 批次内正文预算分配结果：截断后的正文 + 是否截断。 */
+export interface TruncatedBody {
+  body: string
+  truncated: boolean
+}
+
+/**
+ * 批次内正文真正截断（水fill 公平分配）：总长超预算时长文保头截断、短文原样保留，
+ * 短文剩余预算回流给长文。截断用 truncateCodePoints（不切开代理对）。
+ * 这是对 planConsistencyBatches 截断标记的落地——不截断的批次标记才是可信的。
+ */
+export function truncateBatchBodies(bodies: readonly string[], budgetChars: number): TruncatedBody[] {
+  if (budgetChars <= 0) throw new Error(`批次正文预算必须为正数：${budgetChars}`)
+  const lengths = bodies.map((b) => Array.from(b).length)
+  const total = lengths.reduce((sum, n) => sum + n, 0)
+  if (total <= budgetChars) return bodies.map((body) => ({ body, truncated: false }))
+  // 水fill：从人均份额起步，短文用不完的份额回流给未封顶的长文
+  const caps = Array.from<number>({ length: bodies.length }).fill(0)
+  let remaining = budgetChars
+  let uncapped = new Set(bodies.map((_, i) => i))
+  for (;;) {
+    if (uncapped.size === 0 || remaining <= 0) break
+    const share = remaining / uncapped.size
+    const nextUncapped = new Set<number>()
+    for (const i of uncapped) {
+      const target = caps[i] + share
+      if (lengths[i] <= target) {
+        caps[i] = lengths[i]
+        remaining -= lengths[i]
+      } else {
+        caps[i] += share
+        remaining -= share
+        nextUncapped.add(i)
+      }
+    }
+    uncapped = nextUncapped
+  }
+  return bodies.map((body, i) => {
+    const cap = Math.max(0, Math.round(caps[i]))
+    const chars = Array.from(body)
+    return chars.length <= cap ? { body, truncated: false } : { body: `${chars.slice(0, cap).join('')}…`, truncated: true }
+  })
+}
+
 /** 「第 N 日」/「第 N 天」形态解析出的结构化锚；不匹配返回 undefined。 */
 export function parseDayAnchor(raw: string): number | undefined {
   const m = raw.match(/第\s*(\d+)\s*[日天]/)

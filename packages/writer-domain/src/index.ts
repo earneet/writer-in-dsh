@@ -602,3 +602,8 @@ export interface ChapterWriteResult {
 // P3 治理：维护 pass 分节 schema/校验（maintenance.ts）与一致性检查纯函数（consistency.ts）
 export * from './maintenance.ts'
 export * from './consistency.ts'
+
+/** 码点安全截断（避免 UTF-16 slice 切开代理对产生孤立代理项；emoji/扩展区汉字场景）。 */
+export function truncateCodePoints(text: string, max: number): string {
+  return Array.from(text).slice(0, max).join('')
+}

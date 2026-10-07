@@ -35,7 +35,7 @@ declare module '@deepseek-ai/cordis' {
      */
     'writer/chapter-written'(result: ChapterWriteResult): void
     /**
-     * 维护 pass 完成一次章节的派生数据写回后发出（emit；含 up-to-date 跳过）。
+     * 维护 pass 完成一次章节的派生数据写回后发出（emit；hash 锚定命中的 up-to-date 跳过不 emit）。
      * @param result - 维护结果（章节 id + 锚定 hash + 状态）。
      * @mode event
      */
@@ -102,6 +102,11 @@ export interface MaintenancePassResult {
   extraction?: MaintenanceExtraction
   /** 经过按节重试才收敛的节名。 */
   retriedSections?: string[]
+  /** 重试预算耗尽仍有条目被拒收（rejected 为拒收原因；派生记录同步标记）。 */
+  partial?: boolean
+  rejected?: string[]
+  /** 执行期间章节被再次改写：本结果基于旧版本，补跑会覆盖（pending 未追加旧版本待办）。 */
+  superseded?: boolean
 }
 
 /** 一致性检查范围（章节 id 区间，缺省全书已写章节）。 */

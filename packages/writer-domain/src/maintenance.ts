@@ -141,7 +141,7 @@ export function validateExtractionSections(
     const badChars = (fact.characters ?? []).filter((id) => !characters.has(id))
     const badPlots = (fact.plots ?? []).filter((id) => !plots.has(id))
     if (badChars.length > 0 || badPlots.length > 0) {
-      facts.errors.push(`fact「${fact.description.slice(0, 40)}」引用不存在的实体：${[...badChars.map((c) => `character/${c}`), ...badPlots.map((p) => `plot/${p}`)].join('、')}`)
+      facts.errors.push(`fact「${Array.from(fact.description).slice(0, 40).join('')}」引用不存在的实体：${[...badChars.map((c) => `character/${c}`), ...badPlots.map((p) => `plot/${p}`)].join('、')}`)
       continue
     }
     facts.entries.push(fact)
@@ -175,6 +175,9 @@ export interface MaintenanceDerived {
   summary: string
   extraction: MaintenanceExtraction
   updatedAt: string
+  /** 重试预算耗尽仍有条目被拒收时为 true（rejected 记录拒收原因；pending.md 同步提示）。 */
+  partial?: boolean
+  rejected?: string[]
 }
 
 /**
