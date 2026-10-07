@@ -90,7 +90,7 @@
 | 10 | ReviewSuggestion 结构化审稿契约（3+1 维） | B-简化⑧ |
 | 11 | 领域数据模型骨架：章节主序列 + ideas→plot_points→outline 单向流 | A |
 | 12 | 混合上下文架构：预注入核心 + 工具按需查（预算按模型窗口参数化） | B-简化③ |
-| 13 | Agent loop 错误二分 + 纠正预算 + 孤儿 tool_call 配对收尾 | C（实现模式①②） |
+| 13 | Agent loop 错误二分 + 纠正预算 + 重复检测 | C（实现模式①②）。**实现形态注记（第 5 轮确认）**：工具循环属宿主所有，不自建 loop；宿主已内置 `dsh-repeat-tool-reminder`（精确重复 3/5/8 次建议性提醒，`PostToolDecision` 支持阻止）、`dsh-tool-call-timeout-policy`、`agent/request-error` 重试（llm-streaming.md L300）；「业务/基础设施错误二分 + 纠正预算」应以 **dsh guard 插件形态**实现（挂 `tools/post-execute`；guard 本就是插件形态，见 `packages/guard/repeat-tool-reminder/README.zh.md`），孤儿 tool_call 配对收尾归宿主 loop 职责 |
 | 14 | settle「读己之写」收敛 + 启动对账 | C（实现模式③，用于维护 pass） |
 | 15 | **全书一致性检查**（ConsistencyCheckService：拉 plot_points/outline/key_events/principles + 已写章节正文，AI 比对输出结构化矛盾报告，预览不自动持久化）+ 世界观一致性检查（条目间冲突 / 条目 vs 章节） | `architecture.md:89`、2026-06-21-phase2 spec（第二轮复审补充，与 §6.4-1 改稿期一致性协同设计） |
 | 16 | **导出子系统**：TXT / ePub / HTML（打印 PDF）+ XSS 转义；补按卷组织 | `README.md` 特性表、`src/export/`（第二轮复审补充，ePub 生成是有实现量的交付物） |
@@ -102,15 +102,15 @@
 | 1 | 双写原子性 | 只留意图：Markdown 先写成功 → 索引异步更新/失败标脏重建；绝不跨 fs 持事务 |
 | 2 | 8 阶段流程 | onboarding checklist skill，不做流程状态机 |
 | 3 | 分段节拍模式 | 可选路径后置；整章+选区改写优先 |
-| 4 | 保存后处理链 | 「维护 pass」**结构化单次调用 + 分节 JSON schema + 抽取引用（章节/人物/伏笔 id）存在性校验 + 按最大子任务预算 maxTokens + 失败按节重试**；或保守方案——摘要与事实抽取保持两次调用（流畅文本与精确引用目标函数不同）。实证约束：fact-extract maxTokens 8000→12000 仍截断、伏笔检测需独立 240s 超时档、抽取引用脏值致入库失败为复发性问题（`writing-pipeline-log-review-20260903-1333.md`） |
+| 4 | 保存后处理链 | **默认裁定（第 5 轮确认）：保守两次调用为基线**——①章节摘要（流畅文本）②事实/伏笔/人物状态抽取（精确引用），两者目标函数不同；单次合并方案作为后续优化项，仅当实测两次调用的延迟/成本不可接受且合并输出质量达标时启用。任一方案的硬约束：分节 JSON schema + 抽取引用（章节/人物/伏笔 id）存在性校验 + 按最大子任务预算 maxTokens + 失败按节重试。实证依据：fact-extract maxTokens 8000→12000 仍截断、伏笔检测需独立 240s 超时档、抽取引用脏值致入库失败为复发性问题（`writing-pipeline-log-review-20260903-1333.md`）。**宿主注记（第 5 轮确认）**：dsh llm 缝直连路径不提供 provider 级 JSON-schema 强制，校验是插件侧责任（可复用 `assertSupportedJsonSchema`/`validateJsonSchemaValue`；subagent `outputSchema` 有「请求 schema 不保证得到」语义，subagent.md:288） |
 | 5 | ideas 灵感 | Markdown 清单 + 一次 LLM 批量整理，砍 claimRaw/审计/阈值触发 |
 | 6 | pending_facts | 整体并入维护 pass 的待办产出（3 维度起步） |
 | 7 | project_state | 从章节/事件派生的项目快照 Markdown（维护 pass 顺带更新） |
 | 8 | 卷/册 | 大纲树加卷级节点（node_type 现为自由文本、无显式卷语义，`schema.ts:283`），统计/导出/目标按卷组织 |
 | 9 | 检索基建 | 向量+关键词混合检索策略保留；FTS5/向量库均为可全量重建的派生缓存，ChromaDB 砍 |
-| 10 | 断更恢复分层面板（进度/前情提要/变更提醒，按时距分级） | 纯展示逻辑从 SoT 派生（原 B-简化⑨，自 §6.1 移入） |
-| 11 | 版本历史/回滚 | **git 覆盖章节版本史**（复刻场景项目即 git 仓库，versions 表/undo_log 不重建）；仅留 content_hash 乐观锁语义用于 update 防护 |
-| 12 | 权限三级合并（allow/ask/deny） | 映射 dsh approval 子系统（tools/pre-execute waterfall）+ 插件 config，不建独立 PermissionManager |
+| 10 | 断更恢复分层面板（进度/前情提要/变更提醒，按时距分级） | 纯展示逻辑从 SoT 派生（原 B-简化⑨，自 §6.1 移入）。**时间来源注记（第 5 轮确认）**：Markdown SoT 不含时间戳、file mtime 换机失真，「时距」以 git log 提交时间为准 |
+| 11 | 版本历史/回滚 | **git 覆盖章节版本史**（复刻场景项目即 git 仓库，versions 表/undo_log 不重建）；仅留 content_hash 乐观锁语义用于 update 防护。**提交策略注记（第 5 轮确认）**：插件默认不自动 commit；提供可选「存档点」工具（显式触发 git commit，配置开关），派生索引进 .gitignore |
+| 12 | 权限三级合并（allow/ask/deny） | 映射 dsh approval 子系统 + 插件 config，不建独立 PermissionManager。**落点注记（第 5 轮确认）**：ApprovalPolicy 旋钮仅 ask/never 两值（config-catalog.md:4089）；三级表达落在 `tools/pre-execute` 类型化决策（return `ask` 经 `ctx.approval` 应答）+ `ctx.tools.guard()` 单调 deny，勿误写为 policy 旋钮 |
 | 13 | 人物关系网络（relations） | **简化后吸纳**（第三轮复审补充）：落为 Markdown（人物 frontmatter 邻接清单或独立关系文件），按需查询注入；不建 character_relations 独立表。证据：`service/relation.ts` 13KB + `schema.ts:60-79` + relations 为写作 Agent read(entity) 白名单 9 entity 之一（AGENTS.md 模块 5「人物引擎——关系网络」） |
 
 ### 6.3 抛弃（交宿主或不做）
@@ -125,12 +125,12 @@
 | 6 | 独立 HookEngine | dsh skill + 插件事件替代；核心后处理写在引擎里 |
 | 7 | token 微观管理（预算/截断/降级/双 Tracker） | 128K+ 时代过度；留 hash 版本校验语义 |
 | 8 | 流式 watchdog 自建 | **宿主已覆盖**（llm-streaming `streamIdleTimeoutMs` 默认 5min，§5.1 实证） |
-| 9 | 反向分析 selfcheck + reverse_analyses 表 | 循环依赖；参照学习做成 bundled skill |
+| 9 | 反向分析 selfcheck + reverse_analyses 表 | 循环依赖；**参照学习模式保留为 bundled skill 交付物**（列入实现盘点，勿因在本表而漏） |
 | 10 | abort 体系自建 | 第一版就把 abort 语义交给宿主（Turn signal 贯穿 llm 层与工具执行），避免三套并存的前车之鉴 |
 
 ### 6.4 建议新增（复刻要补的，按优先级）
 
-1. **改稿期一致性工具**（B-新增①，最高优先）：修改第 N 章 → 标记/重算 N+1..M 的派生物（摘要、人物状态、伏笔 milestone、事件描述）；与原项目保留的只读 impact-analysis 工具（`architecture.md:89`）合并考虑，免实现者疑惑归属。
+1. **改稿期一致性工具**（B-新增①，最高优先）：修改第 N 章 → 标记/重算 N+1..M 的派生物（摘要、人物状态、伏笔 milestone、事件描述）；与原项目保留的只读 impact-analysis 工具（`architecture.md:89`）合并考虑，免实现者疑惑归属。**依赖注记（第 5 轮确认）**：人物状态的重算载体是 #4 人物状态时间线——实现顺序上 #4 的数据结构先于 #1 的人物状态部分落地。
 2. 多线叙事/POV：章节 storyline/POV 元数据 + 按线感知前文注入。
 3. 结构化故事内时间锚：可选相对天数/日期，审稿才能真正查时间线矛盾。
 4. 人物状态时间线显式化（人物弧线追踪素材）。
@@ -141,7 +141,7 @@
 1. **复杂度预算再分配**：原项目约 60% 复杂度花在通用基座（记忆/SubAgent/事件/多端），复刻全部卸给宿主；省下的预算投给 §6.4 的领域缺口。
 2. **存储纪律**：一切写路径 = Markdown **原子写（temp + rename）**先落盘（含 frontmatter 状态）→ 派生索引异步更新；任何 DB/索引损坏不阻塞写作，重建命令一键恢复。半写文件是「索引可重建」的隐性破坏者，原子写是硬要求。
 3. **LLM 后处理收敛为「维护 pass」单一入口**，但遵守 §6.2-4 的实证约束（分节 schema / 引用校验 / 按最大子任务预算 / 按节重试，必要时摘要与抽取分两次调用）；settle 收敛语义（C-模式③）保证读己之写；产出 Markdown 待办清单由人确认——「AI 建议、人裁决」。
-4. **取消/超时/重试信任宿主**，前提是**所有 LLM 调用（含维护 pass）必须走宿主 llm 能力缝**——插件内直连 SDK 会使 watchdog/abort 论证失效。另注：dsh watchdog 实证仅覆盖两个发行 remote adapter，reasoning 模型长思考行为（novel-writer 曾因 600s 总帽整段丢弃后提额 1800s）实现期需实测一次。插件工具只须「在中止时尽快结算」。
+4. **取消/超时/重试信任宿主**，前提是**所有 LLM 调用（含维护 pass）必须走宿主 llm 能力缝**——插件内直连 SDK 会使 watchdog/abort 论证失效。中止传播的宿主实证（第 5 轮补引）：`ctx.tools.execute()` 必填调用方 signal、注册表将任何信号替换与调用方信号熔合、around-dispatch 承载 timeout/retry（`docs/subsystems/tools.md` L182/L314-323/L631；`exec.signal` 必须被工具体观测）。另注：dsh watchdog 实证仅覆盖两个发行 remote adapter，reasoning 模型长思考行为（novel-writer 曾因 600s 总帽整段丢弃后提额 1800s）实现期需实测一次。插件工具只须「在中止时尽快结算」。
 5. **实现风格**：纯函数域拆分起步就做（fact-extract 模式）；事故驱动注释；禁 800 行单函数。
 6. **迭代与收敛**：审查-复核迭代过程见 §8。
 
@@ -151,3 +151,4 @@
 - 轮次 2（完成）：独立复审员对报告本身对抗复审——核心事实断言抽查全部属实；提出 5 条必改（一致性检查与导出子系统结构性遗漏、维护 pass 合并方案实证风险对策缺失、占位符残留、断更恢复归类错误）+ 4 条可选（git 覆盖版本史裁定、宿主 llm 缝前提、FileWatcher 开放项、原子写），全部采纳修订为 v2。另由复核方补充验证：83% 出处（`memory-and-context-design.md:344`）、POV 缺失（全文档 grep 无机制）、outline 无显式卷类型（`schema.ts:283`）。
 - 轮次 3（完成）：独立复审员对 v2 对抗复审——7 项二轮修订全部正确落地；5 条裁定抽查全部属实（watchdog/补丁命中率/streamAI 签名/一致性检查/卷语义）；提出 1 条必改（relations 裁定结构性缺失，全文零处提及）+ 1 条可选（impact-analysis 归属标注），均采纳，修订为 v3。复核方同步验证 `architecture.md:89` ConsistencyCheckService 断言属实。
 - 轮次 4（完成·终审）：独立终审员核验第三轮 2 处修订均正确落地（relations 裁定证据抽查属实、impact-analysis 双向引用闭环）；全文通读无相互冲突条目；**无新有效建议，裁定收敛可定稿**。未验证项（如实标注）：README 特性表全文、manual 7 份手册逐份扫描、C 路抽样代码行级复核未重跑。
+- 轮次 5（完成·用户委托代审）：两位独立审阅人（D1 决策者视角 / D2 事实与可实现性）+ 复核方逐条二次确认。D2：novel-writer 侧断言抽查 6 项全部属实（一致性检查字段/worldbuilding spec/export 实现/relation.ts/断更恢复 §11），dsh 宿主假设核查通过（skill 可承担 onboarding），内部一致，**无必改项**；2 条低严重度实现注记（approval 三级落点、宿主不强制结构化输出）已并入 §6.2-12/§6.2-4。D1：7 条发现全部二次确认成立（1 条部分驳回其结论——guard 即插件形态，熔断语义可实现，但措辞修正为 guard 插件形态；abort 传播断言成立并补引 tools.md；维护 pass 定默认方案；git 提交策略/依赖标注/bundled skill 交付物/时间来源 4 条注记），全部修订落地。附带信息级发现：原项目自身审计 w10 记录一致性检查实现有 12 章/8000 字截断与 5 维度契约出入，复刻设计时参考。
