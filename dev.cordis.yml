@@ -1,0 +1,9 @@
+# writer-in-dsh 本地开发 overlay（npx @deepseek-ai/dsh web --patch ./dev.cordis.yml）
+# 路径必须绝对（loader 约定）。
+- insert:
+    - id: writer-store
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
+      config:
+        projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project'
+    - id: writer-tools
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'
