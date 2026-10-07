@@ -14,36 +14,60 @@
 |---|---|
 | `references/novel-writer-analysis.md` | 被复刻项目的功能/工作流/子系统分析 + DSH 复刻映射（§14 是包规划） |
 | `references/dsh-plugin-research.md` | dsh 插件定义形式、bundle/profile 分发、skill 格式、能力缝清单 |
+| `docs/implementation-plan.md` | 本项目落地规划（§1 包职责、§5 阶段表、§8 迭代记录——**含全部已知限制与环境坑，动手前必读**） |
 | `references/novel-writer/`、`references/deepseek-harness/` | 源码子模块（只读参考，勿改动；它们有自己的 AGENTS.md，不适用于本仓库） |
 
 两个子模块用 `git submodule update --init` 拉取。引用参考结论时注明来源路径。
 
 ## 插件架构约定
 
-- 遵循 dsh 能力缝三分法（Service Definition / Provider / Consumer），按 `novel-writer-analysis.md` §14.3 的包规划组织：`writer-core`（`ctx.writer` 服务 + 领域事件）、`writer-store`（Markdown SoT + 索引）、`writer-tools`（defineTool 注册）、`writer-rag`、`writer-skills`（bundled skills）、`writer-bundle`（组合包）。
-- 插件形态遵守 dsh 规则：函数插件具名导出 `name`/`inject`/`Config`/`apply` 且**无 default export**；服务包 default-export Service 子类；注册一律走 effect；配置用 Schemastery schema，禁止硬编码可调参数，配置错误响亮失败。
-- 能用 **skill**（Markdown 指令，`.dsh/skills/<name>/SKILL.md`）解决的不写代码插件；需要新工具/服务/事件时才写插件。
+- 遵循 dsh 能力缝三分法（Service Definition / Provider / Consumer），按 `novel-writer-analysis.md` §14.3 的包规划组织：`writer-domain`（纯函数域库，无插件行）、`writer-core`（`ctx.writer` 抽象基类 + 领域事件声明，纯契约包**不上 cordis 行**）、`writer-store`（Provider：Markdown SoT + 派生索引）、`writer-engine`（P2）、`writer-tools`（Consumer：defineTool 注册）、`writer-skills`（bundled skills）、`writer-rag`（P4）、`writer-export`（P3）、`writer-bundle`（组合包）。
+- 插件形态遵守 dsh 规则：函数插件具名导出 `name`/`inject`/`Config`/`apply` 且**无 default export**；服务包 default-export Service 子类；注册一律走 effect；可选服务用 `ctx.get()`；配置用 Schemastery schema，禁止硬编码可调参数，配置错误响亮失败。
+- 能用 **skill**（Markdown 指令）解决的不写代码插件；bundled 技能放 `writer-skills/assets/<name>/SKILL.md`（frontmatter 为候选元数据单一真源，范式见 `packages/writer-skills/src/index.ts`）。
 - 领域事件用 dsh typed events（declaration merging）；进程内同步场景不建 outbox，仅跨进程/崩溃恢复需求才引入。
 - 每个 `dsh.bundle` 组合包：`package.json` 声明 `dsh.bundle.patch` + `cordis.patch.yml` 按包名引用入口。
 
 ## 工作流程
 
-1. 动手前先核对两份参考文档；novel-writer 行为有疑义时以 `references/novel-writer/docs/` 设计文档为准溯源。
-2. 多步骤任务先列 todo；研究/盘点类大任务优先派 subagent（novel-writer 仓库约定同时运行 subagent ≤4，此处沿用）。
-3. 代码改动后运行相关检查（后续建立 `pnpm test/typecheck` 后不得跳过）；提交信息用英文祈使句，一次提交一个主题。
-4. 新的关键设计决策同步记录到 `docs/` 下对应设计文档，保持文档与代码一致。
-5. 所有面向人的文档、注释用简体中文。
+1. 动手前先核对参考文档；novel-writer 行为有疑义时以 `references/novel-writer/docs/` 设计文档为准溯源。
+2. 多步骤任务先列 todo；研究/盘点类大任务优先派 subagent（同时运行 subagent ≤4，沿用 novel-writer 仓库约定）。
+3. 代码改动后必须运行 `npm run typecheck` 与 `npm test`，不得跳过；提交信息用英文祈使句，一次提交一个主题。
+4. 阶段完成后按惯例执行**对抗审查 → 逐条复核 → 修复 → 重测**循环，直到一轮审查无新问题再收口；迭代记录追加到 `docs/implementation-plan.md` §8。
+5. 新的关键设计决策同步记录到 `docs/` 下对应设计文档，保持文档与代码一致。
+6. 所有面向人的文档、注释用简体中文。
 
 ## 目录规划
 
 ```
 AGENTS.md            # 本文件
 references/          # 只读参考（两个子模块 + 两份研究文档）
-packages/            # dsh 插件包（dsh-writer-*，按能力缝切分）
-docs/                # 本项目设计文档（复刻方案、决策记录）
+packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 implementation-plan §0）
+├── writer-domain/   # 纯函数域库（frontmatter/hash/伏笔状态机等，无插件行）
+├── writer-core/     # Service Definition：WriterService 抽象基类 + typed events
+├── writer-store/    # Provider：Markdown SoT 存储，发布 ctx.writer
+├── writer-tools/    # Consumer：writer_read / writer_update 工具
+├── writer-skills/   # bundled skill provider + assets/<name>/SKILL.md
+└── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→skills→tools
+example-project/     # 验证用示例小说项目（Markdown SoT）
+dev.cordis.yml       # 本地开发 overlay（绝对路径引用各包 src/index.ts）
+docs/                # 本项目设计文档（落地规划、审查裁定）
 .dsh/skills/         # 项目级技能（开发期临时技能也可放这里）
 ```
 
+## 开发与验证环境（踩坑记录，详见 implementation-plan §8）
+
+- **依赖版本**：所有 `@deepseek-ai/*` 运行时依赖必须与 dsh 严格同版本 `0.2.0-rc.2`，否则实例分裂致调度器崩；npm install-scripts 需在根 `package.json` 的 `allowScripts` 审批。
+- **包管理器**：本仓库用 **npm workspaces**；dsh `plugin add` 内部转发 **pnpm**——本机必须用 **pnpm 10**（pnpm 12 因盘符根锁目录 `C:\pnpm-store-operation-locks` EPERM 完全不可用）。
+- **profile 安装**：`dsh plugin --profile <name> add <绝对路径>` 逐包按依赖序安装（link: 形态，兄弟包依赖经本仓库根 node_modules 解析）；**新建 profile 只含 base+功能 bundle 时无 app 入口会无限空转**（进程空转无输出不报错），须另装 app bundle 且钉版本：`@deepseek-ai/dsh-headless@0.2.0-rc.2` 或 `@deepseek-ai/dsh-web-app@0.2.0-rc.2`（npm 源默认解析到不兼容旧版 0.0.1-rc.1）。
+- **本地功能验证**：overlay 方式跑 headless 即可——`npx @deepseek-ai/dsh --profile headless --patch ./dev.cordis.yml "<任务>"`；最终形态验证再走 profile 安装路径（`--dump-config` 核对组合树 + web/headless 启动）。
+- **projectRoot**：writer-bundle 默认 `!!js process.cwd()`，验证时须从 `example-project/` 目录启动 dsh。
+
 ## 当前状态
 
-仓库刚初始化：仅有参考材料，插件代码尚未开始。下一步建议：按 §14.3 规划先做 `writer-core` + `writer-store` 的最小骨架（项目/章节/人物的 Markdown SoT 读写 + read/update 两个工具），跑通一个 dsh profile 加载闭环，再逐块补写作引擎、伏笔、RAG。
+**P1 + P1.5 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-6）：
+
+- 6 包可用：domain / core / store / tools / skills / bundle；示例项目 + dev overlay 就绪。
+- 已验证：单测 27/27、typecheck 零错；overlay 与 profile 双形态下技能发现/加载、实体读写、乐观锁（read-before-update）闭环。
+- 已知限制 12 条在案（§8 轮次 2/6）：磁盘索引与 fsync 缺席、TOCTOU 并发、publish 前待办（去 private、依赖精确化、lib/ 预构建）等。
+
+**下一步（P2 写作）**：`writer-engine` 三模式（full/assist/rewrite 补丁协议）+ 上下文组装器接入 + `review_chapter` + 伏笔工具；补 `chapter-writing` / `foreshadow-guide` 技能；工具体观测 `exec.signal`；并发 save 以 (kind,id) promise 链串行化。验收：模型按准则+大纲生成一章，rewrite 走补丁协议。
