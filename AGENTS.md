@@ -46,10 +46,12 @@ packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 i
 ├── writer-core/     # Service Definition：WriterService 抽象基类 + typed events
 ├── writer-store/    # Provider：Markdown SoT 存储，发布 ctx.writer
 ├── writer-engine/   # Provider：写作引擎（三模式/审稿），发布 ctx.writerEngine
-├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update / consistency_check / recompute_derived / writer_stats / archive_point / export_book
+├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update / consistency_check / recompute_derived / writer_stats / archive_point / export_book / writer_search
 ├── writer-skills/   # bundled skill provider + assets/<name>/SKILL.md
 ├── writer-export/   # Consumer：TXT/HTML/ePub 导出（发布 ctx.writerExport）
-└── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→engine→skills→export→tools
+├── writer-rag/      # Provider：混合检索（关键词 + 可选语义档），发布 ctx.writerRag
+├── writer-guard/    # Consumer：工具业务错误预算（tools/post-execute 观测，只注入纠偏提示）
+└── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→engine→skills→export→rag→guard→tools
 example-project/     # 验证用示例小说项目（Markdown SoT）
 dev.cordis.yml       # 本地开发 overlay（绝对路径引用各包 src/index.ts）
 docs/                # 本项目设计文档（落地规划、审查裁定）
@@ -62,15 +64,17 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - **包管理器**：本仓库用 **npm workspaces**；dsh `plugin add` 内部转发 **pnpm**——本机必须用 **pnpm 10**（pnpm 12 因盘符根锁目录 `C:\pnpm-store-operation-locks` EPERM 完全不可用）。
 - **profile 安装**：`dsh plugin --profile <name> add <绝对路径>` 逐包按依赖序安装（link: 形态，兄弟包依赖经本仓库根 node_modules 解析）；**新建 profile 只含 base+功能 bundle 时无 app 入口会无限空转**（进程空转无输出不报错），须另装 app bundle 且钉版本：`@deepseek-ai/dsh-headless@0.2.0-rc.2` 或 `@deepseek-ai/dsh-web-app@0.2.0-rc.2`（npm 源默认解析到不兼容旧版 0.0.1-rc.1）。
 - **本地功能验证**：overlay 方式跑 headless 即可——`npx @deepseek-ai/dsh --profile headless --patch ./dev.cordis.yml "<任务>"`；最终形态验证再走 profile 安装路径（`--dump-config` 核对组合树 + web/headless 启动）。
+- **临时插件位置**：overlay 里挂载的临时 .ts 插件文件**必须放在有 package.json 的包目录内**（如 packages/ 下）；放仓库根目录会导致首次模型调用 REQUEST_EXTENSION 失败（插件清单解析需要包身份）。
 - **projectRoot**：writer-bundle 默认 `!!js process.cwd()`，验证时须从 `example-project/` 目录启动 dsh。
 
 ## 当前状态
 
-**P1 + P1.5 + P2 + P3 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-8）：
+**P1 + P1.5 + P2 + P3 + P4 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-9）：
 
-- 8 包可用：domain / core / store / engine / tools / skills / export / bundle；示例项目 + dev overlay 就绪。
+- 10 包可用：domain / core / store / engine / tools / skills / export / rag / guard / bundle；示例项目 + dev overlay 就绪。
 - P3（治理）：维护 pass（保存后异步，摘要 + 事实/伏笔/人物状态抽取两次调用；分节 schema + 引用存在性校验 + 按节重试；同章 inflight 去重 + 完成 hash 锚定；产出写回 `.writer/derived/` + `pending.md` 待办）；一致性检查（按预算分批全书覆盖 + 维度/schema 对齐 + 引用校验 + 时间锚倒序检测，报告预览不持久化）；recompute_derived（mark/recompute）；writer_stats / archive_point（git 显式存档点）；writer-export（TXT/HTML/ePub，XSS/XML 转义，export_book 默认 ask 权限路径）。
-- 已验证：单测 94/94、typecheck 零错；overlay+headless 与 profile 双形态实测（统计/维护 pass 闭环/hash 锚定 up-to-date/一致性检查报告/存档点双路径/export ask fail-closed）。
-- 已知限制见 §8 轮次 2/6/7/8。
+- P4（增量）：writer-rag（混合检索：关键词先行 CJK bigram TF-IDF + 可选语义档 none/llm/external + RRF 融合；语料=章节切片+新鲜摘要+人物/伏笔/世界观；防剧透 chapterLimit 块级过滤；engine 组装增强注入 + writer_search 工具，缺席降级）；writer-guard（tools/post-execute 业务错误预算，滚动窗口超预算注入纠偏提示，不熔断）；engine recoverySnapshot（断更恢复快照，git 时间锚）；store list() 解析快照缓存；节拍模式评估裁定**不做独立引擎**（理由与替代路径见 §8 轮次 9）；export_book 批准路径 seam 级复验通过。
+- 已验证：单测 140/140、typecheck 零错；overlay+headless 与 profile 双形态实测（检索命中/guard 纠偏注入/rag 缺席降级/export 批准与 fail-closed 对照/恢复快照）。
+- 已知限制见 §8 轮次 2/6/7/8/9。
 
-**下一步（P4 增量）**：RAG 检索包（混合检索、可换 embedding 后端）+ guard（业务错误预算）+ 节拍模式评估。
+**下一步**：人物状态时间线结构化升格（§8 轮次 8 限制⑥，继续顺延）；external embedding 档实测（待有 key 环境）；发布前清理（去 private、依赖精确范围、lib/ 预构建，见 §8 轮次 6 限制③）。

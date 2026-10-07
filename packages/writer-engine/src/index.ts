@@ -8,18 +8,22 @@
  */
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
+import { execFile } from 'node:child_process'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import {
   applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions,
   extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, parseConsistencyBatchOutput,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
-  truncateBatchBodies, truncateCodePoints, validateExtractionSections,
-  type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport,
-  type ExtractionSectionName, type MaintenanceDerived, type MaintenanceExtraction,
-  type ReviewReport, type TruncatedBody, type WriterEntity,
+  renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
+  type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport, type ExtractionSectionName,
+  type MaintenanceDerived, type MaintenanceExtraction, type ReviewReport, type TruncatedBody, type WriterEntity,
 } from 'dsh-writer-domain'
 import {
-  EngineService, type ConsistencyScope, type MaintenancePassResult, type RecomputeDerivedResult,
+  EngineService, type ConsistencyScope, type MaintenancePassResult,
+  type RecoverySnapshotResult, type RecomputeDerivedResult,
 } from 'dsh-writer-core'
 import {
   assertFinish, assertRewriteFullTextPlausible, CHAPTER_ID_RE, decideRewritePath, mergeAssistContent,
@@ -360,6 +364,53 @@ export default class WriterEngineServiceImpl extends EngineService {
     return results
   }
 
+  // —— 断更恢复快照（§1.4 顺延项 P4 清偿）：章节/派生摘要/事件/伏笔 → Markdown 快照 ——
+
+  async recoverySnapshot(range?: string): Promise<RecoverySnapshotResult> {
+    const rangeIds = range === undefined ? undefined : new Set(parseChapterRange(range))
+    const all = await this.ctx.writer.list('chapter')
+    const chapters = rangeIds === undefined ? all : all.filter((c) => rangeIds.has(c.id))
+    const [characters, plots, events] = await Promise.all([
+      this.ctx.writer.list('character'),
+      this.ctx.writer.list('plot'),
+      this.ctx.writer.get('event', 'event'),
+    ])
+    // 新鲜派生摘要（sourceHash 锚定；过期摘要不用，正文截断兜底）
+    const summaries: Record<string, string> = {}
+    await Promise.all(chapters.map(async (chapter) => {
+      const derived = await this.ctx.writer.readDerived('maintenance', chapter.id) as MaintenanceDerived | undefined
+      if (derived !== undefined && derived.sourceHash === chapter.hash && derived.summary.trim().length > 0) {
+        summaries[chapter.id] = derived.summary
+      }
+    }))
+    // 时间锚取 git log 最后提交时间（非 git 仓库/无记录 → null，渲染层显示「时间未知」）
+    const chapterTimes: Record<string, string | null> = {}
+    await Promise.all(chapters.map(async (chapter) => {
+      chapterTimes[chapter.id] = await lastCommitTime(this.ctx.writer.root, chapter.path)
+    }))
+    const markdown = renderRecoverySnapshot({
+      chapters, summaries, characters, plots, events, chapterTimes,
+      generatedAt: new Date().toISOString(),
+    })
+    const absPath = join(this.ctx.writer.root, '.writer', 'recovery-snapshot.md')
+    await mkdir(join(absPath, '..'), { recursive: true })
+    // 唯一 tmp 名 + 失败清理：并发快照不互踩固定 tmp；写 tmp 失败不遗留半写文件
+    const tmpPath = `${absPath}.${process.pid}-${snapshotCounter++}.tmp`
+    try {
+      await writeFile(tmpPath, markdown, 'utf8')
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      throw new Error(`恢复快照落盘失败：${String(err)}`)
+    }
+    try {
+      await rename(tmpPath, absPath)
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      throw new Error(`恢复快照落盘失败：${String(err)}`)
+    }
+    return { path: absPath, markdown, chapters: chapters.length }
+  }
+
   // —— full：整章生成，一次调用，创建或整体替换 ——
 
   private async writeFull(request: ChapterWriteRequest, existing: WriterEntity | undefined): Promise<ChapterWriteResult> {
@@ -462,7 +513,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       this.ctx.writer.get('event', 'event'),
       this.ctx.writer.list('style'),
     ])
-    return assembleWritingContext({
+    const assembled = assembleWritingContext({
       chapterNumber: Number(request.chapterId),
       principles,
       outline,
@@ -474,6 +525,42 @@ export default class WriterEngineServiceImpl extends EngineService {
       budgetChars: request.mode === 'assist' ? Math.floor(this.genParams.contextBudgetChars / 2) : this.genParams.contextBudgetChars,
       instruction: request.instruction,
     })
+    return this.augmentByRag(assembled, request, outline)
+  }
+
+  /**
+   * 检索增强注入（P4）：writerRag 在场时以「本章大纲 + 写作指令」为查询做混合检索，
+   * 追加为最后一级可降级分节（预算 = 组装预算的 1/4 上限，防挤占必注分节）。
+   * 防剧透由 rag 服务端按 chapterLimit 过滤（与组装器同红线：早章可见、未来章不可见）。
+   * rag 缺席（不装包）或检索失败：静默降级为无增强分节（增强不是依赖，不阻断写作）。
+   */
+  private async augmentByRag(
+    assembled: import('dsh-writer-domain').AssembledWritingContext,
+    request: ChapterWriteRequest,
+    outline: WriterEntity | undefined,
+  ): Promise<import('dsh-writer-domain').AssembledWritingContext> {
+    const rag = this.ctx.get('writerRag')
+    if (rag === undefined) return assembled
+    const chapterNumber = Number(request.chapterId)
+    const chapterOutline = outline === undefined ? undefined : extractChapterOutline(outline.content, chapterNumber)
+    const query = [chapterOutline ?? '', request.instruction ?? ''].filter((s) => s.trim().length > 0).join('\n').trim()
+    if (query.length === 0) return assembled
+    try {
+      const hits = await rag.search(query, { chapterLimit: chapterNumber, maxResults: 5, signal: request.signal })
+      if (hits.length === 0) return assembled
+      const body = renderRagSection(hits)
+      const cap = Math.max(200, Math.floor(this.genParams.contextBudgetChars / 4))
+      const sections = [...assembled.sections, {
+        title: '检索增强（RAG，已防剧透过滤）',
+        body: truncateCodePoints(body, cap),
+        truncated: Array.from(body).length > cap,
+      }]
+      const usageChars = sections.reduce((sum, s) => sum + s.title.length + s.body.length + 2, 0)
+      return { sections, usageChars }
+    } catch (err) {
+      this.loggerWarn(`检索增强失败（降级为无 RAG 分节，写作继续）：${String(err)}`)
+      return assembled
+    }
   }
 
   // —— 宿主 llm 缝的单次生成（流式组装；观测 signal）——
@@ -507,8 +594,24 @@ export default class WriterEngineServiceImpl extends EngineService {
 }
 
 // ---------------------------------------------------------------------------
-// P3 模块级纯辅助（模块私有，不导出）
+// P3/P4 模块级纯辅助（模块私有，不导出）
 // ---------------------------------------------------------------------------
+
+const execFileAsync = promisify(execFile)
+
+/** recoverySnapshot 并发 tmp 名序号（唯一 tmp 名防互踩）。 */
+let snapshotCounter = 0
+
+/** 章节文件最后 git 提交时间（ISO 文本）；非 git 仓库/无记录/文件未跟踪返回 null。 */
+async function lastCommitTime(root: string, relPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['log', '-1', '--format=%cI', '--', relPath], { cwd: root })
+    const trimmed = stdout.trim()
+    return trimmed.length > 0 ? trimmed : null
+  } catch {
+    return null
+  }
+}
 
 /** 从章节 frontmatter 的 time 锚做确定性倒序检测（不调 LLM）。 */
 function detectTimeInversions(chapters: readonly WriterEntity[]): ReturnType<typeof detectTimeAnchorInversions> {

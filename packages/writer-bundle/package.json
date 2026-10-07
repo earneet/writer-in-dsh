@@ -13,6 +13,8 @@
     "dsh-writer-engine": "*",
     "dsh-writer-skills": "*",
     "dsh-writer-export": "*",
+    "dsh-writer-rag": "*",
+    "dsh-writer-guard": "*",
     "dsh-writer-tools": "*"
   },
   "dsh": {

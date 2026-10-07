@@ -14,5 +14,14 @@
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
     - id: writer-export
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-export/src/index.ts'
+    - id: writer-rag
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-rag/src/index.ts'
+      config:
+        embeddingBackend: none
+    - id: writer-guard
+      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-guard/src/index.ts'
+      config:
+        windowSize: 5
+        failureBudget: 0.3
     - id: writer-tools
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'

@@ -375,9 +375,16 @@ export function extractChapterOutline(outlineContent: string, chapterNumber: num
   return lines.slice(start, end).join('\n').trim()
 }
 
-function chapterNumberOf(entity: WriterEntity): number | undefined {
+/**
+ * 章节序号判定（组装器与 RAG 防剧透共用的单一实现）：
+ * frontmatter number 优先；缺失/脏值回退纯数字文件名 id（"002"→2）；两者皆不可判定返回 undefined。
+ * 调用方对 undefined 必须保守处理（防剧透语境按不可见/不注入处理）。
+ */
+export function chapterNumberOf(entity: WriterEntity): number | undefined {
   const n = entity.frontmatter['number']
-  return typeof n === 'number' ? n : undefined
+  if (typeof n === 'number') return n
+  if (/^\d+$/.test(entity.id)) return Number(entity.id)
+  return undefined
 }
 
 function briefOf(entity: WriterEntity, maxChars: number): string {
@@ -453,9 +460,12 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
     remaining = optional('伏笔指令', foreshadowLines.join('\n'), remaining, false)
   }
 
-  // —— 前一章原文（防剧透：仅序号小于本章；预算内全文，超出保头截断，truncated 标记提示衔接缺失）——
+  // —— 前一章原文（防剧透：仅序号小于本章；章号不可判定的章节保守不注入——脏 frontmatter 不得绕过红线）——
   const previous = input.chapters
-    .filter((c) => (chapterNumberOf(c) ?? 0) < input.chapterNumber)
+    .filter((c) => {
+      const n = chapterNumberOf(c)
+      return n !== undefined && n < input.chapterNumber
+    })
     .sort((a, b) => (chapterNumberOf(b) ?? 0) - (chapterNumberOf(a) ?? 0))
   const prev = previous[0]
   if (prev !== undefined && remaining > 0) {
@@ -602,6 +612,10 @@ export interface ChapterWriteResult {
 // P3 治理：维护 pass 分节 schema/校验（maintenance.ts）与一致性检查纯函数（consistency.ts）
 export * from './maintenance.ts'
 export * from './consistency.ts'
+// P4 增量：RAG 纯函数（rag.ts）、guard 业务错误预算纯函数（guard.ts）、断更恢复快照渲染（recovery.ts）
+export * from './rag.ts'
+export * from './guard.ts'
+export * from './recovery.ts'
 
 /** 码点安全截断（避免 UTF-16 slice 切开代理对产生孤立代理项；emoji/扩展区汉字场景）。 */
 export function truncateCodePoints(text: string, max: number): string {

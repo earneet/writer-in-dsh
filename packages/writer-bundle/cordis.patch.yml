@@ -20,5 +20,14 @@
     # 可独立禁用（从本清单移除即可）不阻塞核心写作。
     - id: writer-export
       name: dsh-writer-export
+    # 混合检索（P4）：engine/tools 经 ctx.get 可选消费，缺席即检索增强关闭；
+    # embeddingBackend 默认 none（仅关键词），更高层 patch 可切 llm/external 档。
+    - id: writer-rag
+      name: dsh-writer-rag
+      config:
+        embeddingBackend: none
+    # 业务错误预算（P4）：tools/post-execute 观测，只注入纠偏提示不熔断；移除本行即关闭。
+    - id: writer-guard
+      name: dsh-writer-guard
     - id: writer-tools
       name: dsh-writer-tools

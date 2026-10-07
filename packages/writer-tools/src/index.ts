@@ -352,6 +352,40 @@ export function apply(ctx: Context): void {
   }))
 
   ctx.tools.register(defineTool({
+    name: 'writer_search',
+    description: '混合检索小说项目语料（章节原文切片/派生摘要/人物/伏笔/世界观条目）：关键词先行 + 语义档融合。写作时引擎会自动做防剧透过滤的检索增强注入；本工具供主动查证设定细节用。chapter_limit 填当前写作章号可启用防剧透过滤（只检索序号小于该值的章节内容）。需要 RAG 插件（dsh-writer-rag）启用。',
+    parameters: {
+      query: { type: 'string', required: true, description: '检索查询（自然语言或关键词，如 "绿焰显现的条件"）' },
+      chapter_limit: { type: 'number', description: '当前写作章号（启用防剧透过滤：只检索序号小于该值的章节内容；缺省不过滤，适合查设定与全书事实）' },
+      max_results: { type: 'number', description: '返回命中数上限（默认 5）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const rag = ctx.get('writerRag')
+      if (rag === undefined) {
+        return '检索插件未启用（profile 需安装 dsh-writer-rag；核心读写与写作不受影响）。'
+      }
+      if (args.max_results !== undefined && (!Number.isInteger(args.max_results) || args.max_results < 1 || args.max_results > 20)) {
+        throw new Error(`max_results 非法：${args.max_results}（须为 1-20 的整数）`)
+      }
+      const hits = await rag.search(args.query, {
+        ...(args.chapter_limit !== undefined ? { chapterLimit: args.chapter_limit } : {}),
+        ...(args.max_results !== undefined ? { maxResults: args.max_results } : {}),
+        signal: exec.signal,
+      })
+      if (hits.length === 0) return `无命中：${args.query}`
+      return hits.map((hit, i) => {
+        const origin = hit.chapterNumber !== undefined ? `第 ${hit.chapterNumber} 章 ` : ''
+        return `${i + 1}. 【${hit.refKind}/${hit.refId}】${origin}${hit.title !== undefined ? `${hit.title}：` : ''}${hit.snippet}（score=${hit.score.toFixed(4)}）`
+      }).join('\n')
+    },
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'export_book',
     description: '导出全书：format=txt / html（浏览器打印为 PDF）/ epub；按卷组织，正文经 XSS/XML 转义。可选 volume 只导某一卷、include_outline/include_characters 附附录、output_path 指定输出路径（相对项目根，缺省 exports/book.<format>）。需要导出插件（dsh-writer-export）启用。该操作默认需要用户确认。',
     parameters: {

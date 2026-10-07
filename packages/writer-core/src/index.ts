@@ -21,6 +21,7 @@ declare module '@deepseek-ai/cordis' {
     writer: WriterService
     writerEngine: EngineService
     writerExport: ExportService
+    writerRag: RagService
   }
   interface Events {
     /**
@@ -166,6 +167,20 @@ export abstract class EngineService extends Service {
    * @param opts - mode 默认 recompute；mark 仅删除过期派生不调 LLM。
    */
   abstract recomputeDerived(range: string, opts?: { mode?: 'mark' | 'recompute'; signal?: AbortSignal }): Promise<RecomputeDerivedResult[]>
+
+  /**
+   * 断更恢复快照：从章节/派生摘要/事件/伏笔实况渲染 Markdown 快照并写入项目
+   * `.writer/recovery-snapshot.md`（章节时间锚取 git log 最后提交时间）。
+   * @param range - 可选章节区间（"002" / "001-003"；缺省全部已写章节）。
+   */
+  abstract recoverySnapshot(range?: string): Promise<RecoverySnapshotResult>
+}
+
+/** 恢复快照结果：落盘路径 + 快照全文。 */
+export interface RecoverySnapshotResult {
+  path: string
+  markdown: string
+  chapters: number
 }
 
 /** 导出请求：格式 + 可选卷过滤/附录 + 输出路径。 */
@@ -198,4 +213,32 @@ export abstract class ExportService extends Service {
 
   /** 导出全书（按卷组织，XSS/XML 转义），写入项目内输出文件并返回路径与统计。 */
   abstract exportBook(request: ExportRequest): Promise<ExportResult>
+}
+
+/**
+ * 检索增强选项：命中数上限、防剧透章号上限（章节块只保留序号小于该值的）、取消信号。
+ */
+export interface RagSearchOptions {
+  maxResults?: number
+  /** 防剧透：只检索序号小于该章号的章节块（与组装器防剧透红线同语义）。 */
+  chapterLimit?: number
+  signal?: AbortSignal
+}
+
+/**
+ * 混合检索服务抽象基线（P4）：关键词先行（自实现 TF-IDF）+ 可选语义档（后端 Config 驱动），
+ * RRF 融合。检索对象 = 章节原文 + 派生摘要 + 人物/伏笔/世界观条目。
+ * 由 `dsh-writer-rag`（Provider，inject writer）实现并发布 `ctx.writerRag`；
+ * engine/tools 经 `ctx.get('writerRag')` 可选消费（缺席即检索增强关闭，不阻塞写作）。
+ */
+export abstract class RagService extends Service {
+  protected constructor(ctx: Context) {
+    super(ctx, 'writerRag')
+  }
+
+  /**
+   * 混合检索：返回按融合得分降序的命中（snippet 已截断，含来源引用供核对）。
+   * @param query - 查询文本（通常为大纲小节 + 写作指令）。
+   */
+  abstract search(query: string, opts?: RagSearchOptions): Promise<import('dsh-writer-domain').RagHit[]>
 }

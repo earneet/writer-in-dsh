@@ -7,7 +7,7 @@
  */
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join, dirname, posix, relative, sep } from 'node:path'
 import {
   contentHash, parseFrontmatter, serializeEntity,
@@ -150,6 +150,13 @@ export default class WriterStoreService extends WriterService {
     }
     await this.ensureIndex()
     this.index!.get(kind)!.set(id, entity)
+    // 解析快照缓存同步锚定新落盘文件（save 更新索引后缓存必须一致：
+    // 同刻 mtime + 同尺寸的改写在 stat 锚下不可区分，落盘方主动刷新是唯一可靠锚）
+    const writtenInfo = await stat(absPath)
+    this.parseCache.set(absPath, {
+      mtimeMs: writtenInfo.mtimeMs, size: writtenInfo.size,
+      ctimeMs: writtenInfo.ctimeMs, ino: Number(writtenInfo.ino), entity,
+    })
     this.ctx.emit('writer/entity-saved', entity)
     return entity
   }
@@ -257,6 +264,14 @@ export default class WriterStoreService extends WriterService {
 
   private indexPromise: Promise<void> | undefined
 
+  /**
+   * 解析快照缓存（P4 关闭轮次 8 限制②）：absPath → (mtimeMs,size,ctimeMs,ino) 锚定的已解析实体。
+   * 多处 list 共用一次重建时，未变更文件的 readFile+parse 直接复用（索引重建仍是全量
+   * readdir+stat 扫描，「list 恒反映磁盘现状」语义不变——stat 任一变化即失效重读；
+   * ctime/ino 覆盖 rename 保 mtime 与同刻同尺寸改写两类锚漂移）。
+   */
+  private parseCache = new Map<string, { mtimeMs: number; size: number; ctimeMs: number; ino: number; entity: WriterEntity | undefined }>()
+
   /** 每次读写前刷新索引（P1 语义：list 恒反映磁盘现状；in-flight 去重共享同一次重建）。 */
   private ensureIndex(): Promise<void> {
     return this.rebuildIndex()
@@ -273,14 +288,14 @@ export default class WriterStoreService extends WriterService {
     this.index = next
   }
 
-  /** 扫描某 kind 的全部实体文件（索引重建的单一实现）。 */
+  /** 扫描某 kind 的全部实体文件（索引重建的单一实现；走解析快照缓存）。 */
   private async scanKind(kind: EntityKind): Promise<WriterEntity[]> {
     const layout = KIND_LAYOUT[kind]
     if ('file' in layout) {
       const abs = join(this.projectRoot, layout.file)
       // 单文件实体坏 frontmatter 同样不毒化全局索引（与目录分支同款隔离）
       try {
-        const entity = await this.readRaw(kind, layout.file, abs)
+        const entity = await this.readRawCached(kind, layout.file, abs)
         return entity === undefined ? [] : [entity]
       } catch (err) {
         this.warnSkipped(layout.file, err)
@@ -299,13 +314,34 @@ export default class WriterStoreService extends WriterService {
       if (!name.endsWith('.md')) continue
       // 单文件坏 frontmatter 不毒化全局索引：跳过并告警（索引是缓存，坏文件修复后 rebuild 即恢复）
       try {
-        const entity = await this.readRaw(kind, posix.join(layout.dir, name), join(dirAbs, name))
+        const entity = await this.readRawCached(kind, posix.join(layout.dir, name), join(dirAbs, name))
         if (entity !== undefined) entities.push(entity)
       } catch (err) {
         this.warnSkipped(`${layout.dir}/${name}`, err)
       }
     }
     return entities
+  }
+
+  /**
+   * 快照读：mtime+size 未变即复用上次解析结果（get() 的直读磁盘路径不受影响，保持被动新鲜度）。
+   * 缓存条目含 undefined（文件缺席/坏文件），缺席同样被锚定避免重复探测。
+   */
+  private async readRawCached(kind: EntityKind, relPath: string, absPath: string): Promise<WriterEntity | undefined> {
+    let anchor: { mtimeMs: number; size: number; ctimeMs: number; ino: number }
+    try {
+      const info = await stat(absPath)
+      anchor = { mtimeMs: info.mtimeMs, size: info.size, ctimeMs: info.ctimeMs, ino: Number(info.ino) }
+    } catch {
+      this.parseCache.set(absPath, { mtimeMs: -1, size: -1, ctimeMs: -1, ino: -1, entity: undefined })
+      return undefined
+    }
+    const cached = this.parseCache.get(absPath)
+    if (cached !== undefined && cached.mtimeMs === anchor.mtimeMs && cached.size === anchor.size
+      && cached.ctimeMs === anchor.ctimeMs && cached.ino === anchor.ino) return cached.entity
+    const entity = await this.readRaw(kind, relPath, absPath)
+    this.parseCache.set(absPath, { ...anchor, entity })
+    return entity
   }
 
   private warnSkipped(relPath: string, err: unknown): void {
