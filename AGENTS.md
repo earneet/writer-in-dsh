@@ -45,7 +45,8 @@ packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 i
 ├── writer-domain/   # 纯函数域库（frontmatter/hash/伏笔状态机等，无插件行）
 ├── writer-core/     # Service Definition：WriterService 抽象基类 + typed events
 ├── writer-store/    # Provider：Markdown SoT 存储，发布 ctx.writer
-├── writer-tools/    # Consumer：writer_read / writer_update 工具
+├── writer-engine/   # Provider：写作引擎（三模式/审稿），发布 ctx.writerEngine
+├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update
 ├── writer-skills/   # bundled skill provider + assets/<name>/SKILL.md
 └── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→skills→tools
 example-project/     # 验证用示例小说项目（Markdown SoT）
@@ -64,10 +65,11 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 
 ## 当前状态
 
-**P1 + P1.5 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-6）：
+**P1 + P1.5 + P2 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-7）：
 
-- 6 包可用：domain / core / store / tools / skills / bundle；示例项目 + dev overlay 就绪。
-- 已验证：单测 27/27、typecheck 零错；overlay 与 profile 双形态下技能发现/加载、实体读写、乐观锁（read-before-update）闭环。
-- 已知限制 12 条在案（§8 轮次 2/6）：磁盘索引与 fsync 缺席、TOCTOU 并发、publish 前待办（去 private、依赖精确化、lib/ 预构建）等。
+- 7 包可用：domain / core / store / engine / tools / skills / bundle；示例项目 + dev overlay 就绪。
+- P2（写作）：writer-engine 三模式（full/assist/rewrite 补丁协议 + 丢句守卫 + JSON 形守卫）、上下文组装器（预算参数化/防剧透/伏笔指令分级）、review_chapter（3+1 维 + quote 幻觉过滤）、foreshadow_update（状态机 + milestones）、chapter-writing / foreshadow-guide 技能；store (kind,id) 串行化；工具体观测 exec.signal。
+- 已验证：单测 60/60、typecheck 零错；overlay+headless 与 profile 双形态下三模式/审稿/伏笔闭环实测。
+- 已知限制见 §8 轮次 2/6/7（磁盘索引与 fsync 缺席、publish 前待办、rewrite 部分命中不自动降级等）。
 
-**下一步（P2 写作）**：`writer-engine` 三模式（full/assist/rewrite 补丁协议）+ 上下文组装器接入 + `review_chapter` + 伏笔工具；补 `chapter-writing` / `foreshadow-guide` 技能；工具体观测 `exec.signal`；并发 save 以 (kind,id) promise 链串行化。验收：模型按准则+大纲生成一章，rewrite 走补丁协议。
+**下一步（P3 治理）**：维护 pass（两次调用：摘要 + 事实/伏笔/人物状态抽取，分节 schema + 引用存在性校验）+ 一致性检查（按预算分批）+ recompute_derived + writer_stats + 导出包 writer-export（TXT/HTML/ePub）。
