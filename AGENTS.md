@@ -46,9 +46,10 @@ packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 i
 ├── writer-core/     # Service Definition：WriterService 抽象基类 + typed events
 ├── writer-store/    # Provider：Markdown SoT 存储，发布 ctx.writer
 ├── writer-engine/   # Provider：写作引擎（三模式/审稿），发布 ctx.writerEngine
-├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update
+├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update / consistency_check / recompute_derived / writer_stats / archive_point / export_book
 ├── writer-skills/   # bundled skill provider + assets/<name>/SKILL.md
-└── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→skills→tools
+├── writer-export/   # Consumer：TXT/HTML/ePub 导出（发布 ctx.writerExport）
+└── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→engine→skills→export→tools
 example-project/     # 验证用示例小说项目（Markdown SoT）
 dev.cordis.yml       # 本地开发 overlay（绝对路径引用各包 src/index.ts）
 docs/                # 本项目设计文档（落地规划、审查裁定）
@@ -65,11 +66,11 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 
 ## 当前状态
 
-**P1 + P1.5 + P2 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-7）：
+**P1 + P1.5 + P2 + P3 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-8）：
 
-- 7 包可用：domain / core / store / engine / tools / skills / bundle；示例项目 + dev overlay 就绪。
-- P2（写作）：writer-engine 三模式（full/assist/rewrite 补丁协议 + 丢句守卫 + JSON 形守卫）、上下文组装器（预算参数化/防剧透/伏笔指令分级）、review_chapter（3+1 维 + quote 幻觉过滤）、foreshadow_update（状态机 + milestones）、chapter-writing / foreshadow-guide 技能；store (kind,id) 串行化；工具体观测 exec.signal。
-- 已验证：单测 60/60、typecheck 零错；overlay+headless 与 profile 双形态下三模式/审稿/伏笔闭环实测。
-- 已知限制见 §8 轮次 2/6/7（磁盘索引与 fsync 缺席、publish 前待办、rewrite 部分命中不自动降级等）。
+- 8 包可用：domain / core / store / engine / tools / skills / export / bundle；示例项目 + dev overlay 就绪。
+- P3（治理）：维护 pass（保存后异步，摘要 + 事实/伏笔/人物状态抽取两次调用；分节 schema + 引用存在性校验 + 按节重试；同章 inflight 去重 + 完成 hash 锚定；产出写回 `.writer/derived/` + `pending.md` 待办）；一致性检查（按预算分批全书覆盖 + 维度/schema 对齐 + 引用校验 + 时间锚倒序检测，报告预览不持久化）；recompute_derived（mark/recompute）；writer_stats / archive_point（git 显式存档点）；writer-export（TXT/HTML/ePub，XSS/XML 转义，export_book 默认 ask 权限路径）。
+- 已验证：单测 94/94、typecheck 零错；overlay+headless 与 profile 双形态实测（统计/维护 pass 闭环/hash 锚定 up-to-date/一致性检查报告/存档点双路径/export ask fail-closed）。
+- 已知限制见 §8 轮次 2/6/7/8。
 
-**下一步（P3 治理）**：维护 pass（两次调用：摘要 + 事实/伏笔/人物状态抽取，分节 schema + 引用存在性校验）+ 一致性检查（按预算分批）+ recompute_derived + writer_stats + 导出包 writer-export（TXT/HTML/ePub）。
+**下一步（P4 增量）**：RAG 检索包（混合检索、可换 embedding 后端）+ guard（业务错误预算）+ 节拍模式评估。
