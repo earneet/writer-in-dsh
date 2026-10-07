@@ -598,3 +598,7 @@ export interface ChapterWriteResult {
   patchStats?: { applied: number; skipped: number; skippedReasons: string[] }
   droppedSentences?: string[]
 }
+
+// P3 治理：维护 pass 分节 schema/校验（maintenance.ts）与一致性检查纯函数（consistency.ts）
+export * from './maintenance.ts'
+export * from './consistency.ts'
