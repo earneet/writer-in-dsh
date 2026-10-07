@@ -10,7 +10,7 @@ import { defineTool, type PreToolDecision, type ToolRunContext } from '@deepseek
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
-  ENTITY_KINDS, parseMilestones, transitionForeshadow,
+  ENTITY_KINDS, parseChapterRange, parseMilestones, transitionForeshadow,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
@@ -26,7 +26,7 @@ export function apply(ctx: Context): void {
   // export_book 默认走 ask 权限路径（R-改进：落点在 pre-execute 决策层而非 policy 旋钮；
   // 审批策略 never 时宿主会自动拒绝，allow 时放行——本插件不自带 PermissionManager）
   ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
-    if (exec.name === 'export_book') return { kind: 'ask' }
+    if (exec.name === 'export_book') return { kind: 'ask', reason: '导出整本书并写入项目目录文件' }
     return next()
   })
 
@@ -244,6 +244,9 @@ export function apply(ctx: Context): void {
       exec.signal.throwIfAborted()
       const engine = getEngine(ctx)
       if ('unavailable' in engine) return engine.unavailable
+      if (args.mode !== undefined && args.mode !== 'recompute' && args.mode !== 'mark') {
+        throw new Error(`未知 mode：${args.mode}（可选 recompute / mark）`)
+      }
       const mode = args.mode === 'mark' ? 'mark' : 'recompute'
       const results = await engine.recomputeDerived(args.chapter_range, { mode, signal: exec.signal })
       return [
@@ -262,16 +265,20 @@ export function apply(ctx: Context): void {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute() {
-      const [chapters, characters, plots, events, derivedIds] = await Promise.all([
+      const [chapters, characters, plots, events] = await Promise.all([
         ctx.writer.list('chapter'),
         ctx.writer.list('character'),
         ctx.writer.list('plot'),
         ctx.writer.get('event', 'event'),
-        ctx.writer.listDerived('maintenance'),
       ])
       if (chapters.length === 0) return '项目暂无已写章节。'
-      const derivedSet = new Set(derivedIds)
       const totalChars = chapters.reduce((sum, c) => sum + c.content.length, 0)
+      // 覆盖率按新鲜度计：派生存在且 sourceHash 与当前章节 hash 一致才算覆盖（过期派生 = 待维护）
+      const derivedEntries = await Promise.all(chapters.map(async (c) => {
+        const derived = await ctx.writer.readDerived('maintenance', c.id) as { sourceHash?: string } | undefined
+        return derived !== undefined && derived.sourceHash === c.hash
+      }))
+      const stale = chapters.filter((_, i) => !derivedEntries[i]).map((c) => c.id)
       const volumes = new Map<string, number>()
       for (const c of chapters) {
         const v = String(c.frontmatter['volume'] ?? '').trim()
@@ -283,7 +290,6 @@ export function apply(ctx: Context): void {
         const s = String(p.frontmatter['status'] ?? 'planned')
         status.set(s, (status.get(s) ?? 0) + 1)
       }
-      const stale = chapters.filter((c) => !derivedSet.has(c.id)).map((c) => c.id)
       const lines = [
         `章节：${chapters.length} 章，共约 ${totalChars} 字`,
         `卷分布：${[...volumes.entries()].map(([v, n]) => `${v}×${n}`).join('、')}`,
@@ -314,10 +320,17 @@ export function apply(ctx: Context): void {
         : `archive point ${new Date().toISOString()}`
       try {
         await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root })
-      } catch {
+      } catch (err) {
+        // git 未安装（ENOENT）与「不是 git 仓库」是两种排障路径，区分提示
+        if ((err as { code?: string }).code === 'ENOENT') {
+          return 'git 不可用（未安装或不在 PATH）。请安装 git 后再使用存档点。'
+        }
         return `项目目录不是 git 仓库：${root}。请先在项目目录执行 git init 后再使用存档点。`
       }
       await execFileAsync('git', ['add', '-A'], { cwd: root })
+      // 派生缓存与导出产物不入存档（.writer/derived 可弃、exports 含整本 epub 会让仓库快速膨胀）；
+      // 未 gitignore 的项目由这里显式取消暂存，已 gitignore 的项目该命令是空操作
+      await execFileAsync('git', ['reset', '--', '.writer', 'exports'], { cwd: root }).catch(() => {})
       // 无变更预检：git commit 在工作区干净时以非零退出且提示走 stdout——预检避免把正常空存档当错误
       const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: root })
       if (status.stdout.trim().length === 0) {
@@ -372,14 +385,10 @@ export function apply(ctx: Context): void {
   }))
 }
 
-/** 章节区间 scope 解析："002" 或 "001-003" → {from,to}（倒序抛错）。 */
+/** 章节区间 scope 解析（委托 domain parseChapterRange，单一实现）：取区间端点为 {from,to}。 */
 function parseScope(raw: string): { from: string; to: string } {
-  const single = raw.match(/^(\d{3})$/)
-  if (single !== null) return { from: single[1], to: single[1] }
-  const span = raw.match(/^(\d{3})-(\d{3})$/)
-  if (span === null) throw new Error(`章节区间格式非法：${JSON.stringify(raw)}（应为 "002" 或 "001-003"）`)
-  if (span[2] < span[1]) throw new Error(`章节区间倒序：${raw}`)
-  return { from: span[1], to: span[2] }
+  const ids = parseChapterRange(raw)
+  return { from: ids[0], to: ids[ids.length - 1] }
 }
 
 /** git 输出首行（Windows CRLF 归一）。 */
