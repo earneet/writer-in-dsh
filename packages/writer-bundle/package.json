@@ -1,0 +1,21 @@
+{
+  "name": "dsh-writer-bundle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "cordis.patch.yml"
+  ],
+  "dependencies": {
+    "dsh-writer-domain": "*",
+    "dsh-writer-core": "*",
+    "dsh-writer-store": "*",
+    "dsh-writer-skills": "*",
+    "dsh-writer-tools": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
