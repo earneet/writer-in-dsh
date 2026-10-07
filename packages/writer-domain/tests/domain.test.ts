@@ -19,11 +19,12 @@ test('parseFrontmatter：值含冒号取首个分隔', () => {
   assert.equal(p.frontmatter.title, '冒号: 在值里')
 })
 
-test('parseFrontmatter：数字推断限纯十进制（0x10/1e3/1_000 保持字符串）', () => {
-  const p = parseFrontmatter('---\nhex: "0x10"\nsci: "1e3"\nunder: "1_000"\nreal: 3.14\nneg: -7\n---\nx')
+test('parseFrontmatter：数字推断限纯十进制（0x10/1e3/1_000/前导零保持字符串）', () => {
+  const p = parseFrontmatter('---\nhex: "0x10"\nsci: "1e3"\nunder: "1_000"\nzero: 002\nreal: 3.14\nneg: -7\n---\nx')
   assert.equal(p.frontmatter.hex, '0x10')
   assert.equal(p.frontmatter.sci, '1e3')
   assert.equal(p.frontmatter.under, '1_000')
+  assert.equal(p.frontmatter.zero, '002')
   assert.equal(p.frontmatter.real, 3.14)
   assert.equal(p.frontmatter.neg, -7)
 })

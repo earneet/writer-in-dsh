@@ -76,8 +76,8 @@ function parseValue(valueRaw: string): FrontmatterValue {
   }
   if (valueRaw === 'true') return true
   if (valueRaw === 'false') return false
-  // 纯十进制数字才转 number（排除 0x/1e3/1_000 等宽推断）
-  if (/^-?\d+(\.\d+)?$/.test(valueRaw)) return Number(valueRaw)
+  // 纯十进制数字才转 number（排除 0x/1e3/1_000 与前导零——前导零是字符串语义，如章节号 "002"）
+  if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(valueRaw)) return Number(valueRaw)
   if (valueRaw.startsWith('{') || valueRaw.startsWith('[')) return valueRaw // JSON 内联保留原文（域库不做深解析）
   return stripQuotes(valueRaw)
 }

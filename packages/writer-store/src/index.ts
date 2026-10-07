@@ -86,6 +86,8 @@ export default class WriterStoreService extends WriterService {
   }
 
   async save(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
+    // project（writer.yaml）是项目配置而非创作实体，store 层即只读（tools/engine 任何路径都不可覆盖）
+    if (kind === 'project') throw new Error('project 实体（writer.yaml）为项目配置，只读不可写入')
     assertSafeId(kind, id)
     const existing = await this.readFromDisk(kind, id)
     if (expectHash === undefined) {
@@ -168,10 +170,22 @@ export default class WriterStoreService extends WriterService {
     const entities: WriterEntity[] = []
     for (const name of names.sort()) {
       if (!name.endsWith('.md')) continue
-      const entity = await this.readRaw(kind, posix.join(layout.dir, name), join(dirAbs, name))
-      if (entity !== undefined) entities.push(entity)
+      // 单文件坏 frontmatter 不毒化全局索引：跳过并告警（索引是缓存，坏文件修复后 rebuild 即恢复）
+      try {
+        const entity = await this.readRaw(kind, posix.join(layout.dir, name), join(dirAbs, name))
+        if (entity !== undefined) entities.push(entity)
+      } catch (err) {
+        this.warnSkipped(`${layout.dir}/${name}`, err)
+      }
     }
     return entities
+  }
+
+  private warnSkipped(relPath: string, err: unknown): void {
+    const logger = (this.ctx as { logger?: (name: string) => { warn: (msg: string) => void } }).logger?.('writer-store')
+    const message = `跳过无法解析的实体文件 ${relPath}：${String(err)}`
+    if (logger !== undefined) logger.warn(message)
+    else console.warn(`[writer-store] ${message}`)
   }
 
   private async readFromDisk(kind: EntityKind, id: string): Promise<WriterEntity | undefined> {

@@ -135,3 +135,26 @@ test('目录缺失的 kind 列表为空', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('N1 回归：坏 frontmatter 文件不毒化全局索引', async () => {
+  const { store, root } = await makeStore()
+  try {
+    await store.save('chapter', '001', { content: '好文件' })
+    await mkdir(join(root, 'chapters'), { recursive: true })
+    await writeFile(join(root, 'chapters/bad.md'), '---\n没有冒号的坏行\n---\nx', 'utf8')
+    const chapters = await store.list('chapter')
+    assert.equal(chapters.length, 1, '坏文件被跳过，好文件仍在')
+    assert.equal(chapters[0].id, '001')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('N3 回归：store 层拒绝写入 project 配置', async () => {
+  const { store, root } = await makeStore()
+  try {
+    await assert.rejects(() => store.save('project', 'project', { content: 'x' }), /只读/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
