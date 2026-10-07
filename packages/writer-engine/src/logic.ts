@@ -117,19 +117,4 @@ export function planSectionRetry(validations: {
   return { sections, feedback }
 }
 
-/**
- * 改稿期重算的区间解析："002" 单章或 "001-003" 区间 → 章节三位 id 列表（含端点）。
- * 区间倒序/越界（>999）抛错；跨 999 进位不支持。
- */
-export function parseChapterRange(range: string): string[] {
-  const single = range.match(/^(\d{3})$/)
-  if (single !== null) return [single[1]]
-  const span = range.match(/^(\d{3})-(\d{3})$/)
-  if (span === null) throw new Error(`章节区间格式非法：${JSON.stringify(range)}（应为 "002" 或 "001-003"）`)
-  const from = Number(span[1])
-  const to = Number(span[2])
-  if (to < from) throw new Error(`章节区间倒序：${range}`)
-  const ids: string[] = []
-  for (let n = from; n <= to; n++) ids.push(String(n).padStart(3, '0'))
-  return ids
-}
+export { parseChapterRange } from 'dsh-writer-domain'

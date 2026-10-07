@@ -121,11 +121,12 @@ export function buildExtractionSystemPrompt(): string {
   ].join('\n')
 }
 
-/** 维护 pass 调用②的 user 提示词：可用实体清单 + 章节正文 + 可选的重试反馈。 */
+/** 维护 pass 调用②的 user 提示词：可用实体清单 + 章节正文 + 可选的重试反馈（只重做被拒收的节）。 */
 export function buildExtractionUserPrompt(
   chapter: WriterEntity,
   refs: { characters: readonly string[]; plots: readonly string[] },
   retryFeedback?: readonly string[],
+  retrySections?: readonly ('facts' | 'foreshadowEvents' | 'characterStates')[],
 ): string {
   const parts = [
     '## 可用实体清单',
@@ -135,7 +136,10 @@ export function buildExtractionUserPrompt(
     chapter.content,
   ]
   if (retryFeedback !== undefined && retryFeedback.length > 0) {
-    parts.push(`## 上次输出被拒收的原因（请修正后重新输出完整 JSON 对象）\n${retryFeedback.map((f) => `- ${f}`).join('\n')}`)
+    const sectionNote = retrySections !== undefined && retryFeedback.length > 0
+      ? `本次只需重新输出以下节（JSON 对象可只含这些节，已通过的节无需重发）：${retrySections.join('、')}。`
+      : ''
+    parts.push(`## 上次输出被拒收的原因（请修正后重新输出）\n${retryFeedback.map((f) => `- ${f}`).join('\n')}\n${sectionNote}`)
   }
   return parts.join('\n')
 }
@@ -151,7 +155,7 @@ export function buildConsistencySystemPrompt(): string {
     '以「基准材料」（创作准则/大纲/伏笔档案/关键事件）为准绳，审读本批章节，找出前后矛盾。',
     '只输出一个 JSON 对象（可被 JSON.parse），不要任何其他文字：',
     '{"summary":"本批总体评估（1-2 句）","issues":[{"dimension":"维度名","severity":"high|medium|low","refs":["涉及实体引用，如 chapter/003、plot/green-flame、character/elin"],"description":"矛盾描述（指明两侧冲突的内容）","evidence":"支撑判断的原文片段（可选）"}]}',
-    'refs 必须只引用材料中出现的实体；引用不存在的实体的条目会被丢弃。没有矛盾不要编造。',
+    'refs 必须只引用材料中出现的实体；条目的全部引用都不存在时该条目会被丢弃——请至少给出一个可定位实体引用。没有矛盾不要编造。',
   ].join('\n')
 }
 

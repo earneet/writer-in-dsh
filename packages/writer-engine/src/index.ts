@@ -13,8 +13,10 @@ import {
   applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions,
   extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, parseConsistencyBatchOutput,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
-  validateExtractionSections, type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport,
-  type MaintenanceDerived, type MaintenanceExtraction, type ReviewReport, type WriterEntity,
+  truncateBatchBodies, truncateCodePoints, validateExtractionSections,
+  type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport,
+  type ExtractionSectionName, type MaintenanceDerived, type MaintenanceExtraction,
+  type ReviewReport, type TruncatedBody, type WriterEntity,
 } from 'dsh-writer-domain'
 import {
   EngineService, type ConsistencyScope, type MaintenancePassResult, type RecomputeDerivedResult,
@@ -131,16 +133,29 @@ export default class WriterEngineServiceImpl extends EngineService {
 
   // —— 维护 pass（保存后异步，默认两次调用；inflight 去重 + 完成 hash 锚定）——
 
-  async maintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }): Promise<MaintenancePassResult> {
+  async maintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }, depth = 0): Promise<MaintenancePassResult> {
     if (!CHAPTER_ID_RE.test(chapterId)) throw new Error(`章节 id 必须为三位序号：${JSON.stringify(chapterId)}`)
-    // 同章 inflight 去重：并发触发共享同一次执行（返回同一 Promise，不重复调用模型）
+    // 同章 inflight 去重：并发触发共享同一次执行（返回同一 Promise，不重复调用模型）。
+    // force 请求不共享非 force 执行（否则 up-to-date 短路会吞掉强制语义）：先等 inflight 结束再单独跑。
     const inflight = this.maintenanceInflight.get(chapterId)
-    if (inflight !== undefined) return inflight
+    if (inflight !== undefined && opts?.force !== true) return inflight
+    if (inflight !== undefined) await inflight.catch(() => {})
     const run = this.doMaintenancePass(chapterId, opts).finally(() => {
       this.maintenanceInflight.delete(chapterId)
     })
     this.maintenanceInflight.set(chapterId, run)
-    return run
+    const result = await run
+    // TOCTOU 兜底：执行期间章节又被改写（inflight 去重吞掉了新保存触发的 pass）→ 补跑一次（仅一层，防递归放大）
+    if (depth < 1) {
+      const [latest, derived] = await Promise.all([
+        this.ctx.writer.get('chapter', chapterId),
+        this.ctx.writer.readDerived('maintenance', chapterId) as Promise<MaintenanceDerived | undefined>,
+      ])
+      if (latest !== undefined && derived !== undefined && derived.sourceHash !== latest.hash) {
+        return this.maintenancePass(chapterId, { force: true, signal: opts?.signal }, depth + 1)
+      }
+    }
+    return result
   }
 
   private async doMaintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }): Promise<MaintenancePassResult> {
@@ -163,46 +178,62 @@ export default class WriterEngineServiceImpl extends EngineService {
       buildSummarySystemPrompt(), buildSummaryUserPrompt(chapter), opts?.signal,
     )).trim()
 
-    // 调用②：事实/伏笔/人物状态抽取（分节校验 + 按节重试）
+    // 调用②：事实/伏笔/人物状态抽取（分节校验 + 按节重试）。
+    // 重试只替换被拒收的节（模型可只回修正节），上一轮已通过的节原样保留——防「整轮覆盖清空已通过节」。
     const extraction: MaintenanceExtraction = { facts: [], foreshadowEvents: [], characterStates: [] }
     const retriedSections: string[] = []
+    let rejected: string[] | undefined
     let feedback: string[] | undefined
+    let retrySections: readonly ExtractionSectionName[] = ['facts', 'foreshadowEvents', 'characterStates']
     for (let attempt = 0; attempt <= this.extractionRetries; attempt++) {
       const raw = await this.generate(
-        buildExtractionSystemPrompt(), buildExtractionUserPrompt(chapter, refs, feedback), opts?.signal,
+        buildExtractionSystemPrompt(), buildExtractionUserPrompt(chapter, refs, feedback, retrySections), opts?.signal,
       )
       const parsed = parseMaintenanceExtraction(raw)
       if (parsed === undefined) {
         if (attempt === this.extractionRetries) {
           throw new Error(`维护 pass 抽取输出无法解析（已重试 ${this.extractionRetries} 次；输出前 200 字：${raw.slice(0, 200)}）`)
         }
-        feedback = ['上次输出不是合法的 JSON 对象，请只输出规定 schema 的 JSON']
+        feedback = ['上次输出不是合法的 JSON 对象，请只输出规定 schema 的 JSON（可只含需修正的节）']
         continue
       }
       const validations = validateExtractionSections(parsed, refs)
-      extraction.facts = validations.facts.entries
-      extraction.foreshadowEvents = validations.foreshadowEvents.entries
-      extraction.characterStates = validations.characterStates.entries
+      for (const section of retrySections) {
+        if (section === 'facts') extraction.facts = validations.facts.entries
+        else if (section === 'foreshadowEvents') extraction.foreshadowEvents = validations.foreshadowEvents.entries
+        else extraction.characterStates = validations.characterStates.entries
+      }
       const retry = planSectionRetry(validations)
-      if (retry.sections.length === 0) break
+      if (retry.sections.length === 0) {
+        rejected = undefined
+        break
+      }
       if (attempt === this.extractionRetries) {
-        // 重试预算耗尽：保留已通过的条目，拒收原因告警不静默
+        // 重试预算耗尽：保留已通过条目，部分拒收显式标记（partial）并告警，不静默
+        rejected = retry.feedback
         this.loggerWarn(`维护 pass 抽取部分拒收（chapter/${chapterId}）：${retry.feedback.join('；')}`)
         break
       }
       if (!retriedSections.includes(retry.sections.join('+'))) retriedSections.push(retry.sections.join('+'))
       feedback = retry.feedback
+      retrySections = retry.sections
     }
 
-    // 写回派生数据 + pending.md 待办清单（供人确认，不自动改伏笔/人物实体）
+    // 写回派生数据 + pending.md 待办清单（供人确认，不自动改伏笔/人物实体）。
+    // TOCTOU 防护：落盘前重读章节——执行期间被改写则跳过 pending 追加（旧版本待办会误导确认），
+    // 派生仍写入（锚定旧 hash，由 maintenancePass 的补跑覆盖）。
+    const changedDuringRun = (await this.ctx.writer.get('chapter', chapterId))?.hash !== chapter.hash
     const record: MaintenanceDerived = {
       sourceHash: chapter.hash,
       summary,
       extraction,
       updatedAt: new Date().toISOString(),
+      ...(rejected !== undefined ? { partial: true, rejected } : {}),
     }
     await this.ctx.writer.writeDerived('maintenance', chapterId, record)
-    await this.ctx.writer.appendPending(renderPendingSection(chapterId, record))
+    if (!changedDuringRun) {
+      await this.ctx.writer.appendPending(renderPendingSection(chapterId, record))
+    }
     const result: MaintenancePassResult = {
       chapterId,
       status: 'done',
@@ -210,6 +241,8 @@ export default class WriterEngineServiceImpl extends EngineService {
       summary,
       extraction,
       ...(retriedSections.length > 0 ? { retriedSections } : {}),
+      ...(rejected !== undefined ? { partial: true, rejected } : {}),
+      ...(changedDuringRun ? { superseded: true } : {}),
     }
     this.ctx.emit('writer/maintenance-pass', result)
     return result
@@ -219,7 +252,7 @@ export default class WriterEngineServiceImpl extends EngineService {
 
   async consistencyCheck(scope?: ConsistencyScope, signal?: AbortSignal): Promise<ConsistencyReport> {
     signal?.throwIfAborted()
-    const [principles, outline, characters, plots, events, chapters, worldbuilding] = await Promise.all([
+    const [principles, outline, characters, plots, events, chapters, worldbuilding, styleRefs] = await Promise.all([
       this.ctx.writer.get('principles', 'principles'),
       this.ctx.writer.get('outline', 'outline'),
       this.ctx.writer.list('character'),
@@ -227,6 +260,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       this.ctx.writer.get('event', 'event'),
       this.ctx.writer.list('chapter'),
       this.ctx.writer.list('worldbuilding'),
+      this.ctx.writer.list('style'),
     ])
     const inScope = chapters.filter((c) => {
       if (scope?.from !== undefined && c.id < scope.from) return false
@@ -234,9 +268,9 @@ export default class WriterEngineServiceImpl extends EngineService {
       return true
     })
     if (inScope.length === 0) throw new Error('范围内没有已写章节，无法执行一致性检查')
-    // 基准材料：principles 全量 + 大纲（预算内截断保头）+ 伏笔/事件摘要
+    // 基准材料：principles 全量 + 大纲（预算内截断保头）+ 伏笔/事件摘要（码点安全截断）
     const brief = (entities: readonly WriterEntity[], max: number): string =>
-      entities.map((e) => `- ${e.id}（${String(e.frontmatter['status'] ?? '')}）：${e.content.replace(/\s+/g, ' ').trim().slice(0, max)}`).join('\n')
+      entities.map((e) => `- ${e.id}（${String(e.frontmatter['status'] ?? '')}）：${truncateCodePoints(e.content.replace(/\s+/g, ' ').trim(), max)}`).join('\n')
     const baselineChars = Math.floor(this.genParams.contextBudgetChars / 2)
     const baseline = {
       principles: principles?.content,
@@ -253,12 +287,13 @@ export default class WriterEngineServiceImpl extends EngineService {
       return { id: chapter.id, content: chapter.content, summary: fresh === true ? derived.summary : undefined }
     }))
     const batches = planConsistencyBatches(inputs, batchBudget)
-    // 引用存在性集合：裸 id 与 kind/id 两种形态都认；基准材料实体（principles/outline/event/worldbuilding）一并纳入
-    const validRefs = new Set<string>(['principles', 'outline', 'event', 'worldbuilding'])
+    // 引用存在性集合：裸 id 与 kind/id 两种形态都认；基准材料与全部实体 kind 一并纳入
+    const validRefs = new Set<string>(['principles', 'outline', 'event', 'event/event', 'worldbuilding'])
     for (const c of inScope) { validRefs.add(c.id); validRefs.add(`chapter/${c.id}`) }
     for (const c of characters) { validRefs.add(c.id); validRefs.add(`character/${c.id}`) }
     for (const p of plots) { validRefs.add(p.id); validRefs.add(`plot/${p.id}`) }
     for (const w of worldbuilding) { validRefs.add(w.id); validRefs.add(`worldbuilding/${w.id}`) }
+    for (const s of styleRefs) { validRefs.add(s.id); validRefs.add(`style/${s.id}`) }
     const issues: ConsistencyReport['issues'] = []
     const summaries: string[] = []
     for (const batch of batches) {
@@ -270,8 +305,11 @@ export default class WriterEngineServiceImpl extends EngineService {
         const body = input.summary !== undefined && input.summary.length > 0 ? input.summary : chapter.content
         return { id, number: typeof chapter.frontmatter['number'] === 'number' ? chapter.frontmatter['number'] : Number(id), title, body }
       })
+      // 分批截断落地：批次正文总量超预算时水fill 截断（truncated 标记与实际截断一致，不超发）
+      const truncatedBodies: TruncatedBody[] = truncateBatchBodies(batchChapters.map((c) => c.body), batchBudget)
+      const promptChapters = batchChapters.map((c, i) => ({ ...c, body: truncatedBodies[i].body }))
       const raw = await this.generate(
-        buildConsistencySystemPrompt(), buildConsistencyUserPrompt(baseline, batchChapters), signal,
+        buildConsistencySystemPrompt(), buildConsistencyUserPrompt(baseline, promptChapters), signal,
       )
       const parsed = parseConsistencyBatchOutput(raw, validRefs)
       if (parsed === undefined) throw new Error(`一致性检查某批次输出无法解析（章节 ${batch.chapters.join('、')}；输出前 200 字：${raw.slice(0, 200)}）`)
@@ -311,6 +349,8 @@ export default class WriterEngineServiceImpl extends EngineService {
       }
       if (mode === 'mark') {
         await this.ctx.writer.deleteDerived('maintenance', id)
+        // 旧待办作废提示：pending.md 中该章上次维护 pass 的建议基于旧版本，标记过期即作废
+        await this.ctx.writer.appendPending(`## [recompute mark] chapter/${id} 派生已标记过期（${new Date().toISOString()}）——此前针对本章的维护 pass 待办作废，待重算后重新生成。`)
         results.push({ chapterId: id, status: 'marked' })
         continue
       }
@@ -478,8 +518,8 @@ function detectTimeInversions(chapters: readonly WriterEntity[]): ReturnType<typ
   return detectTimeAnchorInversions(anchors)
 }
 
-/** 维护 pass 产出的 pending.md 待办节（供人确认；不自动改伏笔/人物实体）。 */
-function renderPendingSection(chapterId: string, record: MaintenanceDerived): string {
+/** 维护 pass 产出的 pending.md 待办节（供人确认；不自动改伏笔/人物实体）。导出供单测锁定格式。 */
+export function renderPendingSection(chapterId: string, record: MaintenanceDerived): string {
   const lines = [`## [维护 pass] chapter/${chapterId}（${record.updatedAt}）待人工确认`]
   lines.push(`- 摘要：${record.summary}`)
   for (const fact of record.extraction.facts) {
@@ -490,6 +530,10 @@ function renderPendingSection(chapterId: string, record: MaintenanceDerived): st
   }
   for (const state of record.extraction.characterStates) {
     lines.push(`- 人物状态建议：character/${state.character} → ${state.state}（如属实请更新人物卡）`)
+  }
+  if (record.partial === true) {
+    lines.push('- ⚠ 部分抽取条目因引用校验未通过被拒收（重试预算耗尽）：')
+    for (const reason of record.rejected ?? []) lines.push(`  - ${reason}`)
   }
   return lines.join('\n')
 }

@@ -5,10 +5,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseChapterRange, planSectionRetry } from '../src/logic.ts'
+import { renderPendingSection } from '../src/index.ts'
 import {
   buildConsistencySystemPrompt, buildExtractionUserPrompt, buildSummarySystemPrompt,
 } from '../src/prompts.ts'
-import type { WriterEntity } from 'dsh-writer-domain'
+import type { MaintenanceDerived, WriterEntity } from 'dsh-writer-domain'
 
 const noErrors = { errors: [] as string[] }
 
@@ -60,5 +61,28 @@ test('一致性提示词：四维与 JSON 契约齐备', () => {
     assert.ok(system.includes(dim), `${dim} 在维度清单中`)
   }
   assert.match(system, /"issues"/)
-  assert.match(system, /引用不存在的实体的条目会被丢弃/)
+  assert.match(system, /全部引用都不存在时该条目会被丢弃/)
+})
+
+test('renderPendingSection：三节条目 + partial 拒收提示（人机确认界面格式回归）', () => {
+  const record: MaintenanceDerived = {
+    sourceHash: 'h',
+    summary: '摘要文本',
+    extraction: {
+      facts: [{ description: '事实A', characters: ['elin'], plots: ['green-flame'] }],
+      foreshadowEvents: [{ plot: 'green-flame', action: 'planted', note: '第七盏灯' }],
+      characterStates: [{ character: 'elin', state: '左手受伤' }],
+    },
+    updatedAt: '2026-01-01T00:00:00Z',
+    partial: true,
+    rejected: ['foreshadowEvent 引用不存在的伏笔：plot/ghost'],
+  }
+  const section = renderPendingSection('001', record)
+  assert.match(section, /## \[维护 pass\] chapter\/001/)
+  assert.match(section, /- 摘要：摘要文本/)
+  assert.match(section, /- 事实：事实A（人物：elin）（伏笔：green-flame）/)
+  assert.match(section, /- 伏笔事件建议：plot\/green-flame planted——第七盏灯.*foreshadow_update/)
+  assert.match(section, /- 人物状态建议：character\/elin → 左手受伤/)
+  assert.match(section, /⚠ 部分抽取条目因引用校验未通过被拒收/)
+  assert.match(section, /plot\/ghost/)
 })
