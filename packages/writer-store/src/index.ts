@@ -212,6 +212,20 @@ export default class WriterStoreService extends WriterService {
   }
 
   async appendPending(section: string): Promise<void> {
+    // 读-改-写跨并发维护 pass 必须串行（与 save 同款固定 key promise 链），否则 last-writer-wins 丢段
+    const key = 'pending.md'
+    const prev = this.saveChains.get(key) ?? Promise.resolve()
+    const run = prev.then(() => this.appendPendingLocked(section), () => this.appendPendingLocked(section))
+    const tail = run.then(() => undefined, () => undefined)
+    this.saveChains.set(key, tail)
+    void tail.then(() => {
+      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
+    })
+    return run
+  }
+
+  /** 串行化保护下的实际追加（读 → 拼接 → 原子写）。 */
+  private async appendPendingLocked(section: string): Promise<void> {
     const abs = join(this.projectRoot, 'pending.md')
     let existing = ''
     try {
