@@ -83,3 +83,90 @@ export function buildReviewUserPrompt(
   parts.push(`## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）\n${chapter.content}`)
   return parts.join('\n\n')
 }
+
+// ---------------------------------------------------------------------------
+// 维护 pass（P3）：①章节摘要 ②事实/伏笔/人物状态抽取（分节 JSON schema + 引用存在性校验 + 按节重试）
+// ---------------------------------------------------------------------------
+
+/** 维护 pass 调用①：章节摘要（流畅文本）。 */
+export function buildSummarySystemPrompt(): string {
+  return [
+    '你是一位中文小说的章节摘要员。阅读章节正文，写出一段流畅的情节摘要（100-200 字）。',
+    '摘要须覆盖：本章主要事件、出场人物、任何伏笔的设置/强化/回收动作、章末人物状态。',
+    '只输出摘要正文本身，不要标题、列表或解释。',
+  ].join('\n')
+}
+
+/** 维护 pass 调用①的 user 提示词。 */
+export function buildSummaryUserPrompt(chapter: WriterEntity): string {
+  return `## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）\n${chapter.content}`
+}
+
+/**
+ * 维护 pass 调用②：事实/伏笔/人物状态抽取（分节 JSON schema）。
+ * 引用约束：characters/plots 引用必须逐字取自给定 id 清单（引用不存在会被拒收并重试该节）。
+ */
+export function buildExtractionSystemPrompt(): string {
+  return [
+    '你是一位中文小说的事实抽取员。从章节正文中抽取结构化信息，只输出一个 JSON 对象（可被 JSON.parse），不要任何其他文字：',
+    '{',
+    '  "facts": [{"description":"本章确立的事实（设定/世界规则/承诺/重要物件去向）","characters":["出场人物 id（可选）"],"plots":["相关伏笔 id（可选）"]}],',
+    '  "foreshadowEvents": [{"plot":"伏笔 id","action":"planted|reinforcement|partial_reveal|callback|red_herring|resolved","note":"一句话说明（可选）"}],',
+    '  "characterStates": [{"character":"人物 id","state":"本章结束时该人物的状态（处境/关系/能力变化）"}]',
+    '}',
+    '硬性约束：',
+    '- characters / plots / plot / character 字段只能使用「可用实体清单」中给出的 id，禁止编造。',
+    '- 伏笔动作词汇只能用列出的六个（与伏笔状态机/里程碑类型对齐）。',
+    '- 本章没有某类信息时该节数组留空；不要编造。',
+  ].join('\n')
+}
+
+/** 维护 pass 调用②的 user 提示词：可用实体清单 + 章节正文 + 可选的重试反馈。 */
+export function buildExtractionUserPrompt(
+  chapter: WriterEntity,
+  refs: { characters: readonly string[]; plots: readonly string[] },
+  retryFeedback?: readonly string[],
+): string {
+  const parts = [
+    '## 可用实体清单',
+    `人物 id：${refs.characters.length > 0 ? refs.characters.join('、') : '（无）'}`,
+    `伏笔 id：${refs.plots.length > 0 ? refs.plots.join('、') : '（无）'}`,
+    `## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）`,
+    chapter.content,
+  ]
+  if (retryFeedback !== undefined && retryFeedback.length > 0) {
+    parts.push(`## 上次输出被拒收的原因（请修正后重新输出完整 JSON 对象）\n${retryFeedback.map((f) => `- ${f}`).join('\n')}`)
+  }
+  return parts.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// 一致性检查（P3）：按预算分批、维度与 schema 对齐（改进原项目 12 章/8000 字截断缺陷）
+// ---------------------------------------------------------------------------
+
+/** 一致性检查 system 提示词：四维 + 结构化 JSON 输出契约。 */
+export function buildConsistencySystemPrompt(): string {
+  return [
+    `你是一位严谨的中文小说连续性审校员。只检查以下维度：${['情节一致性', '人物一致性', '设定一致性', '时间线一致性'].join('、')}。`,
+    '以「基准材料」（创作准则/大纲/伏笔档案/关键事件）为准绳，审读本批章节，找出前后矛盾。',
+    '只输出一个 JSON 对象（可被 JSON.parse），不要任何其他文字：',
+    '{"summary":"本批总体评估（1-2 句）","issues":[{"dimension":"维度名","severity":"high|medium|low","refs":["涉及实体引用，如 chapter/003、plot/green-flame、character/elin"],"description":"矛盾描述（指明两侧冲突的内容）","evidence":"支撑判断的原文片段（可选）"}]}',
+    'refs 必须只引用材料中出现的实体；引用不存在的实体的条目会被丢弃。没有矛盾不要编造。',
+  ].join('\n')
+}
+
+/** 一致性检查 user 提示词：基准材料 + 本批章节（摘要优先，无摘要用正文）。 */
+export function buildConsistencyUserPrompt(
+  baseline: { principles?: string; outline?: string; plotsBrief?: string; eventsBrief?: string },
+  chapters: readonly { id: string; number: number; title?: string; body: string }[],
+): string {
+  const parts: string[] = []
+  if (baseline.principles !== undefined) parts.push(`## 创作准则（基准）\n${baseline.principles}`)
+  if (baseline.outline !== undefined) parts.push(`## 大纲（基准）\n${baseline.outline}`)
+  if (baseline.plotsBrief !== undefined) parts.push(`## 伏笔档案（基准）\n${baseline.plotsBrief}`)
+  if (baseline.eventsBrief !== undefined) parts.push(`## 关键事件（基准）\n${baseline.eventsBrief}`)
+  const chapterBlocks = chapters.map((c) => `### 第 ${c.number} 章（chapter/${c.id}）${c.title !== undefined ? ` ${c.title}` : ''}\n${c.body}`)
+  parts.push(`## 本批章节\n${chapterBlocks.join('\n\n')}`)
+  parts.push('## 任务\n对照基准材料逐章审读，输出矛盾报告 JSON。')
+  return parts.join('\n\n')
+}

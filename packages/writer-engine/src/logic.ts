@@ -5,7 +5,7 @@
  */
 import type { FinishReason } from '@deepseek-ai/dsh-llm'
 import type {
-  ChapterWriteRequest, Frontmatter, RewriteModelOutput, RewritePatchResult, WriterEntity,
+  ChapterWriteRequest, Frontmatter, RewriteModelOutput, RewritePatchResult, SectionValidation, WriterEntity,
 } from 'dsh-writer-domain'
 
 /** 章节实体 id 约定：三位序号。 */
@@ -90,4 +90,46 @@ export function assertFinish(finish: FinishReason): void {
   }
   // 'stop' 为唯一成功终态；此处不穷尽 default：FinishReason 为封闭联合，未来新增 kind 会漏到成功分支，
   // 由 generate() 的空文本检查兜底告警。
+}
+
+// ---------------------------------------------------------------------------
+// P3 维护 pass：分节校验后的重试规划（纯决策，单测锁定）
+// ---------------------------------------------------------------------------
+
+/**
+ * 维护 pass 按节重试决策：任一节存在拒收条目 → 需要重试；
+ * 返回需重试的节名 + 汇总的拒收原因（作为下次调用的反馈提示词）。
+ */
+export function planSectionRetry(validations: {
+  facts: Pick<SectionValidation<unknown>, 'errors'>
+  foreshadowEvents: Pick<SectionValidation<unknown>, 'errors'>
+  characterStates: Pick<SectionValidation<unknown>, 'errors'>
+}): { sections: ('facts' | 'foreshadowEvents' | 'characterStates')[]; feedback: string[] } {
+  const sections: ('facts' | 'foreshadowEvents' | 'characterStates')[] = []
+  const feedback: string[] = []
+  for (const name of ['facts', 'foreshadowEvents', 'characterStates'] as const) {
+    const errors = validations[name].errors
+    if (errors.length > 0) {
+      sections.push(name)
+      feedback.push(...errors)
+    }
+  }
+  return { sections, feedback }
+}
+
+/**
+ * 改稿期重算的区间解析："002" 单章或 "001-003" 区间 → 章节三位 id 列表（含端点）。
+ * 区间倒序/越界（>999）抛错；跨 999 进位不支持。
+ */
+export function parseChapterRange(range: string): string[] {
+  const single = range.match(/^(\d{3})$/)
+  if (single !== null) return [single[1]]
+  const span = range.match(/^(\d{3})-(\d{3})$/)
+  if (span === null) throw new Error(`章节区间格式非法：${JSON.stringify(range)}（应为 "002" 或 "001-003"）`)
+  const from = Number(span[1])
+  const to = Number(span[2])
+  if (to < from) throw new Error(`章节区间倒序：${range}`)
+  const ids: string[] = []
+  for (let n = from; n <= to; n++) ids.push(String(n).padStart(3, '0'))
+  return ids
 }
