@@ -32,8 +32,11 @@ export interface RagCorpusInput {
   chunkOverlap?: number
 }
 
-/** 章节正文切片（保序、带重叠）；短于切片长度返回单片。 */
+/** 章节正文切片（保序、带重叠）；短于切片长度返回单片。入参须为有限数（NaN/Infinity 响亮拒绝，防整章静默从语料消失）。 */
 export function chunkChapterText(content: string, chunkChars: number, overlap: number): string[] {
+  if (!Number.isFinite(chunkChars) || !Number.isFinite(overlap)) {
+    throw new Error(`切片参数非法：chunkChars=${String(chunkChars)}，overlap=${String(overlap)}（须为有限数）`)
+  }
   const size = Math.max(100, Math.floor(chunkChars))
   const step = Math.max(50, size - Math.max(0, Math.floor(overlap)))
   const text = content.trim()

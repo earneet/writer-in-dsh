@@ -44,8 +44,9 @@ export const Config: Schema<Config> = Schema.object({
   hintInterval: Schema.number().default(3).min(1).description('纠偏提示最小注入间隔（次受观测调用）'),
   watchedTools: Schema.array(Schema.string()).default([
     'writer_read', 'writer_update', 'write_chapter', 'review_chapter', 'foreshadow_update',
-    'consistency_check', 'recompute_derived', 'writer_stats', 'archive_point', 'export_book', 'writer_search',
-  ]).description('受观测的写作工具名清单'),
+    'consistency_check', 'recompute_derived', 'writer_stats', 'archive_point', 'timeline_update',
+    'pending_cleanup', 'maintenance_flush', 'export_book', 'writer_search',
+  ]).description('受观测的写作工具名清单（全部 14 个写作工具）'),
 })
 
 export const name = 'writer-guard'

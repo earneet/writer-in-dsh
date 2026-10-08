@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
   arcCoverageOf, appendTimelineEntry, ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline,
-  partitionPendingByChapter, serializeTimeline, transitionForeshadow, validateTimeline,
+  partitionPendingByChapter, REVIEW_DIMENSIONS, serializeTimeline, transitionForeshadow, validateTimeline,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
@@ -35,7 +35,7 @@ export function apply(ctx: Context): void {
     name: 'writer_read',
     description: `读取小说项目实体。entity 为实体种类（${ENTITY_KINDS.join(' / ')}）；省略 id 时列出该类实体的清单，提供 id 时返回完整正文与 frontmatter。`,
     parameters: {
-      entity: { type: 'string', required: true, description: '实体种类' },
+      entity: { type: 'string', required: true, description: `实体种类：${ENTITY_KINDS.join(' / ')}` },
       id: { type: 'string', description: '实体 id（列表时可省略；chapter 为三位序号，其余为文件名去 .md）' },
     },
     output: {
@@ -70,7 +70,7 @@ export function apply(ctx: Context): void {
       id: { type: 'string', required: true, description: '实体 id' },
       expectHash: { type: 'string', required: true, description: 'read 返回的完整 hash（新实体填 "new"）' },
       content: { type: 'string', description: '正文全文（Markdown，不含 frontmatter）' },
-      frontmatter: { type: 'object', additionalProperties: true, description: 'frontmatter 键值对（可选；与现有值合并，值限标量）' },
+      frontmatter: { type: 'object', additionalProperties: true, description: 'frontmatter 键值对（可选；与现有值合并。标量直接传；数组/对象传原生结构，自动 JSON 序列化保存——timeline/milestones 即此形态）' },
     },
     output: {
       schema: { type: 'string' },
@@ -153,6 +153,10 @@ export function apply(ctx: Context): void {
       const engine = getEngine(ctx)
       if ('unavailable' in engine) return engine.unavailable
       const focus = args.focus?.split(/[,，、]/).map((s) => s.trim()).filter((s) => s.length > 0)
+      // 无效维度名会静默滤空全部建议（模型误判「章节无问题」）——空交集响亮报错并列出合法值
+      if (focus !== undefined && focus.length > 0 && !focus.some((f) => (REVIEW_DIMENSIONS as readonly string[]).includes(f))) {
+        throw new Error(`focus 无有效维度：${focus.join('、')}（合法维度：${REVIEW_DIMENSIONS.join(' / ')}）`)
+      }
       const report = await engine.reviewChapter(args.chapter, focus, exec.signal)
       if (report.suggestions.length === 0) {
         return `审稿完成，无结构化建议。总评：${report.summary || '（无）'}`
@@ -465,6 +469,10 @@ export function apply(ctx: Context): void {
       if (args.max_results !== undefined && (!Number.isInteger(args.max_results) || args.max_results < 1 || args.max_results > 20)) {
         throw new Error(`max_results 非法：${args.max_results}（须为 1-20 的整数）`)
       }
+      // 0/负数/小数会让防剧透过滤剔除全部章节块（含摘要），检索静默退化——入口即校验
+      if (args.chapter_limit !== undefined && (!Number.isInteger(args.chapter_limit) || args.chapter_limit < 1)) {
+        throw new Error(`chapter_limit 非法：${args.chapter_limit}（须为正整数，填当前写作章号如 3）`)
+      }
       const hits = await rag.search(args.query, {
         ...(args.chapter_limit !== undefined ? { chapterLimit: args.chapter_limit } : {}),
         ...(args.max_results !== undefined ? { maxResults: args.max_results } : {}),
@@ -574,6 +582,8 @@ function renderWriteResult(result: import('dsh-writer-domain').ChapterWriteResul
     lines.push(`⚠ 丢句守卫告警（共 ${result.droppedSentences.length} 条原句未保留${result.droppedSentences.length > 10 ? '，仅列前 10 条' : ''}，请人工复核是否为有意删除）：`)
     for (const sentence of result.droppedSentences.slice(0, 10)) lines.push(`  - ${sentence}`)
   }
+  // 链路可见性：保存后的维护 pass 是异步的，模型需知道 pending.md 稍后会出现建议节（否则确认环断链）
+  lines.push('若引擎启用 autoMaintenance（默认开）：维护 pass 正在后台异步运行，摘要/事实抽取稍后落盘，建议项会追加到 pending.md——下轮可读取确认；任务收尾前可调用 maintenance_flush 排空（提示可能补跑时可再 flush 一次）。')
   return lines.join('\n')
 }
 

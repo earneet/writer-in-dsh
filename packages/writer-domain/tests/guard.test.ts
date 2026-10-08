@@ -89,3 +89,21 @@ test('不可分类失败计入失败数但不计类别', () => {
   assert.ok(!hint.includes('构成：'), '无类别时统计行不含构成段')
   assert.ok(hint.includes('[writer-guard]'))
 })
+
+test('不可分类失败滑出窗口时失败数同步扣减（null 出窗不留残账）', () => {
+  const window = createErrorBudgetWindow(5)
+  recordAttempt(window, null)
+  recordAttempt(window, 'parse')
+  recordAttempt(window, null)
+  recordAttempt(window, undefined)
+  recordAttempt(window, null)
+  assert.equal(failureRate(window), 0.8)
+  // 5 次成功滑出 null/parse/null/S/null，窗口剩 5 成功 → 失败率归零（null 不在类别表也必须被扣）
+  recordAttempt(window, undefined)
+  recordAttempt(window, undefined)
+  recordAttempt(window, undefined)
+  recordAttempt(window, undefined)
+  recordAttempt(window, undefined)
+  assert.equal(windowStats(window).failures, 0)
+  assert.equal(failureRate(window), 0)
+})

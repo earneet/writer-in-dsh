@@ -22,10 +22,10 @@ const SRC_DIRS = ['writer-tools', 'writer-engine', 'writer-store', 'writer-domai
 
 /** 有意不分类的基建/环境/内部不变量错误前缀（IO 落盘、模型与宿主、逻辑断言——不是工具业务失败）。 */
 const INTENTIONALLY_UNCLASSIFIED: readonly string[] = [
-  '落盘失败', '派生数据落盘失败', 'pending.md 追加失败', 'pending.md 变更失败', '归档追加失败',
+  '落盘失败', '派生数据落盘失败', '派生数据读取失败', 'pending.md 追加失败', 'pending.md 变更失败', '归档追加失败',
   '模型未返回任何文本', '恢复快照落盘失败',
   '窗口容量非法', '批次正文预算必须为正数', '一致性检查预算必须为正数',
-  'keywordScoresFromCounts 形状不符', '范围内没有已写章节',
+  'keywordScoresFromCounts 形状不符', '范围内没有已写章节', '切片参数非法',
   'decideRewritePath', '模型调用失败', '模型输出达到 maxOutputTokens', '写作引擎调用不携带工具',
 ]
 

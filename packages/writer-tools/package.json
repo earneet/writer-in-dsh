@@ -24,5 +24,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "Consumer：面向模型的写作工具（读写/写作/审稿/伏笔/时间线/检索/导出/统计/存档）",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-tools"
+  }
 }

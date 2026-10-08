@@ -32,7 +32,7 @@ async function makeFixture(): Promise<{ rag: WriterRagService; store: WriterStor
   const rag = new WriterRagService(ctx, {
     embeddingBackend: 'none', llmProvider: '', llmModel: '', externalBaseUrl: '', externalModel: '',
     externalApiKeyEnv: 'WRITER_RAG_API_KEY', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
-    snippetChars: 280, maxResults: 5,
+    snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000,
   })
   return { rag, store, root }
 }
@@ -96,7 +96,7 @@ test('external 档代码路径（P7）：本地 OpenAI 兼容 stub——检索�
     const externalRag = new WriterRagService(ctx, {
       embeddingBackend: 'external', llmProvider: '', llmModel: '',
       externalBaseUrl: baseUrl, externalModel: 'stub-embed', externalApiKeyEnv: 'WRITER_RAG_TEST_KEY',
-      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5,
+      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000,
     })
     process.env['WRITER_RAG_TEST_KEY'] = 'test-key'
     // ① 检索走 embeddings：查询与候选都过端点，语义路参与 RRF 融合
@@ -117,6 +117,39 @@ test('external 档代码路径（P7）：本地 OpenAI 兼容 stub——检索�
     // ④ 无 key 响亮失败（不静默降级）
     delete process.env['WRITER_RAG_TEST_KEY']
     await assert.rejects(externalRag.search('绿焰'), /环境变量 WRITER_RAG_TEST_KEY 未设置/)
+    // ⑤ 端点错误分支：非 2xx 与响应缺 data[0].embedding 都响亮失败（锁定 throw 路径不被静默吞）
+    process.env['WRITER_RAG_TEST_KEY'] = 'test-key'
+    const errorServer: Server = createServer((req, res) => {
+      let body = ''
+      req.on('data', (chunk: Buffer) => { body += chunk })
+      req.on('end', () => {
+        const input = (JSON.parse(body) as { input: string }).input
+        if (input.includes('绿焰')) {
+          res.statusCode = 500
+          res.end('server error')
+        } else {
+          // 形状合法但缺 embedding 字段
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify({ data: [{}] }))
+        }
+      })
+    })
+    await new Promise<void>((resolve) => errorServer.listen(0, '127.0.0.1', resolve))
+    errorServer.unref()
+    // 服务注册在 ctx 上（复用 ctx 会撞「已注册」）：错误分支用独立 ctx + 独立 store（同一 fixture 根）
+    // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+    const badCtx = new Context()
+    new WriterStoreService(badCtx, { projectRoot: root })
+    const badRag = new WriterRagService(badCtx, {
+      embeddingBackend: 'external', llmProvider: '', llmModel: '',
+      externalBaseUrl: `http://127.0.0.1:${(errorServer.address() as { port: number }).port}`,
+      externalModel: 'stub-embed', externalApiKeyEnv: 'WRITER_RAG_TEST_KEY',
+      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000,
+    })
+    // 「绿焰」在 fixture 有关键词命中（语义阶段必触发）→ 查询本身先撞 500；
+    // 「港城」同样命中但端点返回缺 embedding 的形状 → 响应形状错误路径
+    await assert.rejects(badRag.search('绿焰'), /embeddings 端点返回 500/)
+    await assert.rejects(badRag.search('港城'), /缺少 data\[0\]\.embedding/)
   } finally {
     delete process.env['WRITER_RAG_TEST_KEY']
     await rm(root, { recursive: true, force: true })

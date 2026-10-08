@@ -15,5 +15,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "novel-writer 领域纯函数库（frontmatter/哈希/伏笔状态机/时间线/检索打分），无插件行、可独立引用",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-domain"
+  }
 }

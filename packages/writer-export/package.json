@@ -28,5 +28,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "Consumer：TXT/HTML/ePub 导出，发布 ctx.writerExport",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-export"
+  }
 }

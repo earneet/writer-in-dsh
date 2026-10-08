@@ -30,5 +30,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "Consumer：工具业务错误预算（tools/post-execute 观测，超预算注入纠偏提示，不熔断）",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-guard"
+  }
 }

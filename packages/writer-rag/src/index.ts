@@ -36,6 +36,8 @@ export interface Config {
   chunkOverlap: number
   snippetChars: number
   maxResults: number
+  /** external 档单次 embeddings 请求兜底超时（毫秒）。 */
+  embeddingTimeoutMs: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -50,6 +52,7 @@ export const Config: Schema<Config> = Schema.object({
   chunkOverlap: Schema.number().default(80).min(0).description('章节切片重叠字符数'),
   snippetChars: Schema.number().default(280).min(50).description('命中 snippet 截断字符数'),
   maxResults: Schema.number().default(5).min(1).max(20).description('缺省返回命中数上限'),
+  embeddingTimeoutMs: Schema.number().default(30_000).min(1_000).max(300_000).description('external 档单次 embeddings 请求兜底超时（毫秒；与调用方中止信号融合）'),
 })
 
 /** 语义档对候选块的相关性打分输出（llm 后端解析目标）。 */
@@ -75,6 +78,7 @@ export default class WriterRagService extends RagService {
   private readonly corpusOpts: { chunkChars: number; chunkOverlap: number }
   private readonly snippetChars: number
   private readonly defaultMax: number
+  private readonly embeddingTimeoutMs: number
   /** external 档向量缓存：sha256(text) → 向量（带上限的简单淘汰：超限整体清空重建，防无界增长）。 */
   private readonly vectorCache = new Map<string, number[]>()
   private static readonly VECTOR_CACHE_MAX = 2000
@@ -96,6 +100,7 @@ export default class WriterRagService extends RagService {
     this.corpusOpts = { chunkChars: config.chunkChars, chunkOverlap: config.chunkOverlap }
     this.snippetChars = config.snippetChars
     this.defaultMax = config.maxResults
+    this.embeddingTimeoutMs = config.embeddingTimeoutMs
     // 配置错误响亮失败：所选后端的必填字段缺席（undefined）或空串即刻报，不等到首次检索
     if (this.backend === 'llm' && (!config.llmProvider || !config.llmModel)) {
       throw new Error('writer-rag：embeddingBackend=llm 需要配置 llmProvider 与 llmModel')
@@ -251,8 +256,8 @@ export default class WriterRagService extends RagService {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model: this.external!.model, input: text }),
-      // 30s 兜底超时与调用方 signal 融合：端点挂起不得拖住整次检索（engine 组装路径会阻塞写作）
-      signal: signal === undefined ? AbortSignal.timeout(30_000) : AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+      // 兜底超时与调用方 signal 融合：端点挂起不得拖住整次检索（engine 组装路径会阻塞写作）
+      signal: signal === undefined ? AbortSignal.timeout(this.embeddingTimeoutMs) : AbortSignal.any([signal, AbortSignal.timeout(this.embeddingTimeoutMs)]),
     })
     if (!response.ok) {
       throw new Error(`writer-rag：embeddings 端点返回 ${response.status}（${this.external!.baseUrl}）`)

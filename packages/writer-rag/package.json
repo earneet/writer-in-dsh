@@ -30,5 +30,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "Provider：混合检索（CJK bigram TF-IDF 关键词先行 + 可选语义档 + RRF），发布 ctx.writerRag",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-rag"
+  }
 }

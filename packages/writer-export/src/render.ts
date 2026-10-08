@@ -47,6 +47,33 @@ export function chapterLabel(chapter: ExportChapter): string {
   return `第 ${chapter.number} 章${chapter.title.length > 0 ? ` ${chapter.title}` : ''}`
 }
 
+/** 比较用归一化：去空白与常见中英文标点。 */
+function normalizeForCompare(text: string): string {
+  return text.replace(/[\s，。：:·、！？!?「」『』""'']/g, '')
+}
+
+/** 去掉开头的「第 N 章/节/卷」序号前缀（阿拉伯与中文数字都认），只剩核心标题文本。 */
+function stripChapterPrefix(text: string): string {
+  return text.replace(/^第[0-9一二三四五六七八九十百千零两]+[章节卷][\s]*/, '')
+}
+
+/**
+ * HTML/ePub 渲染前的正文预处理：正文以 markdown 标题行开头、且其文本与生成标题
+ * （第 N 章 标题）语义重复（忽略空白/标点与序号数字形态差异）时剥离该行，避免导出后
+ * 出现字面「## 第二章 …」段落与生成标题重复。TXT 导出不做处理（保留原文为既定语义）。
+ */
+export function stripDuplicateHeading(chapter: ExportChapter): string {
+  const match = chapter.content.match(/^\s*#{1,6}[ \t]+([^\n]*)\r?(?:\n|$)/)
+  if (match === null) return chapter.content
+  const heading = normalizeForCompare(match[1])
+  if (heading.length === 0) return chapter.content
+  const headingCore = stripChapterPrefix(heading)
+  const titleCore = stripChapterPrefix(normalizeForCompare(chapter.title))
+  const duplicate = heading === normalizeForCompare(chapterLabel(chapter))
+    || (titleCore.length > 0 && headingCore === titleCore)
+  return duplicate ? chapter.content.slice(match[0].length) : chapter.content
+}
+
 /** TXT 渲染：卷标题 + 章标题 + 原文（Markdown 原样保留）。 */
 export function renderTxt(book: ExportBook): string {
   const parts: string[] = [book.title, book.author.length > 0 ? `作者：${book.author}` : '', '']
@@ -87,7 +114,7 @@ export function renderHtml(book: ExportBook): string {
     parts.push(`<h2 class="volume">${escapeHtml(volume.name)}</h2>`)
     for (const chapter of volume.chapters) {
       parts.push(`<section class="chapter"><h3>${escapeHtml(chapterLabel(chapter))}</h3>`)
-      for (const paragraph of chapter.content.split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 0)) {
+      for (const paragraph of stripDuplicateHeading(chapter).split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 0)) {
         parts.push(`<p>${escapeHtml(paragraph).replaceAll('\n', '<br>')}</p>`)
       }
       parts.push('</section>')
@@ -103,13 +130,13 @@ export function renderHtml(book: ExportBook): string {
 // EPUB（2.0.1）：XHTML 章节文档 + container.xml / content.opf / toc.ncx
 // ---------------------------------------------------------------------------
 
-/** 单个 XHTML 章节文档（转义正文，段落化）。 */
+/** 单个 XHTML 章节文档（转义正文，段落化；EPUB 2 严格规范要求 XHTML 1.1 DTD 声明）。 */
 export function renderChapterXhtml(chapter: ExportChapter): string {
-  const paragraphs = chapter.content.split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 0)
+  const paragraphs = stripDuplicateHeading(chapter).split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 0)
   const body = paragraphs.map((p) => `    <p>${escapeHtml(p).replaceAll('\n', '<br/>')}</p>`).join('\n')
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
-    '<!DOCTYPE html>',
+    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">',
     '<html xmlns="http://www.w3.org/1999/xhtml">',
     '  <head>',
     `    <title>${escapeHtml(chapterLabel(chapter))}</title>`,
@@ -128,7 +155,7 @@ export function renderChapterXhtml(chapter: ExportChapter): string {
 export function renderVolumeXhtml(volume: ExportVolume): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
-    '<!DOCTYPE html>',
+    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">',
     '<html xmlns="http://www.w3.org/1999/xhtml">',
     '  <head>',
     `    <title>${escapeHtml(volume.name)}</title>`,

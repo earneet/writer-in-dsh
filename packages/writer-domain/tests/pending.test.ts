@@ -93,4 +93,25 @@ describe('renderPending / partitionPendingByChapter', () => {
     assert.equal(resplit.sections.length, 3)
     assert.match(resplit.sections[2].body, /事实B/)
   })
+
+  it('CRLF 行尾归一：切分与归档与 LF 输入等价', () => {
+    const crlf = sample.replaceAll('\n', '\r\n')
+    const { sections } = splitPendingSections(crlf)
+    assert.equal(sections.length, 3)
+    assert.match(sections[0].header, /chapter\/001/)
+    const { keep, archived } = partitionPendingByChapter(crlf, '002')
+    assert.match(archived, /事实B/)
+    assert.doesNotMatch(keep, /事实B/)
+  })
+
+  it('未闭合围栏：其后节头并入当前节（单节化不丢数据，已知限制的行为锁定）', () => {
+    const text = '## [维护 pass] chapter/001（t）待人工确认\n- 示例开头\n```\n围栏未闭合\n## [维护 pass] chapter/002（t）待人工确认\n- 第二章建议\n'
+    const { sections } = splitPendingSections(text)
+    // 已知限制（§8 轮次 12 L3 / 轮次 13 限制⑧）：未闭合围栏使其后 ## 头不再被识别，
+    // 后续节并入第一节——归档 001 会连带 002（不丢数据，重开围栏即恢复）
+    assert.equal(sections.length, 1)
+    assert.match(sections[0].body, /第二章建议/)
+    const { archived } = partitionPendingByChapter(text, '001')
+    assert.match(archived, /第二章建议/)
+  })
 })

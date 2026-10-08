@@ -8,7 +8,6 @@ import { crc32, buildZip } from '../src/zip.ts'
 import {
   escapeHtml, renderChapterXhtml, renderContainerXml, renderContentOpf, renderHtml, renderTxt, renderTocNcx,
 } from '../src/render.ts'
-
 const BOOK = {
   title: '测试书',
   author: '某人',
@@ -104,11 +103,28 @@ test('renderHtml：正文转义无裸 <script>，卷/章分节', () => {
   assert.ok(html.includes('@media print'))
 })
 
-test('renderChapterXhtml：合法 XML 骨架 + 转义正文', () => {
+test('renderChapterXhtml：合法 XML 骨架 + 转义正文 + XHTML 1.1 DTD（EPUB 2 严格规范）', () => {
   const xhtml = renderChapterXhtml(BOOK.volumes[0].chapters[0])
   assert.ok(xhtml.startsWith('<?xml version="1.0" encoding="utf-8"?>'))
+  assert.ok(xhtml.includes('DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"'), 'XHTML 1.1 doctype')
   assert.ok(xhtml.includes('xmlns="http://www.w3.org/1999/xhtml"'))
   assert.ok(!xhtml.includes('<script>'))
+})
+
+test('stripDuplicateHeading：HTML/ePub 渲染剥离与生成标题重复的首行 markdown 标题；TXT 语义不变', () => {
+  const chapter = { number: 2, title: '残页', content: '## 第二章 残页\n\n约纳斯的手一直在抖。\n\n第二段。' }
+  const html = renderHtml({ title: '书', author: '', volumes: [{ name: '第一卷', chapters: [chapter] }] })
+  assert.ok(html.includes('<h3>第 2 章 残页</h3>'), '生成标题在')
+  assert.ok(!html.includes('## 第二章'), '重复的首行 markdown 标题被剥离')
+  assert.ok(html.includes('约纳斯的手一直在抖。'), '正文保留')
+  const xhtml = renderChapterXhtml(chapter)
+  assert.ok(!xhtml.includes('## 第二章'), 'XHTML 同样剥离')
+  const txt = renderTxt({ title: '书', author: '', volumes: [{ name: '第一卷', chapters: [chapter] }] })
+  assert.ok(txt.includes('## 第二章 残页'), 'TXT 保留原文（既定语义）')
+  // 非重复标题（内容不同的 markdown 头）不误删
+  const keep = { number: 3, title: '风暴', content: '## 场景：灯塔内部\n\n正文。' }
+  const keptHtml = renderHtml({ title: '书', author: '', volumes: [{ name: '第一卷', chapters: [keep] }] })
+  assert.ok(keptHtml.includes('## 场景：灯塔内部'), '与章标题无关的 markdown 头保留')
 })
 
 test('EPUB 结构文档：container/opf/ncx 均含必需元素且转义', () => {
