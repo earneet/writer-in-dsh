@@ -6,8 +6,8 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "node --test packages/*/tests/*.test.ts",
+    "typecheck": "npm run build && tsc --noEmit",
+    "test": "npm run build && node --test packages/*/tests/*.test.ts",
     "build": "npm run build --workspaces --if-present"
   },
   "devDependencies": {

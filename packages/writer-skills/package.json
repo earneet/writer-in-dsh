@@ -20,6 +20,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "bundled skills（创作起步/章节写作/伏笔指南等技能资产 + 注册插件）",
+  "license": "MIT"
 }

@@ -5,10 +5,15 @@
 
 ## 1. 版本与依赖（每次发布）
 
-- [ ] 十包版本一致提升（包间互相依赖为精确版本 `0.1.0`，改版本须同步全部引用处）。
+- [ ] 十包版本一致提升（包间互相依赖为精确版本 `0.1.0`，改版本须同步全部引用处）。流程：逐包 `npm version <v> -w <pkg>` 后 grep 复核旧版本字符串清零（防 bundle 拉到新旧混合依赖图）。
+- [ ] 核对十包 `engines.node` 与 dsh 宿主包（`@deepseek-ai/dsh@0.2.0-rc.2`）的 engines 要求一致（宿主当前未声明 engines，本仓 `>=20` 为保守约束——Node 版本要求实际由宿主运行时决定）。
 - [ ] `@deepseek-ai/*` 运行时依赖与 dsh 宿主**严格同版本**（当前 `0.2.0-rc.2`；cordis `4.0.4`、schemastery `3.18.4`）——版本漂移会实例分裂致调度器崩（§8 轮次 2）。
 - [ ] 全部包已去 `private: true`（仓库根 `writer-in-dsh` 保持 private 不发布）。
-- [ ] **lib/ 预构建形态**（P6 起）：9 个代码包 main=`lib/index.js`、types=`lib/index.d.ts`、files=`["lib"]`（skills 加 `assets`）。构建 = 根 `npm run build`（逐包 `tsc -p tsconfig.build.json`，TS 5.7+ `rewriteRelativeImportExtensions` 把 `.ts` 相对导入重写为 `.js`，零新增构建依赖）。**发布前必须先 build**（`lib/` 在 .gitignore，npm pack 只收工作树文件）。本地开发不受影响（dev.cordis.yml 仍指 src/、宿主 tsx 加载）。
+- [ ] **lib/ 预构建形态**（P6 起）：9 个代码包 main=`lib/index.js`、types=`lib/index.d.ts`、files=`["lib"]`（skills 加 `assets`）。构建 = 根 `npm run build`（逐包 `tsc -p tsconfig.build.json`，TS 5.7+ `rewriteRelativeImportExtensions` 把 `.ts` 相对导入重写为 `.js`，零新增构建依赖）。**发布前必须先 build**（`lib/` 在 .gitignore；每包已加 `prepublishOnly: npm run build` 兜底，新 clone 直接 publish 不会产出无 lib 坏包）。
+- [ ] **构建先行是开发期新约定**：`npm test` / `npm run typecheck` 已串 build（工作区裸导入经 main 解析到 lib）；**overlay/profile 下改 domain/core 等被裸导入包的源码须先 `npm run build` 才生效**（overlay 入口指 src，但 src 内的包间裸导入走 lib）。
+- [ ] **不支持 git 直装**：lib 不入库且无 prepare 脚本，`dsh plugin add github:...` 形态会拿到无 lib 的坏包——分发仅 registry / tarball / link 三路径（research.md publish 一节的 git 直装项对本仓不适用，留痕）。
+- [ ] 包名非 scoped，npm 默认 public，无需设 `publishConfig.access`（留痕）。
+- [ ] `repository` 字段待仓库公开上线后补（当前无 git remote，npm 页暂无源码链接——发布前如已有远端须补上）。
 - [ ] 运行时直接 import 的宿主包在 `dependencies` 且钉 `0.2.0-rc.2`（engine/rag→`@deepseek-ai/dsh-llm`、tools/guard→`dsh-tools`、skills→`dsh-skill`）：不依赖 pnpm auto-install-peers 默认行为（非契约，禁用即缺包崩）。
 - [ ] `writer-bundle` 无 main/types 为**有意形态**（组合包无 JS 入口，cordis.patch.yml 按包名引用各包入口；与 research.md 官方示例的 main 差异在此留痕）。
 - [ ] `writer-skills` 的 `files` 含 `assets`（技能资产随包分发）；`writer-bundle` 的 `files` 含 `cordis.patch.yml`。

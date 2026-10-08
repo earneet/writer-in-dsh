@@ -11,6 +11,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "novel-writer 领域纯函数库（frontmatter/哈希/伏笔状态机/时间线/检索打分），无插件行、可独立引用",
+  "license": "MIT"
 }

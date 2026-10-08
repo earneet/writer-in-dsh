@@ -23,5 +23,7 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "description": "组合包：一行安装全部 dsh-writer 插件（store→engine→skills→export→rag→guard→tools）",
+  "license": "MIT"
 }

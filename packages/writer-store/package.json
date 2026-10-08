@@ -19,6 +19,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "Provider：Markdown SoT 存储（原子写 + content_hash 乐观锁 + 派生缓存），发布 ctx.writer",
+  "license": "MIT"
 }

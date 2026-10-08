@@ -20,6 +20,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "Consumer：面向模型的写作工具（读写/写作/审稿/伏笔/时间线/检索/导出/统计/存档）",
+  "license": "MIT"
 }

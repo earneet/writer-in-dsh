@@ -88,13 +88,14 @@ test('writer_update：非 character 实体携带 timeline 字段不做 timeline 
 })
 
 test('timeline_update：追加条目走服务端合并（同章覆盖、按章序插入），不要求手工拼 JSON', async () => {
-  const savedPatches: { frontmatter?: Record<string, unknown> }[] = []
+  const savedPatches: { frontmatter?: Record<string, unknown>; expectHash?: string }[] = []
   // 模拟磁盘现状：save 后 get 返回最新落盘 timeline（乐观锁 read-before-update 语义）
   let current = '[{"chapter":"001","state":"初见"}]'
   const { tools } = makeCtx({
     get: async () => ({ kind: 'character', id: 'elin', frontmatter: { timeline: current }, content: '', hash: 'h1' }),
-    save: async (_kind: string, _id: string, patch: { frontmatter?: Record<string, unknown> }) => {
-      savedPatches.push(patch)
+    save: async (_kind: string, _id: string, patch: { frontmatter?: Record<string, unknown> }, expectHash?: string) => {
+      if (expectHash === undefined) throw new Error('expectHash 未透传（乐观锁被绕过）')
+      savedPatches.push({ ...patch, expectHash })
       current = String(patch.frontmatter?.['timeline'])
       return { kind: 'character', id: 'elin', hash: 'h2', path: 'characters/elin.md' }
     },
@@ -102,9 +103,11 @@ test('timeline_update：追加条目走服务端合并（同章覆盖、按章�
   const tool = tools.get('timeline_update')!
   const exec = { signal: new AbortController().signal } as never
   const mid = await tool.execute({ id: 'elin', chapter: '003', state: '受伤', expectHash: 'h1' }, exec)
-  assert.match(mid, /已更新人物时间线 elin.*001→初见；003→受伤/)
+  assert.match(mid, /已更新人物时间线 elin.*共 2 条/)
   const overwrite = await tool.execute({ id: 'elin', chapter: '001', state: '初见绿焰', expectHash: 'h2' }, exec)
-  assert.match(overwrite, /001→初见绿焰；003→受伤/, '同章覆盖且其余条目不动')
+  assert.match(overwrite, /本章 001 → 初见绿焰.*共 2 条/, '同章覆盖且其余条目不动')
+  // 乐观锁透传：两次调用分别携带调用方提供的 expectHash
+  assert.deepEqual(savedPatches.map((p) => p.expectHash), ['h1', 'h2'])
   assert.deepEqual(
     savedPatches.map((p) => p.frontmatter?.['timeline']),
     ['[{"chapter":"001","state":"初见"},{"chapter":"003","state":"受伤"}]', '[{"chapter":"001","state":"初见绿焰"},{"chapter":"003","state":"受伤"}]'],

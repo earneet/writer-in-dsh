@@ -48,7 +48,7 @@ writer_read 准则/大纲/伏笔
   → write_chapter(full)
   → review_chapter（3+1 维审稿：情节/人物/设定一致性 + 文学质量）
   → 有 high 建议则 write_chapter(rewrite, instruction=按建议改)
-  → foreshadow_update / writer_update 推进伏笔与事件（每条独立一轮，维护必须发生在审稿之后）
+  → foreshadow_update / timeline_update / writer_update 推进伏笔、人物状态时间线与事件（每条独立一轮，维护必须发生在审稿之后）
 ```
 
 - **审稿先行**：维护类更新（伏笔状态、事件、人物状态）必须发生在 `review_chapter` 之后、基于审过稿的正文，禁止与 write 同轮。

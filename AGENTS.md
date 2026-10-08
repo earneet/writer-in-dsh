@@ -66,6 +66,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - **本地功能验证**：overlay 方式跑 headless 即可——`npx @deepseek-ai/dsh --profile headless --patch ./dev.cordis.yml "<任务>"`；最终形态验证再走 profile 安装路径（`--dump-config` 核对组合树 + web/headless 启动）。
 - **临时插件位置**：overlay 里挂载的临时 .ts 插件文件**必须放在有 package.json 的包目录内**（如 packages/ 下）；放仓库根目录会导致首次模型调用 REQUEST_EXTENSION 失败（插件清单解析需要包身份）。
 - **projectRoot**：writer-bundle 默认 `!!js process.cwd()`，验证时须从 `example-project/` 目录启动 dsh。
+- **构建先行（P6 起）**：包产物在 `lib/`（.gitignore），`npm test`/`npm run typecheck` 已自动串 build；overlay/profile 形态下修改 domain/core 等**被裸导入包**的源码后须 `npm run build` 才生效（overlay 入口指 src，但 src 内包间裸导入经 main 解析到 lib）。
 
 ## 当前状态
 

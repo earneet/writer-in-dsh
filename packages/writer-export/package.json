@@ -24,6 +24,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "Consumer：TXT/HTML/ePub 导出，发布 ctx.writerExport",
+  "license": "MIT"
 }

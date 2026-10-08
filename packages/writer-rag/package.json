@@ -26,6 +26,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "Provider：混合检索（CJK bigram TF-IDF 关键词先行 + 可选语义档 + RRF），发布 ctx.writerRag",
+  "license": "MIT"
 }

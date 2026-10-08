@@ -17,6 +17,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "Service Definition：ctx.writer 抽象基类 + 领域 typed events（纯契约包）",
+  "license": "MIT"
 }

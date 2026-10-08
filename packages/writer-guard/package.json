@@ -26,6 +26,9 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
+  },
+  "description": "Consumer：工具业务错误预算（tools/post-execute 观测，超预算注入纠偏提示，不熔断）",
+  "license": "MIT"
 }

@@ -390,7 +390,7 @@ export function apply(ctx: Context): void {
       // 服务端合并：解析现有 timeline → appendTimelineEntry（同章覆盖/按章序插入，入参含整体校验防毒化）→ 序列化落盘
       const merged = appendTimelineEntry(parseTimeline(character.frontmatter['timeline']), { chapter: args.chapter, state: args.state })
       const saved = await ctx.writer.save('character', args.id, { frontmatter: { timeline: serializeTimeline(merged) } }, args.expectHash)
-      return `已更新人物时间线 ${saved.id}（hash=${saved.hash}）：${merged.map((e) => `${e.chapter}→${e.state}`).join('；')}`
+      return `已更新人物时间线 ${saved.id}（hash=${saved.hash}）：本章 ${args.chapter} → ${args.state.trim()}（时间线共 ${merged.length} 条，同章已覆盖/按章序合并）`
     },
   }))
 
