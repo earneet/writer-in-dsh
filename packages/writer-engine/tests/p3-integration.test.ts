@@ -178,6 +178,28 @@ test('consistencyCheck：分批 + 批内真正截断 + 时间锚倒序并入', a
   }
 })
 
+test('consistencyCheck：带 scope 时引用范围外早期章不被当幻觉丢弃（轮次 13 修复锁定）', async () => {
+  const setup = await makeSetup()
+  try {
+    await seedChapter(setup, '001', '早期章正文。')
+    await seedChapter(setup, '002', '第二章正文。')
+    await seedChapter(setup, '003', '当前章正文。')
+    // issue 的 refs 全部指向 scope 外的更早章（合法证据形态）：修复前会被引用校验当幻觉静默丢弃
+    const issueJson = JSON.stringify({ summary: '', issues: [
+      { dimension: '情节一致性', severity: 'medium', refs: ['chapter/001'], description: '与更早章矛盾的越界引用证据' },
+    ] })
+    setup.llm.reply(issueJson)
+    const report = await setup.engine.consistencyCheck({ from: '003', to: '003' })
+    assert.equal(report.batches.length, 1)
+    assert.deepEqual(report.batches[0].chapters, ['003'], '检查范围仍只含 in-scope 章')
+    const kept = report.issues.find((i) => /越界引用证据/.test(i.description))
+    assert.notEqual(kept, undefined, '引用范围外早期章的 issue 被保留')
+    assert.deepEqual(kept!.refs, ['chapter/001'])
+  } finally {
+    await rm(setup.root, { recursive: true, force: true })
+  }
+})
+
 test('consistencyCheck：新鲜派生摘要代正文（扩批容量）', async () => {
   const setup = await makeSetup({ contextBudgetChars: 2000 })
   try {
@@ -289,6 +311,45 @@ test('maintenancePass TOCTOU：执行期间章节被改写 → 跳过旧版 pend
     const derived = await setup.store.readDerived('maintenance', '001') as { sourceHash: string }
     assert.equal(derived.sourceHash, latest!.hash, '补跑覆盖为最新版本的派生')
     assert.equal(result.sourceHash, latest!.hash)
+  } finally {
+    await rm(setup.root, { recursive: true, force: true })
+  }
+})
+
+test('maintenancePass：force 与在飞非 force 并发——不共享执行、登记不误删（轮次 13 修复锁定）', async () => {
+  const setup = await makeSetup()
+  try {
+    await seedChapter(setup, '001', '正文。')
+    await seedRefs(setup)
+    setup.llm.reply(
+      'A 摘要。', JSON.stringify({ facts: [], foreshadowEvents: [], characterStates: [] }),
+      'F 摘要。', JSON.stringify({ facts: [], foreshadowEvents: [], characterStates: [] }),
+    )
+    // 门控：第一次调用（在飞 pass 的摘要）挂起直到放行——锁死并发时序，其余按队列应答
+    const originalStream = setup.llm.stream.bind(setup.llm)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let first = true
+    setup.llm.stream = (options: Parameters<typeof originalStream>[0]): ReturnType<typeof originalStream> => {
+      if (!first) return originalStream(options)
+      first = false
+      return (async function* (): AsyncGenerator<StreamChunk> {
+        await gate
+        yield* originalStream(options)
+      })()
+    }
+    const a = setup.engine.maintenancePass('001')
+    const b = setup.engine.maintenancePass('001') // 并发非 force：共享 a 的执行
+    const f = setup.engine.maintenancePass('001', { force: true }) // force：等在飞结束后单独跑
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(setup.engine.pendingMaintenanceCount(), 1, '三路并发只有一份在飞登记')
+    release()
+    const [ra, , rf] = await Promise.all([a, b, f])
+    assert.equal(ra.status, 'done')
+    assert.equal(rf.status, 'done')
+    assert.equal(setup.llm.calls, 4, 'a/b 共享一次执行（2 调用）+ force 单独执行（2 调用）——不双跑不漏跑')
+    assert.equal(setup.engine.pendingMaintenanceCount(), 0, '登记全部清理（finally 身份校验无误删残留）')
+    await setup.engine.drainMaintenance()
   } finally {
     await rm(setup.root, { recursive: true, force: true })
   }

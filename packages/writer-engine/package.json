@@ -25,5 +25,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "Provider：写作引擎（full/assist/rewrite 三模式、3+1 维审稿、维护 pass、一致性检查、恢复快照）",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-engine"
+  }
 }

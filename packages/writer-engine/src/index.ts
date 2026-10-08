@@ -144,8 +144,13 @@ export default class WriterEngineServiceImpl extends EngineService {
     const inflight = this.maintenanceInflight.get(chapterId)
     if (inflight !== undefined && opts?.force !== true) return inflight
     if (inflight !== undefined) await inflight.catch(() => {})
+    // 等待期间可能已有新 pass 入表（保存触发）：force 不得覆盖它——覆盖会击穿去重致同章双跑
+    // （双倍模型调用、派生互相覆盖）。重新进入等待最新 inflight，force 语义不变（最终单独跑一次）。
+    const current = this.maintenanceInflight.get(chapterId)
+    if (current !== undefined && current !== inflight) return this.maintenancePass(chapterId, opts, depth)
     const run = this.doMaintenancePass(chapterId, opts).finally(() => {
-      this.maintenanceInflight.delete(chapterId)
+      // 身份校验清理：只删自己入表的 entry，防误删并发后继 pass 的登记（否则 drainMaintenance 漏计漏等）
+      if (this.maintenanceInflight.get(chapterId) === run) this.maintenanceInflight.delete(chapterId)
     })
     this.maintenanceInflight.set(chapterId, run)
     const result = await run
@@ -291,9 +296,11 @@ export default class WriterEngineServiceImpl extends EngineService {
       return { id: chapter.id, content: chapter.content, summary: fresh === true ? derived.summary : undefined }
     }))
     const batches = planConsistencyBatches(inputs, batchBudget)
-    // 引用存在性集合：裸 id 与 kind/id 两种形态都认；基准材料与全部实体 kind 一并纳入
+    // 引用存在性集合：裸 id 与 kind/id 两种形态都认；基准材料与全部实体 kind 一并纳入。
+    // 章节引用取全集而非 in-scope：带 scope 检查时模型引用更早章作证据是正常形态，
+    // 只认 in-scope 会把合法越界引用当幻觉静默丢弃。
     const validRefs = new Set<string>(['principles', 'outline', 'event', 'event/event', 'worldbuilding'])
-    for (const c of inScope) { validRefs.add(c.id); validRefs.add(`chapter/${c.id}`) }
+    for (const c of chapters) { validRefs.add(c.id); validRefs.add(`chapter/${c.id}`) }
     for (const c of characters) { validRefs.add(c.id); validRefs.add(`character/${c.id}`) }
     for (const p of plots) { validRefs.add(p.id); validRefs.add(`plot/${p.id}`) }
     for (const w of worldbuilding) { validRefs.add(w.id); validRefs.add(`worldbuilding/${w.id}`) }
