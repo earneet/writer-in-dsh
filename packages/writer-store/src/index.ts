@@ -278,8 +278,10 @@ export default class WriterStoreService extends WriterService {
     }
     const { next, extracted } = mutator(existing)
     if (extracted.trim().length === 0) return extracted
-    // 先归档后改清单（顺序即安全语义，见方法注释；extracted 由调用方包装好归档头）
-    await this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), extracted)
+    // 先归档后改清单（顺序即安全语义，见方法注释；extracted 由调用方包装好归档头）。
+    // 归档写入走 appendPendingArchive 的串行链（与 pending.md 链不同 key，无死锁）——
+    // 与公开 API 并发追加归档不互踩（否则两处对同一文件读-改-写可能丢段）。
+    await this.appendPendingArchive(extracted)
     const tmpPath = `${abs}.tmp`
     await writeFile(tmpPath, next, 'utf8')
     try {
