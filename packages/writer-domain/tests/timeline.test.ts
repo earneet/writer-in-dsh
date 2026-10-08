@@ -171,9 +171,27 @@ describe('arcCoverageOf', () => {
     ])
   })
 
-  it('lastChapter 取最大章号（倒序落盘数据不误导展示）', () => {
+  it('lastChapter 取最大章号（倒序落盘数据不误导展示）；全脏章锚留 undefined', () => {
     const result = arcCoverageOf([character('elin', JSON.stringify([entry('005', 'a'), entry('002', 'b')]))])
     assert.equal(result.arcs[0].lastChapter, '005')
+    const dirty = arcCoverageOf([character('kael', JSON.stringify([entry('2', 'a'), entry('x', 'b')]))])
+    assert.equal(dirty.arcs[0].lastChapter, undefined, '全脏章锚不展示「至第 000 章」式误导')
+    assert.equal(dirty.withTimeline, 1)
+  })
+
+  it('倒序只进 inversions 不在 invalid 双报（同因文本行被剔除）', () => {
+    const result = inspectTimelines([character('elin', JSON.stringify([entry('004', 'a'), entry('002', 'b')]))])
+    assert.equal(result.inversions.length, 1)
+    assert.equal(result.invalid.length, 0, '章序倒序不重复出现在 invalid')
+  })
+
+  it('倒序被脏锚隔断仍上报（prev 链跨脏锚延续，两通道不双漏）', () => {
+    const result = inspectTimelines([character('elin', JSON.stringify([entry('005', 'a'), entry('x', 'b'), entry('003', 'c')]))])
+    assert.equal(result.inversions.length, 1, '005→003 跨脏锚倒退仍被上报')
+    assert.equal(result.inversions[0].earlier.chapter, '005')
+    assert.equal(result.inversions[0].later.chapter, '003')
+    assert.equal(result.invalid.length, 1, '脏锚本身进 invalid')
+    assert.match(result.invalid[0].errors.join('；'), /章节锚非法/)
   })
 })
 

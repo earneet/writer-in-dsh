@@ -307,7 +307,12 @@ export function apply(ctx: Context): void {
         `卷分布：${[...volumes.entries()].map(([v, n]) => `${v}×${n}`).join('、')}`,
         `人物：${characters.length} 个`,
         `人物弧线覆盖：${arc.withTimeline}/${arc.characters}（timeline 共 ${arc.entries} 条${arc.broken.length > 0 ? `；⚠ 非法 timeline：${arc.broken.join('、')}` : ''}）`,
-        ...(characters.length > 0 ? ['', '人物时间线一览：', ...arc.arcs.map((a) => `- ${a.id}${a.lastChapter !== undefined ? `（至第 ${a.lastChapter} 章共 ${a.count} 条）` : '（无时间线）'}${arc.broken.includes(a.id) ? '（⚠ 非法 timeline）' : ''}`)] : []),
+        ...(characters.length > 0 ? ['', '人物时间线一览：', ...arc.arcs.map((a) => {
+          const label = a.lastChapter !== undefined
+            ? `（至第 ${a.lastChapter} 章共 ${a.count} 条）`
+            : a.count > 0 ? `（${a.count} 条，章锚均非法）` : '（无时间线）'
+          return `- ${a.id}${label}${arc.broken.includes(a.id) ? '（⚠ 非法 timeline）' : ''}`
+        })] : []),
         plots.length > 0 ? `伏笔：${[...status.entries()].map(([s, n]) => `${s}×${n}`).join('、')}` : '伏笔：无',
         events !== undefined ? '关键事件：已记录' : '关键事件：未记录',
         `维护派生覆盖：${chapters.length - stale.length}/${chapters.length}${stale.length > 0 ? `（待维护 pass：${stale.join('、')}）` : ''}`,

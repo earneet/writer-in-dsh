@@ -113,9 +113,10 @@ export interface TimelineInspection {
 
 /**
  * 人物时间线体检（一致性检查的确定性数据源，不调 LLM）：
- * ①章序下降报告倒序对（相邻对比较，与 detectTimeAnchorInversions 同范式——只报「紧邻倒退」，非全对枚举）；
+ * ①章序下降报告倒序对（相邻**合法锚**比较，脏锚跳过、prev 链跨脏锚延续——与 detectTimeAnchorInversions 同为「紧邻倒退」范式）；
  * ②解析失败计入 malformed（timeline 是人确认的权威数据，脏值必须暴露不可静默）；
- * ③解析成功再过 validateTimeline，形状/重复条目错误计入 invalid（堵「JSON 合法但章锚脏」逃逸）。
+ * ③解析成功再过 validateTimeline，形状/重复条目错误计入 invalid（堵「JSON 合法但章锚脏」逃逸；
+ * 其中「章序倒序」文本行被剔除——同因缺陷已由 inversions 结构化上报，防双报）。
  */
 export function inspectTimelines(characters: readonly WriterEntity[]): TimelineInspection {
   const result: TimelineInspection = { inversions: [], malformed: [], invalid: [] }
@@ -128,13 +129,18 @@ export function inspectTimelines(characters: readonly WriterEntity[]): TimelineI
       continue
     }
     const errors = validateTimeline(entries)
-    if (errors.length > 0) result.invalid.push({ characterId: character.id, errors })
-    for (let i = 1; i < entries.length; i++) {
-      const a = entries[i - 1].chapter
-      const b = entries[i].chapter
-      if (CHAPTER_ID_RE.test(a) && CHAPTER_ID_RE.test(b) && Number(b) < Number(a)) {
-        result.inversions.push({ characterId: character.id, earlier: entries[i - 1], later: entries[i] })
+    // 倒序已由 inversions 结构化上报（含两侧条目），invalid 里剔除同因的文本行防一致性检查双报
+    const nonInversionErrors = errors.filter((e) => !e.includes('章序倒序'))
+    if (nonInversionErrors.length > 0) result.invalid.push({ characterId: character.id, errors: nonInversionErrors })
+    // 相邻**合法锚**比较（脏锚跳过、prev 链跨脏锚延续——与 validateTimeline 的 prev 语义一致，
+    // 倒序被脏锚隔断时仍可上报，不会在 inversions/invalid 两通道同时漏掉）
+    let lastValid: CharacterTimelineEntry | undefined
+    for (const entry of entries) {
+      if (!CHAPTER_ID_RE.test(entry.chapter)) continue
+      if (lastValid !== undefined && Number(entry.chapter) < Number(lastValid.chapter)) {
+        result.inversions.push({ characterId: character.id, earlier: lastValid, later: entry })
       }
+      lastValid = entry
     }
   }
   return result
@@ -163,8 +169,12 @@ export function arcCoverageOf(characters: readonly WriterEntity[]): TimelineArcC
       if (timeline.length > 0) {
         coverage.withTimeline++
         coverage.entries += timeline.length
-        const lastChapter = timeline.reduce((max, e) => (CHAPTER_ID_RE.test(e.chapter) && e.chapter > max ? e.chapter : max), '000')
-        coverage.arcs.push({ id: character.id, lastChapter, count: timeline.length })
+        // lastChapter 只取合法章锚的最大值；全部脏锚时留 undefined（避免展示「至第 000 章」这类无对应章节的误导）
+        let lastChapter: string | undefined
+        for (const e of timeline) {
+          if (CHAPTER_ID_RE.test(e.chapter) && (lastChapter === undefined || e.chapter > lastChapter)) lastChapter = e.chapter
+        }
+        coverage.arcs.push({ id: character.id, ...(lastChapter !== undefined ? { lastChapter } : {}), count: timeline.length })
       } else {
         coverage.arcs.push({ id: character.id, count: 0 })
       }

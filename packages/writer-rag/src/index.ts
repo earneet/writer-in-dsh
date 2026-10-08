@@ -262,8 +262,9 @@ export default class WriterRagService extends RagService {
     if (!Array.isArray(vector) || vector.length === 0) {
       throw new Error('writer-rag：embeddings 端点响应缺少 data[0].embedding')
     }
+    // 满即先清后插（与 tokenCache 同策略）：工作集略超上限时避免每次 embed 都在溢出点整体清空、命中率恒 0
+    if (this.vectorCache.size >= WriterRagService.VECTOR_CACHE_MAX) this.vectorCache.clear()
     this.vectorCache.set(cacheKey, vector)
-    if (this.vectorCache.size > WriterRagService.VECTOR_CACHE_MAX) this.vectorCache.clear()
     return vector
   }
 
