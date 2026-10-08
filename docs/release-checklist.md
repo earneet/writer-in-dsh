@@ -1,14 +1,14 @@
-# 发布检查清单（P5：轮次 6 限制③清偿）
+# 发布检查清单（P5 立项，P6 更新为 lib/ 预构建形态）
 
 > 适用于 `dsh-writer-*` 十包的 npm 发布。依据 `references/dsh-plugin-research.md`（publish.zh.md 摘要）与
-> `docs/implementation-plan.md` §8 轮次 6/10。当前版本 0.1.0；发布前逐项打勾。
+> `docs/implementation-plan.md` §8 轮次 6/10/11。当前版本 0.1.0；发布前逐项打勾。
 
 ## 1. 版本与依赖（每次发布）
 
-- [ ] 十包版本一致提升（workspace 互相依赖为精确版本 `0.1.0`，改版本须同步全部引用处）。
+- [ ] 十包版本一致提升（包间互相依赖为精确版本 `0.1.0`，改版本须同步全部引用处）。
 - [ ] `@deepseek-ai/*` 运行时依赖与 dsh 宿主**严格同版本**（当前 `0.2.0-rc.2`；cordis `4.0.4`、schemastery `3.18.4`）——版本漂移会实例分裂致调度器崩（§8 轮次 2）。
 - [ ] 全部包已去 `private: true`（仓库根 `writer-in-dsh` 保持 private 不发布）。
-- [ ] 每包 `engines.node >= 20` 与 `files` 已声明（当前形态：main 指向 `src/index.ts`，由宿主 tsx 加载 TS 源码）。**发布 TS 源是显式选择但有已知风险**：宿主对 tsx 的加载（`dsh-sandbox-local` 注册 `tsx/esm/api`、`dsh-subprocess-local` 经 `import.meta.resolve('tsx/esm')`）属实现细节而非稳定契约，宿主升级可能失效；tarball 安装场景（无 `lib/`）完全依赖该前提。**因此 §5 的发布后 registry 安装复验是强制项**；长期更稳形态仍是 `lib/` 预构建（构建产物切 main/types/files）。
+- [ ] **lib/ 预构建形态**（P6 起）：9 个代码包 main=`lib/index.js`、types=`lib/index.d.ts`、files=`["lib"]`（skills 加 `assets`）。构建 = 根 `npm run build`（逐包 `tsc -p tsconfig.build.json`，TS 5.7+ `rewriteRelativeImportExtensions` 把 `.ts` 相对导入重写为 `.js`，零新增构建依赖）。**发布前必须先 build**（`lib/` 在 .gitignore，npm pack 只收工作树文件）。本地开发不受影响（dev.cordis.yml 仍指 src/、宿主 tsx 加载）。
 - [ ] 运行时直接 import 的宿主包在 `dependencies` 且钉 `0.2.0-rc.2`（engine/rag→`@deepseek-ai/dsh-llm`、tools/guard→`dsh-tools`、skills→`dsh-skill`）：不依赖 pnpm auto-install-peers 默认行为（非契约，禁用即缺包崩）。
 - [ ] `writer-bundle` 无 main/types 为**有意形态**（组合包无 JS 入口，cordis.patch.yml 按包名引用各包入口；与 research.md 官方示例的 main 差异在此留痕）。
 - [ ] `writer-skills` 的 `files` 含 `assets`（技能资产随包分发）；`writer-bundle` 的 `files` 含 `cordis.patch.yml`。
@@ -16,7 +16,7 @@
 
 ## 2. 打包预检
 
-- [ ] 每包 `npm pack --dry-run` 核对产物内容（src/、assets/、cordis.patch.yml 进包；tests/ 不在 files 白名单内不进包）。
+- [ ] 发布前根目录 `npm run build`，随后每包 `npm pack --dry-run` 核对产物内容（lib/、assets/、cordis.patch.yml 进包；src/ 与 tests/ 不在 files 白名单内不进包）。
 - [ ] tarball 内 `package.json` 无 `private`、无 `"*"` 依赖。
 
 ## 3. 安装路径验证（发布后或发布前用 tarball 预演）
