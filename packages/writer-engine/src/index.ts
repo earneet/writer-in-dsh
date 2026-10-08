@@ -445,8 +445,12 @@ export default class WriterEngineServiceImpl extends EngineService {
     return this.maintenanceInflight.size
   }
 
+  /**
+   * 排空在飞维护 pass。**快照语义**：等待调用瞬间的 inflight 快照；快照后新进的 pass、以及
+   * maintenancePass TOCTOU 补跑（原 run settle 后才重新入表）不被本次等待——由下次 flush/
+   * 保存触发覆盖（连续 flush 两次可收敛）。失败只吞错：排空语义是「等到不在飞」，不是「保证成功」。
+   */
   async drainMaintenance(): Promise<void> {
-    // 失败只吞错：排空语义是「等到不在飞」，不是「保证成功」；失败派生由下次保存/recompute 补齐
     await Promise.allSettled([...this.maintenanceInflight.values()])
   }
 

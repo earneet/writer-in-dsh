@@ -76,13 +76,13 @@ test('external 档代码路径（P7）：本地 OpenAI 兼容 stub——检索�
     // 确定性 embedding stub：文本含「绿焰」→ [1,0]，含「港城」→ [0,1]，其余 → [1,1]；
     // 记录请求数供缓存断言（Authorization 头必须携带测试 key）
     let embedRequests = 0
-    let sawAuthorization = false
+    let authorizedRequests = 0
     const server: Server = createServer((req, res) => {
       let body = ''
       req.on('data', (chunk: Buffer) => { body += chunk })
       req.on('end', () => {
         embedRequests++
-        sawAuthorization = req.headers['authorization'] === 'Bearer test-key'
+        if (req.headers['authorization'] === 'Bearer test-key') authorizedRequests++
         const input = (JSON.parse(body) as { input: string }).input
         const embedding = input.includes('绿焰') ? [1, 0] : input.includes('港城') ? [0, 1] : [1, 1]
         res.setHeader('content-type', 'application/json')
@@ -103,15 +103,16 @@ test('external 档代码路径（P7）：本地 OpenAI 兼容 stub——检索�
     const first = await externalRag.search('绿焰', { maxResults: 5 })
     assert.ok(first.length > 0)
     assert.ok(embedRequests > 1, `查询 + 候选块均请求端点（${embedRequests} 次）`)
-    assert.ok(sawAuthorization, '携带 Bearer key')
+    assert.equal(authorizedRequests, embedRequests, '每个请求都携带 Bearer key')
     const firstCount = embedRequests
     // ② 向量缓存：同查询 + 未变语料二次检索零额外端点请求
     await externalRag.search('绿焰', { maxResults: 5 })
     assert.equal(embedRequests, firstCount, '缓存命中（查询与候选向量均复用）')
-    // ③ 章节改写后新文本键失效 → 端点被再次请求
+    // ③ 章节改写后新文本键失效 → 端点被再次请求（查询固定「绿焰」：查询向量已缓存，
+    // 新增请求只能来自改写后 002 新文本的候选键——真正锁语料失效而非查询缓存）
     const ch2 = await store.get('chapter', '002')
     await store.save('chapter', '002', { content: '第二章改写：港城风波加剧，绿焰再现。' }, ch2!.hash)
-    await externalRag.search('港城', { maxResults: 5 })
+    await externalRag.search('绿焰', { maxResults: 5 })
     assert.ok(embedRequests > firstCount, '改写后新块文本重嵌入')
     // ④ 无 key 响亮失败（不静默降级）
     delete process.env['WRITER_RAG_TEST_KEY']
@@ -136,7 +137,8 @@ test('配置响亮失败：字段整体缺席（undefined）/ 大重叠 / 非法
   assert.throws(() => new WriterRagService(freshCtx() as never, { embeddingBackend: 'vector' } as never), /embeddingBackend 非法/)
 })
 
-test('分词缓存：重复查询结果一致且缓存被填充；块内容变化后键失效重算', async () => {  const { rag, store, root } = await makeFixture()
+test('分词缓存：重复查询结果一致且缓存被填充；块内容变化后键失效重算', async () => {
+  const { rag, store, root } = await makeFixture()
   try {
     const first = await rag.search('绿焰 雨夜', { maxResults: 5 })
     // 缓存键 = sha256(块id + 块文本)：首查后应已建立频次表条目

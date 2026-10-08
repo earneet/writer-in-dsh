@@ -24,7 +24,7 @@ interface WriterStub {
   get: (kind: string, id: string) => Promise<unknown>
   save: (kind: string, id: string, patch: unknown, expectHash?: string) => Promise<unknown>
   root: string
-  mutatePending?: (mutator: (text: string) => { next: string; extracted: string }) => Promise<string>
+  archivePending?: (mutator: (text: string) => { next: string; extracted: string }) => Promise<string>
   appendPendingArchive?: (section: string) => Promise<void>
 }
 
@@ -165,9 +165,10 @@ test('pending_cleanup：按章归档 + 无待办幂等 + 脏章锚拒绝', async
   const archived: string[] = []
   const { tools } = makeCtx({
     list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应到达') }, root: '.',
-    mutatePending: async (mutator) => {
+    archivePending: async (mutator: (text: string) => { next: string; extracted: string }) => {
       const { next, extracted } = mutator(pendingText)
       pendingText = next
+      if (extracted.length > 0) archived.push(extracted)
       return extracted
     },
     appendPendingArchive: async (section) => { archived.push(section) },

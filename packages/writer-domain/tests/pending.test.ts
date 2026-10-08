@@ -41,9 +41,9 @@ describe('splitPendingSections', () => {
 })
 
 describe('sectionChapterIds', () => {
-  it('头行与正文的 chapter/<id> 全部提取', () => {
+  it('归属只认头行（正文跨章引用不算归属，防过度归档）', () => {
     const ids = sectionChapterIds({ header: '## [维护 pass] chapter/003（t）', body: '- 涉及 chapter/004 的引用' })
-    assert.deepEqual([...ids].sort(), ['003', '004'])
+    assert.deepEqual([...ids], ['003'])
   })
 })
 
@@ -72,11 +72,18 @@ describe('renderPending / partitionPendingByChapter', () => {
     assert.throws(() => partitionPendingByChapter(sample, '1'), /三位序号/)
   })
 
-  it('无归属章的节保留（不被误归档）', () => {
-    const text = '## 通用待办\n- 与章节无关的事项\n'
+  it('无归属章的节保留（正文提及该章但头行不归属也不移出）', () => {
+    const text = '## 通用待办\n- 与 chapter/001 相关但头行不归属的事项\n'
     const { keep, archived } = partitionPendingByChapter(text, '001')
     assert.equal(archived, '')
     assert.match(keep, /通用待办/)
+  })
+
+  it('围栏代码块内的 ## 行不算节界（防撕裂 Markdown 示例正文）', () => {
+    const text = '## [维护 pass] chapter/001（t）待人工确认\n- 示例：\n```\n## 这不是节界\n```\n- 结尾\n'
+    const { sections } = splitPendingSections(text)
+    assert.equal(sections.length, 1)
+    assert.match(sections[0].body, /这不是节界/)
   })
 
   it('renderPending 往返：切分→重建不丢节', () => {

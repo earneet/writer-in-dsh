@@ -251,11 +251,15 @@ export default class WriterStoreService extends WriterService {
     }
   }
 
-  /** 锁定区内变更 pending.md：mutator 与 appendPending 共用同一条串行化链，读-改-写不与追加互踩。 */
-  async mutatePending<T>(mutator: (text: string) => { next: string; extracted: T }): Promise<T> {
+  /**
+   * 归档式变更 pending.md：pending.md 链锁定区内——mutator 分区 → 先原子追加归档文件 → 再原子重写
+   * pending.md（失败方向安全：归档先落，pending 重写失败时待办仍在清单，重试只在归档多一份副本）。
+   * extracted 为空串时零文件写入（幂等 no-op）。返回 extracted。
+   */
+  async archivePending(mutator: (text: string) => { next: string; extracted: string }): Promise<string> {
     const key = 'pending.md'
     const prev = this.saveChains.get(key) ?? Promise.resolve()
-    const run = prev.then(() => this.mutatePendingLocked(mutator), () => this.mutatePendingLocked(mutator))
+    const run = prev.then(() => this.archivePendingLocked(mutator), () => this.archivePendingLocked(mutator))
     const tail = run.then(() => undefined, () => undefined)
     this.saveChains.set(key, tail)
     void tail.then(() => {
@@ -264,22 +268,25 @@ export default class WriterStoreService extends WriterService {
     return run
   }
 
-  private async mutatePendingLocked<T>(mutator: (text: string) => { next: string; extracted: T }): Promise<T> {
+  private async archivePendingLocked(mutator: (text: string) => { next: string; extracted: string }): Promise<string> {
     const abs = join(this.projectRoot, 'pending.md')
     let existing = ''
     try {
       existing = await readFile(abs, 'utf8')
     } catch {
-      // 文件不存在按空文本处理（归档空清单是合法操作）
+      // 文件不存在按空文本处理（空清单归档是合法 no-op）
     }
     const { next, extracted } = mutator(existing)
+    if (extracted.trim().length === 0) return extracted
+    // 先归档后改清单（顺序即安全语义，见方法注释；extracted 由调用方包装好归档头）
+    await this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), extracted)
     const tmpPath = `${abs}.tmp`
     await writeFile(tmpPath, next, 'utf8')
     try {
       await rename(tmpPath, abs)
     } catch (err) {
       await rm(tmpPath, { force: true }).catch(() => {})
-      throw new Error(`pending.md 变更失败：${String(err)}`)
+      throw new Error(`pending.md 变更失败（归档已写入，待办仍在本清单，重试安全）：${String(err)}`)
     }
     return extracted
   }

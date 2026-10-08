@@ -431,12 +431,15 @@ export function apply(ctx: Context): void {
       if (!/^\d{3}$/.test(args.chapter)) {
         throw new Error(`章节 id 必须为三位序号：${JSON.stringify(args.chapter)}`)
       }
-      const archived = await ctx.writer.mutatePending((text) => {
+      // archivePending 在锁定区内「先归档后改清单」（失败方向安全），归档头由本层包装（# 级与节 ## 级分层）
+      const archived = await ctx.writer.archivePending((text) => {
         const { keep, archived } = partitionPendingByChapter(text, args.chapter)
-        return { next: keep, extracted: archived }
+        return {
+          next: keep,
+          extracted: archived.length === 0 ? '' : `# [已归档] chapter/${args.chapter}（${new Date().toISOString()}）\n\n${archived.trim()}\n`,
+        }
       })
       if (archived.length === 0) return `chapter/${args.chapter} 在 pending.md 中没有待办节，无需归档。`
-      await ctx.writer.appendPendingArchive(`## [已归档] chapter/${args.chapter}（${new Date().toISOString()}）\n\n${archived.trim()}`)
       return `已归档 chapter/${args.chapter} 的待办节到 .writer/pending-archive.md（pending.md 已移除对应节）。`
     },
   }))

@@ -65,23 +65,28 @@ test('appendPending：首建 → 追加（原子写，尾换行规整）', async
   }
 })
 
-test('mutatePending + appendPendingArchive（P7 归档语义）：锁定区内变更不丢并发追加', async () => {
+test('archivePending（P7 归档语义）：锁定区内先归档后改清单；空提取零写入', async () => {
   const { store, root } = await makeStore()
   try {
     await store.appendPending('## [维护 pass] chapter/001（t）待人工确认\n- 建议 A')
-    // mutate 与并发 append 同链串行：mutator 读到的文本包含链上先前追加的结果
-    const extracted = await store.mutatePending((text) => {
+    // 空 extracted：no-op，两文件都不动
+    const noop = await store.archivePending(() => ({ next: '不应落盘', extracted: '' }))
+    assert.equal(noop, '')
+    assert.match(await readFile(join(root, 'pending.md'), 'utf8'), /chapter\/001/)
+    // 归档式变更：mutator 在链内读到最新文本；先写归档再重写清单
+    const extracted = await store.archivePending((text) => {
       assert.match(text, /chapter\/001/, 'mutator 在链内读到最新文本')
-      return { next: '', extracted: '被移出的归档文本' }
+      return { next: '', extracted: '# [已归档] chapter/001（t）\n\n## [维护 pass] chapter/001（t）待人工确认\n- 建议 A\n' }
     })
-    assert.equal(extracted, '被移出的归档文本')
-    assert.equal((await readFile(join(root, 'pending.md'), 'utf8')).trim(), '', '清空后的 pending.md 为空文本')
-    // 归档追加：首建 .writer/pending-archive.md，二次追加不互踩
-    await store.appendPendingArchive('## [已归档] chapter/001（t）\n- 建议 A')
-    await store.appendPendingArchive('## [已归档] chapter/002（t）\n- 建议 B')
+    assert.match(extracted, /已归档/)
+    assert.equal((await readFile(join(root, 'pending.md'), 'utf8')).trim(), '', '清空后的 pending.md 为空文本（非删除）')
     const archive = await readFile(join(root, '.writer', 'pending-archive.md'), 'utf8')
-    assert.match(archive, /chapter\/001[\s\S]*chapter\/002/)
+    assert.match(archive, /已归档\] chapter\/001/)
+    assert.match(archive, /建议 A/)
     assert.ok(archive.endsWith('\n'))
+    // appendPendingArchive 仍可独立追加（归档头由调用方包装）
+    await store.appendPendingArchive('# [已归档] chapter/002（t）\n\n## 其他\n- B\n')
+    assert.match(await readFile(join(root, '.writer', 'pending-archive.md'), 'utf8'), /chapter\/002/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
