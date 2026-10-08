@@ -79,7 +79,10 @@ default-export `WriterEngineService` 发布 `ctx.writerEngine`（写作/审稿/�
 | `foreshadow_update(id, action, ...)` | 伏笔状态机（plant/resolve/abandon/milestone，走 domain 纯转换；P2 落地，此处补记） |
 | `consistency_check(scope)` | 委托 engine 一致性检查 |
 | `recompute_derived(chapter_range)` | 改稿期一致性 |
-| `writer_stats()` / `archive_point()` | 统计/日更目标；显式存档点（git commit，默认不自动提交——R-改进） |
+| `writer_stats()` / `archive_point()` | 统计（含人物弧线覆盖）/日更目标；显式存档点（git commit，默认不自动提交——R-改进） |
+| `timeline_update(id, chapter, state, expectHash)` | 人物状态时间线追加（P5 升格 + P6 工具化）：服务端与现有 timeline 合并（同章覆盖/按章序插入），领域校验响亮拒绝坏值 |
+| `pending_cleanup(chapter)` | 待办归档（P7）：pending.md 中该章的待办节移出并归档到 `.writer/pending-archive.md`（archive-first 锁定区变更，只增不删） |
+| `maintenance_flush()` | 排空在飞维护 pass（P7）：headless 收尾前等待后台派生落盘（缓解进程退出截断） |
 | `export_book(format, options)` | 委托 writer-export |
 | `writer_search(query, chapter_limit?)` | 委托 writer-rag 混合检索（P4；rag 缺席返回「检索插件未启用」降级；chapter_limit 启用防剧透过滤） |
 
@@ -131,10 +134,11 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
 
 ## 4. 数据与存储设计要点（R-改进汇总）
 
-1. Markdown SoT；frontmatter 承载状态（伏笔状态、事件 stale、章节卷/线/时间锚、人物关系邻接清单）。
+1. Markdown SoT；frontmatter 承载状态（伏笔状态、事件 stale、章节卷/线/时间锚、人物关系邻接清单、人物状态时间线 `timeline` 字段）。
 2. 原子写 + content_hash 乐观锁；派生索引可全量重建。
 3. 卷级节点、storyline/POV、结构化时间锚从第一版就进 schema（R-改进：原项目结构性缺失，事后补成本高）。
 4. 人物状态时间线 = character frontmatter 的 `timeline` 字段（**人确认后的权威 SoT**，随章节维护，P5 起）；维护 pass 的 characterStates 派生缓存是**建议**，经 pending.md 提示升格到 timeline。兼作改稿核对与弧线追踪载体。
+5. `pending.md` 是活跃待办清单（只追加，git 跟踪）；确认/作废后按章归档到 `.writer/pending-archive.md`（P7：archive-first 锁定区变更，归档只增不删、pending 重写失败不丢待办）。归档文件随 `.writer/` 整目录 gitignore（与恢复快照同待遇——非权威 SoT，丢失可接受）。
 
 ## 5. 分阶段落地
 
@@ -144,6 +148,9 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
 | P2 写作 | engine 三模式 + 上下文组装 + review + 伏笔工具 + chapter-writing/foreshadow skill | 模型按准则+大纲生成一章，rewrite 走补丁协议 |
 | P3 治理 | 维护 pass（两次调用）+ 一致性检查 + recompute_derived + stats + export | 保存章节点亮派生数据与待办清单；改稿后可重算下游 |
 | P4 增量 | RAG 检索包（混合检索、可换 embedding 后端）+ guard（业务错误预算，tools/post-execute）+ 节拍模式评估 | 按需，验收另定 |
+| P5 时间线+发布准备 | 人物状态时间线结构化（timeline 字段 + 一致性检测 + 弧线覆盖）+ RAG 分词缓存 + 发布前清理（去 private/钉版本/清单/双安装路径实测） | 单测 169/169；tarball+link 双路径 + profile 三线复验通过 |
+| P6 发布冲刺 | lib/ 预构建（rewriteRelativeImportExtensions）+ timeline_update 工具 + npm 元数据（MIT/README） | 预构建形态双安装路径 + writer-p6 profile 实测；单测 172/172 |
+| P7 清欠 | pending.md 归档 + 维护 pass 排空 + guard 措辞契约 + external 档 stub 测试 + tools 测试面补强 | 六项挂账清偿；单测 195/195；overlay 实测归档/排空闭环 |
 
 ## 6. 风险与开放项（承接 review §5）
 

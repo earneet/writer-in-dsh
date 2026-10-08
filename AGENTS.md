@@ -46,7 +46,7 @@ packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 i
 ├── writer-core/     # Service Definition：WriterService 抽象基类 + typed events
 ├── writer-store/    # Provider：Markdown SoT 存储，发布 ctx.writer
 ├── writer-engine/   # Provider：写作引擎（三模式/审稿），发布 ctx.writerEngine
-├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update / consistency_check / recompute_derived / writer_stats / archive_point / export_book / writer_search
+├── writer-tools/    # Consumer：writer_read / writer_update / write_chapter / review_chapter / foreshadow_update / timeline_update / consistency_check / recompute_derived / writer_stats / archive_point / pending_cleanup / maintenance_flush / export_book / writer_search
 ├── writer-skills/   # bundled skill provider + assets/<name>/SKILL.md
 ├── writer-export/   # Consumer：TXT/HTML/ePub 导出（发布 ctx.writerExport）
 ├── writer-rag/      # Provider：混合检索（关键词 + 可选语义档），发布 ctx.writerRag
