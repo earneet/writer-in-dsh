@@ -17,11 +17,12 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 - 章节 id 是三位序号（`"002"`）。assist/rewrite 要求章节已存在；新章只能用 full。
 - rewrite 必须给 `instruction`（改什么、往哪个方向改）；只改局部时可传 `selection`（选区原文）限定范围。
 
-## 写作前必读
+## 写作前准备
 
-1. `writer_read(entity="principles", id="principles")` — 准则是最高约束（引擎也会全量注入，但你应知道红线是什么）。
-2. `writer_read(entity="outline", id="outline")` 找到本章大纲 — 本章的结构契约，逐条落实。
-3. `writer_read(entity="plot")` 列出伏笔 — 本章 🔴 必须设置/回收的项写进 `instruction`，让引擎注入伏笔指令。
+引擎组装上下文时会全量注入准则、本章大纲、前文与伏笔指令——**默认信任引擎组装**，不必逐个全文 read（省上下文）。需要模型亲自做的只有：
+
+1. `writer_read(entity="plot")` 盘点伏笔——把本章 🔴 必须设置/回收的项写进 `instruction`（与引擎自动注入的伏笔指令分节并列生效）。
+2. 需要特殊风格时读对应 `style` 实体并在 `instruction` 引用。
 
 ## 防剧透纪律
 
@@ -30,7 +31,7 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 
 ## 伏笔指令格式
 
-在 `instruction` 中用如下格式声明本章伏笔动作。该块会原文注入写作提示词，与引擎从伏笔档案自动注入的「伏笔指令」分节并列生效（写前先用 `writer_read(entity="plot")` 核对档案，两处不要矛盾）：
+在 `instruction` 中可用如下格式声明本章伏笔动作。**引擎从 plots 档案自动注入的「伏笔指令」是权威**（写前用 `writer_read(entity="plot")` 核对档案，保证档案数据正确）；手工块只是给引擎的补充强调，两处不一致时以档案为准并修正手工块：
 
 ```
 【本章伏笔】
@@ -44,16 +45,29 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 ## 工作流（一轮一章）
 
 ```
-writer_read 准则/大纲/伏笔
+writer_read(entity="plot") 盘点伏笔
   → write_chapter(full)
   → review_chapter（3+1 维审稿：情节/人物/设定一致性 + 文学质量）
   → 有 high 建议则 write_chapter(rewrite, instruction=按建议改)
   → foreshadow_update / timeline_update / writer_update 推进伏笔、人物状态时间线与事件（每条独立一轮，维护必须发生在审稿之后）
+  → 章后维护清单（见下节）
 ```
 
 - **审稿先行**：维护类更新（伏笔状态、事件、人物状态）必须发生在 `review_chapter` 之后、基于审过稿的正文，禁止与 write 同轮。
 - rewrite 结果里的「丢句守卫告警」是疑似蒸发的重要原句：逐条判断是否为有意删除，无意丢失就再 rewrite 补回。
 - 补丁协议「跳过」条目（not-found / ambiguous）说明模型给的锚点没唯一命中：核对原文片段后重试一次，或改为全文大改。
+
+## 章后维护清单
+
+write_chapter 保存后引擎会**异步**跑维护 pass（摘要 + 事实/伏笔/人物状态抽取），建议项稍后追加到 `pending.md`。完整闭环：
+
+1. **读 pending.md**（项目根的 `pending.md`，用宿主文件读取工具；它不是 writer 实体）：本章建议节含伏笔事件与人物状态升级建议（附可直接提交的 JSON）。
+2. **确认落实**：人物状态建议用 `timeline_update` 升格到权威时间线；伏笔建议用 `foreshadow_update`；不同意的留在清单或口头说明作废。
+3. **归档清理**：该章建议全部处理后 `pending_cleanup(chapter)` 归档清空。
+4. **收尾排空**：任务结束前 `maintenance_flush()` 等待在飞维护 pass 落盘（headless 进程退出会截断在飞任务；输出提示可能补跑时可再 flush 一次）。
+5. **存档点**：重要节点（一卷写完、大改后）用 `archive_point(message)` 建 git 存档点。
+
+改稿后（write_chapter rewrite 大改或手工 writer_update 章节）：`recompute_derived(chapter_range)` 重算下游派生。跨章矛盾怀疑时用 `consistency_check(scope?)` 全书检查。查证设定细节用 `writer_search(query, chapter_limit=当前章号)`。
 
 ## 保存纪律
 

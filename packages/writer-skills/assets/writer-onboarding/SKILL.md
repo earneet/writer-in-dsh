@@ -17,7 +17,21 @@ whenToUse: "新项目冷启动、素材盘点、写作卡住时的下一步建�
 5. **情节与伏笔** — `plots/`（伏笔：状态机 planned → planted → resolved/abandoned，milestones 记录节点）与 `ideas`（灵感碎片，用户原话不可覆盖；灵感经消化进入 plots/outline，单向流动，禁止反向改写）。
 6. **章节写作** — `chapters/{NNN}`（三位序号即 id，标题在 frontmatter）。用 `write_chapter` 三模式（full 整章 / assist 续写 / rewrite 补丁协议改写），引擎自动组装上下文：准则 + 本章大纲 + 前文 + 出场人物 + 伏笔指令；防止剧透（未来章节事件不注入）。规范见 chapter-writing 技能。
 7. **审稿** — `review_chapter`（3+1 维：情节/人物/设定一致性 + 文学质量）出结构化建议，rewrite 模式按建议改稿。发现矛盾要指出到具体章节与引文。
-8. **导出** — 成书交付（TXT/ePub/HTML）。（导出工具为后续版本能力。）
+8. **导出** — `export_book(format="txt"/"html"/"epub")` 成书交付（按卷组织；默认需用户确认）。
+
+### 单文件实体的固定 id
+
+创建或读取这些实体时 id 是固定约定的（不是文件名自选）：
+
+| entity | id | 文件 |
+|---|---|---|
+| project | `project` | writer.yaml（只读） |
+| principles | `principles` | principles.md |
+| outline | `outline` | outline.md |
+| event | `event` | events.md |
+| idea | `idea` | ideas.md（灵感合订本，只追加） |
+
+其余种类（chapter/character/plot/style/worldbuilding）的 id = 文件名去 `.md`（chapter 为三位序号），**仅允许字母/数字/下划线/连字符**——中文语义放实体正文或 frontmatter，不要做 id。
 
 ## 写作纪律（始终生效）
 
@@ -33,3 +47,5 @@ whenToUse: "新项目冷启动、素材盘点、写作卡住时的下一步建�
 1. `writer_read(entity="project", id="project")` 与各实体清单（省略 id）盘点现状；
 2. 报告缺口（准则/大纲/人物/伏笔哪些为空），按上述叙事顺序建议下一步；
 3. 素材齐备前不直接写正文，先补最缺的一层；齐备后从第一章开始。
+
+写作过程中想查证设定细节可用 `writer_search`（混合检索章节/摘要/人物/伏笔/世界观；写作时引擎也会自动做防剧透检索增强）。
