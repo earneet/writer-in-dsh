@@ -251,6 +251,72 @@ export default class WriterStoreService extends WriterService {
     }
   }
 
+  /** 锁定区内变更 pending.md：mutator 与 appendPending 共用同一条串行化链，读-改-写不与追加互踩。 */
+  async mutatePending<T>(mutator: (text: string) => { next: string; extracted: T }): Promise<T> {
+    const key = 'pending.md'
+    const prev = this.saveChains.get(key) ?? Promise.resolve()
+    const run = prev.then(() => this.mutatePendingLocked(mutator), () => this.mutatePendingLocked(mutator))
+    const tail = run.then(() => undefined, () => undefined)
+    this.saveChains.set(key, tail)
+    void tail.then(() => {
+      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
+    })
+    return run
+  }
+
+  private async mutatePendingLocked<T>(mutator: (text: string) => { next: string; extracted: T }): Promise<T> {
+    const abs = join(this.projectRoot, 'pending.md')
+    let existing = ''
+    try {
+      existing = await readFile(abs, 'utf8')
+    } catch {
+      // 文件不存在按空文本处理（归档空清单是合法操作）
+    }
+    const { next, extracted } = mutator(existing)
+    const tmpPath = `${abs}.tmp`
+    await writeFile(tmpPath, next, 'utf8')
+    try {
+      await rename(tmpPath, abs)
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      throw new Error(`pending.md 变更失败：${String(err)}`)
+    }
+    return extracted
+  }
+
+  /** 归档追加：.writer/pending-archive.md（只增不删；独立串行化链防并发互踩）。 */
+  async appendPendingArchive(section: string): Promise<void> {
+    const key = 'pending-archive.md'
+    const prev = this.saveChains.get(key) ?? Promise.resolve()
+    const run = prev.then(() => this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), section), () => this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), section))
+    const tail = run.then(() => undefined, () => undefined)
+    this.saveChains.set(key, tail)
+    void tail.then(() => {
+      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
+    })
+    return run
+  }
+
+  /** 通用原子追加（建父目录；跨调用方串行由调用方的链保证）。 */
+  private async appendFileAtomic(abs: string, section: string): Promise<void> {
+    await mkdir(dirname(abs), { recursive: true })
+    let existing = ''
+    try {
+      existing = await readFile(abs, 'utf8')
+    } catch {
+      // 首次创建
+    }
+    const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
+    const tmpPath = `${abs}.tmp`
+    await writeFile(tmpPath, next, 'utf8')
+    try {
+      await rename(tmpPath, abs)
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      throw new Error(`归档追加失败：${String(err)}`)
+    }
+  }
+
   /** 派生数据路径：.writer/derived/<kind>/<id>.json（kind/id 做路径安全校验）。 */
   private derivedPath(kind: string, id: string): string {
     if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind)) {

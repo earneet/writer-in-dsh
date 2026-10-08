@@ -89,6 +89,15 @@ export abstract class WriterService extends Service {
 
   /** 向 pending.md 追加一节待办（维护 pass 产出，供人确认；原子写）。 */
   abstract appendPending(section: string): Promise<void>
+
+  /**
+   * 锁定区内变更 pending.md（P7 归档语义）：mutator 在与 appendPending 相同的串行化链内执行，
+   * 读-改-写不与并发维护 pass 追加互踩；返回 mutator 的返回值（如被移出的归档文本）。
+   */
+  abstract mutatePending<T>(mutator: (text: string) => { next: string; extracted: T }): Promise<T>
+
+  /** 向归档文件 .writer/pending-archive.md 追加文本（原子写，只增不删）。 */
+  abstract appendPendingArchive(section: string): Promise<void>
 }
 
 /**
@@ -174,6 +183,16 @@ export abstract class EngineService extends Service {
    * @param range - 可选章节区间（"002" / "001-003"；缺省全部已写章节）。
    */
   abstract recoverySnapshot(range?: string): Promise<RecoverySnapshotResult>
+
+  /**
+   * 排空在飞的维护 pass（P7：缓解轮次 8 限制①——headless 任务结束进程退出时在飞 pass 被截断）。
+   * 等待全部 inflight 维护 pass 结束（失败只吞错不抛——排空语义是「等到不在飞」，不是「保证成功」）。
+   * 模型可在结束前调 maintenance_flush 工具触发；非协作退出（进程被杀）仍无法覆盖，派生由下次补齐。
+   */
+  abstract drainMaintenance(): Promise<void>
+
+  /** 当前在飞维护 pass 数（0 = 无在飞；maintenance_flush 的状态展示用）。 */
+  abstract pendingMaintenanceCount(): number
 }
 
 /** 恢复快照结果：落盘路径 + 快照全文。 */

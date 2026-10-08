@@ -65,6 +65,28 @@ test('appendPending：首建 → 追加（原子写，尾换行规整）', async
   }
 })
 
+test('mutatePending + appendPendingArchive（P7 归档语义）：锁定区内变更不丢并发追加', async () => {
+  const { store, root } = await makeStore()
+  try {
+    await store.appendPending('## [维护 pass] chapter/001（t）待人工确认\n- 建议 A')
+    // mutate 与并发 append 同链串行：mutator 读到的文本包含链上先前追加的结果
+    const extracted = await store.mutatePending((text) => {
+      assert.match(text, /chapter\/001/, 'mutator 在链内读到最新文本')
+      return { next: '', extracted: '被移出的归档文本' }
+    })
+    assert.equal(extracted, '被移出的归档文本')
+    assert.equal((await readFile(join(root, 'pending.md'), 'utf8')).trim(), '', '清空后的 pending.md 为空文本')
+    // 归档追加：首建 .writer/pending-archive.md，二次追加不互踩
+    await store.appendPendingArchive('## [已归档] chapter/001（t）\n- 建议 A')
+    await store.appendPendingArchive('## [已归档] chapter/002（t）\n- 建议 B')
+    const archive = await readFile(join(root, '.writer', 'pending-archive.md'), 'utf8')
+    assert.match(archive, /chapter\/001[\s\S]*chapter\/002/)
+    assert.ok(archive.endsWith('\n'))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('root getter 返回项目根', async () => {
   const { store, root } = await makeStore()
   try {
