@@ -14,7 +14,7 @@ import Schema from '@deepseek-ai/schemastery'
 import { createHash } from 'node:crypto'
 import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import {
-  buildRagCorpus, filterChunksBySpoiler, keywordScores, rrfFuse, snippetOf,
+  buildRagCorpus, filterChunksBySpoiler, keywordScoresFromCounts, rrfFuse, snippetOf, tokenCountsOf,
   type MaintenanceDerived, type RagChunk, type RagHit, type WriterEntity,
 } from 'dsh-writer-domain'
 import { RagService, type RagSearchOptions } from 'dsh-writer-core'
@@ -78,6 +78,13 @@ export default class WriterRagService extends RagService {
   /** external 档向量缓存：sha256(text) → 向量（带上限的简单淘汰：超限整体清空重建，防无界增长）。 */
   private readonly vectorCache = new Map<string, number[]>()
   private static readonly VECTOR_CACHE_MAX = 2000
+  /**
+   * 分词缓存（P5：轮次 9 限制①部分清偿）：sha256(块id + 块文本) → token 频次表。
+   * 键含块内容 hash（章节块由 chapter content 派生，等价 chapter.hash 锚定——内容一变键即变，天然失效）；
+   * corpus 每查询现建时免对未变块重复跑 CJK bigram 分词。超上限整体清空（与向量缓存同策略）。
+   */
+  private readonly tokenCache = new Map<string, Map<string, number>>()
+  private static readonly TOKEN_CACHE_MAX = 5000
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -119,7 +126,7 @@ export default class WriterRagService extends RagService {
       ? chunks
       : filterChunksBySpoiler(chunks, { chapterNumber: opts.chapterLimit, plots })
     if (visible.length === 0) return []
-    const keyword = keywordScores(trimmedQuery, visible)
+    const keyword = this.cachedKeywordScores(trimmedQuery, visible)
     if (keyword.length === 0) return []
     const rankings: string[][] = [keyword.map((s) => s.chunkId)]
     // 语义档：仅对关键词阶段前 N 候选做后验打分（关键词先行，语义校正排序）
@@ -139,6 +146,21 @@ export default class WriterRagService extends RagService {
         const chunk = byId.get(chunkId)!
         return this.toHit(chunk, score)
       })
+  }
+
+  /** 关键词打分（带分词缓存）：块文本未变（内容 hash 键命中）即复用 token 频次表。 */
+  private cachedKeywordScores(query: string, chunks: readonly RagChunk[]): ReturnType<typeof keywordScoresFromCounts> {
+    const tokenCounts = chunks.map((chunk) => {
+      const cacheKey = sha256(`${chunk.id}\u0000${chunk.text}`)
+      let counts = this.tokenCache.get(cacheKey)
+      if (counts === undefined) {
+        counts = tokenCountsOf(chunk.text)
+        this.tokenCache.set(cacheKey, counts)
+        if (this.tokenCache.size > WriterRagService.TOKEN_CACHE_MAX) this.tokenCache.clear()
+      }
+      return counts
+    })
+    return keywordScoresFromCounts(query, tokenCounts, chunks.map((c) => c.id))
   }
 
   /** 组装语料：store 实体清单 + 新鲜派生摘要（sourceHash 锚定才采用）。 */

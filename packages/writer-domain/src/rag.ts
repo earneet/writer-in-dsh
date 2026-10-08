@@ -132,18 +132,27 @@ export interface KeywordScore {
   score: number
 }
 
+/** 单块 token 频次表（分词结果的可缓存形态：块文本 → token 计数）。 */
+export function tokenCountsOf(text: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const token of tokenizeForSearch(text)) counts.set(token, (counts.get(token) ?? 0) + 1)
+  return counts
+}
+
 /**
- * 关键词打分（TF-IDF 语义自实现）：查询 token 在块内的频次 × 逆文档频次（含查询 token 的块数越少越显著）。
- * 返回按得分降序的排名；零分块不返回。
+ * 关键词打分（TF-IDF 语义自实现）的预分词形态：tokenCounts 与 chunkIds 按下标对应，
+ * 供 Provider 按块内容 hash 缓存分词结果（corpus 每查询现建时免重复分词）。
  */
-export function keywordScores(query: string, chunks: readonly RagChunk[]): KeywordScore[] {
+export function keywordScoresFromCounts(
+  query: string,
+  tokenCounts: readonly Map<string, number>[],
+  chunkIds: readonly string[],
+): KeywordScore[] {
+  if (tokenCounts.length !== chunkIds.length) {
+    throw new Error(`keywordScoresFromCounts 形状不符：${tokenCounts.length} 个频次表对 ${chunkIds.length} 个块 id`)
+  }
   const queryTokens = new Set(tokenizeForSearch(query))
-  if (queryTokens.size === 0 || chunks.length === 0) return []
-  const tokenCounts: Map<string, number>[] = chunks.map((chunk) => {
-    const counts = new Map<string, number>()
-    for (const token of tokenizeForSearch(chunk.text)) counts.set(token, (counts.get(token) ?? 0) + 1)
-    return counts
-  })
+  if (queryTokens.size === 0 || chunkIds.length === 0) return []
   const docFreq = new Map<string, number>()
   for (const counts of tokenCounts) {
     for (const token of queryTokens) {
@@ -151,17 +160,25 @@ export function keywordScores(query: string, chunks: readonly RagChunk[]): Keywo
     }
   }
   const results: KeywordScore[] = []
-  for (const [i, chunk] of chunks.entries()) {
+  for (const [i, chunkId] of chunkIds.entries()) {
     let score = 0
     for (const [token, df] of docFreq) {
       const tf = tokenCounts[i].get(token)
       if (tf === undefined) continue
       // 加 log(1 + tf) 抑制长块刷频；idf = 1 + log(N / df)（df≥1）
-      score += Math.log1p(tf) * (1 + Math.log(chunks.length / df))
+      score += Math.log1p(tf) * (1 + Math.log(chunkIds.length / df))
     }
-    if (score > 0) results.push({ chunkId: chunk.id, score })
+    if (score > 0) results.push({ chunkId, score })
   }
   return results.sort((a, b) => b.score - a.score)
+}
+
+/**
+ * 关键词打分（TF-IDF 语义自实现）：查询 token 在块内的频次 × 逆文档频次（含查询 token 的块数越少越显著）。
+ * 返回按得分降序的排名；零分块不返回。
+ */
+export function keywordScores(query: string, chunks: readonly RagChunk[]): KeywordScore[] {
+  return keywordScoresFromCounts(query, chunks.map((c) => tokenCountsOf(c.text)), chunks.map((c) => c.id))
 }
 
 /** RRF 融合（k=60 惯例）：多路排名按名次倒数求和；缺路等价于该路不参与。 */

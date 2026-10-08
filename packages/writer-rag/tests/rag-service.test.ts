@@ -71,3 +71,26 @@ test('配置响亮失败：字段整体缺席（undefined）/ 大重叠 / 非法
   assert.throws(() => new WriterRagService(freshCtx() as never, bigOverlap as never), /chunkOverlap/)
   assert.throws(() => new WriterRagService(freshCtx() as never, { embeddingBackend: 'vector' } as never), /embeddingBackend 非法/)
 })
+
+test('分词缓存：重复查询结果一致且缓存被填充；块内容变化后键失效重算', async () => {
+  const { rag, store, root } = await makeFixture()
+  try {
+    const first = await rag.search('绿焰 雨夜', { maxResults: 5 })
+    // 缓存键 = sha256(块id + 块文本)：首查后应已建立频次表条目
+    const cacheSizeAfterFirst = (rag as unknown as { tokenCache: Map<string, unknown> }).tokenCache.size
+    assert.ok(cacheSizeAfterFirst > 0, '首查后分词缓存被填充')
+    const second = await rag.search('绿焰 雨夜', { maxResults: 5 })
+    assert.deepEqual(
+      second.map((h) => [h.chunkId, Number(h.score.toFixed(6))]),
+      first.map((h) => [h.chunkId, Number(h.score.toFixed(6))]),
+      '缓存命中路径与首算路径打分一致',
+    )
+    // 章节改写（内容 hash 变化）：新块文本键不命中旧缓存，检索反映新内容
+    const ch1 = await store.get('chapter', '001')
+    await store.save('chapter', '001', { content: '雨夜里，埃琳第一次看见绿焰浮现。新增的寒鸦桥段。' }, ch1!.hash)
+    const third = await rag.search('寒鸦', { maxResults: 5 })
+    assert.ok(third.some((h) => h.refId === '001'), '改写后新内容可检索（缓存按内容 hash 失效）')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
