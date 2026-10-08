@@ -82,7 +82,7 @@ test('maintenancePass：done 落派生 + pending.md；二次调用 hash 锚定 u
     assert.equal(derived.summary, done.summary)
     const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
     assert.match(pending, /chapter\/001/)
-    assert.match(pending, /人物状态建议.*timeline 字段/)
+    assert.match(pending, /人物状态建议.*timeline_update/)
     // hash 锚定：内容未变 → up-to-date，不再调模型
     const again = await setup.engine.maintenancePass('001')
     assert.equal(again.status, 'up-to-date')

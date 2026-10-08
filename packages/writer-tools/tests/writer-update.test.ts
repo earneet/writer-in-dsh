@@ -86,3 +86,52 @@ test('writer_update：非 character 实体携带 timeline 字段不做 timeline 
   })
   assert.match(result, /已保存 worldbuilding\/flame/)
 })
+
+test('timeline_update：追加条目走服务端合并（同章覆盖、按章序插入），不要求手工拼 JSON', async () => {
+  const savedPatches: { frontmatter?: Record<string, unknown> }[] = []
+  // 模拟磁盘现状：save 后 get 返回最新落盘 timeline（乐观锁 read-before-update 语义）
+  let current = '[{"chapter":"001","state":"初见"}]'
+  const { tools } = makeCtx({
+    get: async () => ({ kind: 'character', id: 'elin', frontmatter: { timeline: current }, content: '', hash: 'h1' }),
+    save: async (_kind: string, _id: string, patch: { frontmatter?: Record<string, unknown> }) => {
+      savedPatches.push(patch)
+      current = String(patch.frontmatter?.['timeline'])
+      return { kind: 'character', id: 'elin', hash: 'h2', path: 'characters/elin.md' }
+    },
+  })
+  const tool = tools.get('timeline_update')!
+  const exec = { signal: new AbortController().signal } as never
+  const mid = await tool.execute({ id: 'elin', chapter: '003', state: '受伤', expectHash: 'h1' }, exec)
+  assert.match(mid, /已更新人物时间线 elin.*001→初见；003→受伤/)
+  const overwrite = await tool.execute({ id: 'elin', chapter: '001', state: '初见绿焰', expectHash: 'h2' }, exec)
+  assert.match(overwrite, /001→初见绿焰；003→受伤/, '同章覆盖且其余条目不动')
+  assert.deepEqual(
+    savedPatches.map((p) => p.frontmatter?.['timeline']),
+    ['[{"chapter":"001","state":"初见"},{"chapter":"003","state":"受伤"}]', '[{"chapter":"001","state":"初见绿焰"},{"chapter":"003","state":"受伤"}]'],
+  )
+})
+
+test('timeline_update：人物不存在软失败；脏章锚/空 state 响亮拒绝且不落盘', async () => {
+  let saveCalled = false
+  const { tools } = makeCtx({
+    get: async (kind: unknown, id: unknown) => (id === 'ghost' ? undefined : { kind, id, frontmatter: {}, content: '', hash: 'h1' }),
+    save: async () => { saveCalled = true; throw new Error('不应到达') },
+  })
+  const tool = tools.get('timeline_update')!
+  const exec = { signal: new AbortController().signal } as never
+  assert.match(await tool.execute({ id: 'ghost', chapter: '001', state: 'x', expectHash: 'h' }, exec), /人物实体不存在/)
+  await assert.rejects(tool.execute({ id: 'elin', chapter: '2', state: 'x', expectHash: 'h1' }, exec), /章节锚非法/)
+  await assert.rejects(tool.execute({ id: 'elin', chapter: '002', state: '  ', expectHash: 'h1' }, exec), /state 不能为空/)
+  assert.equal(saveCalled, false)
+})
+
+test('timeline_update：现有 timeline 自身非法时拒绝追加（不毒化）', async () => {
+  const { tools } = makeCtx({
+    get: async (kind: unknown, id: string) => ({ kind, id, frontmatter: { timeline: '[{"chapter":"003","state":"a"},{"chapter":"001","state":"b"}]' }, content: '', hash: 'h1' }),
+    save: async () => { throw new Error('不应到达') },
+  })
+  await assert.rejects(
+    tools.get('timeline_update')!.execute({ id: 'elin', chapter: '002', state: 'x', expectHash: 'h1' }, { signal: new AbortController().signal } as never),
+    /拒绝追加/,
+  )
+})

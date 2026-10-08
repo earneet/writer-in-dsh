@@ -1,7 +1,7 @@
 ---
 name: "艾琳"
 role: "主角"
-timeline: '[{"chapter":"001","state":"雨夜初见绿焰，左臂旧伤隐痛"}]'
+timeline: '[{"chapter":"001","state":"雨夜初见绿焰，左臂旧伤隐痛"},{"chapter":"003","state":"确认残留篇章为古神残火的指引"}]'
 ---
 # 艾琳
 

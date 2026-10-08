@@ -10,8 +10,8 @@ import { defineTool, type PreToolDecision, type ToolRunContext } from '@deepseek
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
-  arcCoverageOf, ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline,
-  transitionForeshadow, validateTimeline,
+  arcCoverageOf, appendTimelineEntry, ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline,
+  serializeTimeline, transitionForeshadow, validateTimeline,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
@@ -367,6 +367,30 @@ export function apply(ctx: Context): void {
         }
         throw err
       }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'timeline_update',
+    description: '人物状态时间线工具：为 character 追加或覆盖某章章末的状态条目（服务端自动与现有 timeline 合并——同章覆盖、按章序插入，无需手工拼 JSON）。领域校验：chapter 三位序号、state 非空、章序单调、同章唯一，非法响亮拒绝。修改前必须先 writer_read(entity="character", id=...) 取回完整 hash 填 expectHash。',
+    parameters: {
+      id: { type: 'string', required: true, description: '人物实体 id（characters/<id>.md 的文件名去 .md）' },
+      chapter: { type: 'string', required: true, description: '状态锚定章节（三位序号，如 "002"）' },
+      state: { type: 'string', required: true, description: '该章章末的人物状态描述（非空）' },
+      expectHash: { type: 'string', required: true, description: 'writer_read 返回的完整 hash（read-before-update 乐观锁）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const character = await ctx.writer.get('character', args.id)
+      if (character === undefined) return `人物实体不存在：character/${args.id}（可先 writer_read(entity="character") 列出清单）`
+      // 服务端合并：解析现有 timeline → appendTimelineEntry（同章覆盖/按章序插入，入参含整体校验防毒化）→ 序列化落盘
+      const merged = appendTimelineEntry(parseTimeline(character.frontmatter['timeline']), { chapter: args.chapter, state: args.state })
+      const saved = await ctx.writer.save('character', args.id, { frontmatter: { timeline: serializeTimeline(merged) } }, args.expectHash)
+      return `已更新人物时间线 ${saved.id}（hash=${saved.hash}）：${merged.map((e) => `${e.chapter}→${e.state}`).join('；')}`
     },
   }))
 

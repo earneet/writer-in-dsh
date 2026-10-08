@@ -659,7 +659,7 @@ export function renderPendingSection(chapterId: string, record: MaintenanceDeriv
     lines.push(`- 伏笔事件建议：plot/${event.plot} ${event.action}${event.note !== undefined ? `——${event.note}` : ''}（如属实请用 foreshadow_update 确认）`)
   }
   for (const state of record.extraction.characterStates) {
-    lines.push(`- 人物状态建议：character/${state.character} 第 ${chapterId} 章末 → ${state.state}（如属实请确认写入该人物卡 frontmatter 的 timeline 字段：与现有条目合并、同章覆盖，如 {"chapter":"${chapterId}","state":${JSON.stringify(state.state)}}；用 writer_update 提交）`)
+    lines.push(`- 人物状态建议：character/${state.character} 第 ${chapterId} 章末 → ${state.state}（如属实请用 timeline_update 确认写入人物时间线：id=${state.character} chapter=${chapterId} state=..., expectHash 取最新 writer_read）`)
   }
   if (record.partial === true) {
     lines.push('- ⚠ 部分抽取条目因引用校验未通过被拒收（重试预算耗尽）：')
