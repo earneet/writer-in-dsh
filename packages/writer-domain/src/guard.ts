@@ -20,11 +20,12 @@ export type BusinessErrorCategory =
  */
 const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> = [
   ['optimistic-lock', /^乐观锁失败|^实体已存在：/],
-  ['parse', /^(审稿输出|维护 pass 抽取输出|一致性检查某批次输出|frontmatter 行)无法解析|^milestones JSON 解析失败/],
+  ['parse', /^(审稿输出|维护 pass 抽取输出|一致性检查某批次输出|frontmatter 行)无法解析|^milestones JSON 解析失败|^(milestones|timeline) (必须是 JSON|JSON 解析失败)|^(milestones|timeline)\[|rewrite 全文输出疑似补丁 JSON/],
   ['reference-reject', /^引用不存在|^fact「.*」引用不存在的实体|^foreshadowEvent 引用不存在的伏笔|^characterState 引用不存在的人物/],
   ['illegal-transition', /^伏笔状态非法迁移/],
-  ['not-found', /^(实体不存在|章节不存在|伏笔实体不存在)/],
-  ['validation', /^(未知 (action|mode|实体种类|写作模式|导出格式)|milestone_type 非法|章节 id 必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|max_results 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON)/],
+  ['not-found', /^(实体不存在|章节不存在|伏笔实体不存在|人物实体不存在)/],
+  // 「未知X」家族含无空格变体（未知导出格式：/未知实体种类：）——\s? 兼容两种措辞
+  ['validation', /^未知\s?(action|mode|实体种类|写作模式|导出格式)|milestone_type 非法|章节 id 必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|max_results 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON|实体 .* 是单文件实体|^project 实体（writer\.yaml）为项目配置，只读不可写入|^timeline (章节锚非法|state 不能为空)|^现有 timeline 非法，拒绝追加|^character\/.+ 的 timeline 字段非法/],
 ]
 
 /**
@@ -32,7 +33,7 @@ const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> =
  * （writer-tools 的软失败固定以这些前缀开头）；成功输出的其余正文一律不分类。
  */
 const SOFT_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> = [
-  ['not-found', /^(实体不存在|伏笔实体不存在)/],
+  ['not-found', /^(实体不存在|伏笔实体不存在|人物实体不存在)/],
   ['validation', /^project 实体（writer\.yaml）为项目配置，只可 read 不可 update/],
 ]
 
