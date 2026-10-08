@@ -142,6 +142,7 @@ export function tokenCountsOf(text: string): Map<string, number> {
 /**
  * 关键词打分（TF-IDF 语义自实现）的预分词形态：tokenCounts 与 chunkIds 按下标对应，
  * 供 Provider 按块内容 hash 缓存分词结果（corpus 每查询现建时免重复分词）。
+ * tokenCounts 视为只读（缓存值跨查询共享，调用方不得原地修改）。
  */
 export function keywordScoresFromCounts(
   query: string,

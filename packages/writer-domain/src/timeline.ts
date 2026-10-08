@@ -20,7 +20,8 @@ const CHAPTER_ID_RE = /^\d{3}$/
 /**
  * 解析 character frontmatter 的 timeline 字段（JSON 内联字符串，与 milestones 同形态）。
  * 缺失/空串返回空数组；JSON 非法或形状不符抛错（响亮失败——timeline 是人确认的权威数据，静默吞错会毒化弧线）。
- * 条目顺序保持落盘顺序（单调性校验由 validateTimeline / detectTimelineInversions 负责，解析不重排）。
+ * 条目顺序保持落盘顺序（单调性校验由 validateTimeline / inspectTimelines 负责，解析不重排）。
+ * 条目上未知字段（state/chapter 之外）静默丢弃（serialize 往返以这两个字段为准，不透传扩展键）。
  */
 export function parseTimeline(raw: FrontmatterValue | undefined): CharacterTimelineEntry[] {
   if (raw === undefined || raw === '') return []
@@ -64,17 +65,23 @@ export function appendTimelineEntry(existing: readonly CharacterTimelineEntry[],
 
 /**
  * 时间线领域校验（不抛错的查询形态，供展示/检查路径使用）：
- * ① chapter 必须是三位序号；② state 去空白后非空；③ 章序单调不减（手写乱序 = 数据错误）。
+ * ① chapter 必须是三位序号；② state 去空白后非空；③ 章序单调不减；
+ * ④ 同章不重复（append 同章覆盖语义隐含每章唯一，手写重复必须暴露而非静默双计）。
  * 返回错误清单（空数组 = 通过）。
  */
 export function validateTimeline(entries: readonly CharacterTimelineEntry[]): string[] {
   const errors: string[] = []
+  const seenChapters = new Set<string>()
   let prev: number | undefined
   for (const [i, entry] of entries.entries()) {
     if (!CHAPTER_ID_RE.test(entry.chapter)) {
       errors.push(`timeline[${i}] 章节锚非法：${JSON.stringify(entry.chapter)}（须为三位序号）`)
       continue
     }
+    if (seenChapters.has(entry.chapter)) {
+      errors.push(`timeline[${i}] 章节锚重复：chapter/${entry.chapter} 已有条目（append 同章覆盖，每章只应一条）`)
+    }
+    seenChapters.add(entry.chapter)
     if (entry.state.trim().length === 0) {
       errors.push(`timeline[${i}]（chapter/${entry.chapter}）state 为空`)
     }
@@ -95,30 +102,78 @@ export interface TimelineInversion {
   later: CharacterTimelineEntry
 }
 
+/** 人物时间线体检结果：倒序对 / 无法解析 / 可解析但违反领域校验的条目。 */
+export interface TimelineInspection {
+  inversions: TimelineInversion[]
+  /** 解析失败（非法 JSON/形状/非字符串脏值）的人物与原因。 */
+  malformed: { characterId: string; reason: string }[]
+  /** 解析成功但 validateTimeline 报错的人物与错误清单（章锚非法/state 空/同章重复等）。 */
+  invalid: { characterId: string; errors: string[] }[]
+}
+
 /**
- * 基于时间线的状态倒序矛盾检测（确定性，不调 LLM）：人物 timeline 中章序出现下降即倒序——
- * 状态按章节推进的前提被破坏（常见于手改 frontmatter 或改稿后未同步）。
- * 解析失败（非法 JSON/形状）同样作为矛盾报告（timeline 是人确认的权威数据，脏值必须暴露不可静默）。
+ * 人物时间线体检（一致性检查的确定性数据源，不调 LLM）：
+ * ①章序下降报告倒序对（相邻对比较，与 detectTimeAnchorInversions 同范式——只报「紧邻倒退」，非全对枚举）；
+ * ②解析失败计入 malformed（timeline 是人确认的权威数据，脏值必须暴露不可静默）；
+ * ③解析成功再过 validateTimeline，形状/重复条目错误计入 invalid（堵「JSON 合法但章锚脏」逃逸）。
  */
-export function detectTimelineInversions(characters: readonly WriterEntity[]): { inversions: TimelineInversion[]; malformed: { characterId: string; reason: string }[] } {
-  const inversions: TimelineInversion[] = []
-  const malformed: { characterId: string; reason: string }[] = []
+export function inspectTimelines(characters: readonly WriterEntity[]): TimelineInspection {
+  const result: TimelineInspection = { inversions: [], malformed: [], invalid: [] }
   for (const character of characters) {
     let entries: CharacterTimelineEntry[]
     try {
       entries = parseTimeline(character.frontmatter['timeline'])
     } catch (err) {
-      malformed.push({ characterId: character.id, reason: String(err) })
+      result.malformed.push({ characterId: character.id, reason: String(err) })
       continue
     }
+    const errors = validateTimeline(entries)
+    if (errors.length > 0) result.invalid.push({ characterId: character.id, errors })
     for (let i = 1; i < entries.length; i++) {
-      if (CHAPTER_ID_RE.test(entries[i].chapter) && CHAPTER_ID_RE.test(entries[i - 1].chapter)
-        && Number(entries[i].chapter) < Number(entries[i - 1].chapter)) {
-        inversions.push({ characterId: character.id, earlier: entries[i - 1], later: entries[i] })
+      const a = entries[i - 1].chapter
+      const b = entries[i].chapter
+      if (CHAPTER_ID_RE.test(a) && CHAPTER_ID_RE.test(b) && Number(b) < Number(a)) {
+        result.inversions.push({ characterId: character.id, earlier: entries[i - 1], later: entries[i] })
       }
     }
   }
-  return { inversions, malformed }
+  return result
+}
+
+/** 人物弧线覆盖统计（writer_stats 的展示数据源，纯函数）。 */
+export interface TimelineArcCoverage {
+  /** 有非空 timeline 的人物数。 */
+  withTimeline: number
+  /** 全部人物数（分母）。 */
+  characters: number
+  /** timeline 条目总数。 */
+  entries: number
+  /** 每个人物一行展示：最新章锚（取最大章号，倒序数据不误导）与条目数；无时间线标 (无)。 */
+  arcs: { id: string; lastChapter?: string; count: number }[]
+  /** timeline 无法解析的人物（不毒化其余统计）。 */
+  broken: string[]
+}
+
+/** 人物弧线覆盖统计：解析失败计 broken；lastChapter 取条目最大章号（不依赖落盘顺序）。 */
+export function arcCoverageOf(characters: readonly WriterEntity[]): TimelineArcCoverage {
+  const coverage: TimelineArcCoverage = { withTimeline: 0, characters: characters.length, entries: 0, arcs: [], broken: [] }
+  for (const character of characters) {
+    try {
+      const timeline = parseTimeline(character.frontmatter['timeline'])
+      if (timeline.length > 0) {
+        coverage.withTimeline++
+        coverage.entries += timeline.length
+        const lastChapter = timeline.reduce((max, e) => (CHAPTER_ID_RE.test(e.chapter) && e.chapter > max ? e.chapter : max), '000')
+        coverage.arcs.push({ id: character.id, lastChapter, count: timeline.length })
+      } else {
+        coverage.arcs.push({ id: character.id, count: 0 })
+      }
+    } catch {
+      coverage.broken.push(character.id)
+      coverage.arcs.push({ id: character.id, count: 0 })
+    }
+  }
+  return coverage
 }
 
 /** timeline 序列化为 frontmatter JSON 内联（与 milestones 写入形态一致）。 */

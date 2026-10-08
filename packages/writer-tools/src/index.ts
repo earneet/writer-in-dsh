@@ -10,7 +10,8 @@ import { defineTool, type PreToolDecision, type ToolRunContext } from '@deepseek
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
-  ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline, transitionForeshadow,
+  arcCoverageOf, ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline,
+  transitionForeshadow, validateTimeline,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
@@ -82,6 +83,15 @@ export function apply(ctx: Context): void {
         throw new Error('content 与 frontmatter 至少提供其一')
       }
       const frontmatter = sanitizeFrontmatter(args.frontmatter)
+      // timeline 是人确认的权威数据：写入 character.timeline 前过领域校验，坏值响亮拒绝（防脏值逃逸到弧线/一致性检查）
+      if (kind === 'character' && frontmatter !== undefined && frontmatter['timeline'] !== undefined) {
+        try {
+          const errors = validateTimeline(parseTimeline(frontmatter['timeline']))
+          if (errors.length > 0) throw new Error(errors.join('；'))
+        } catch (err) {
+          throw new Error(`character/${args.id} 的 timeline 字段非法：${String(err instanceof Error ? err.message : err)}（期望 [{"chapter":"三位序号","state":"非空"}] 数组，同章唯一、章序单调）`)
+        }
+      }
       const isNew = args.expectHash === 'new'
       if (!isNew) {
         const existing = await ctx.writer.get(kind, args.id)
@@ -291,30 +301,13 @@ export function apply(ctx: Context): void {
         status.set(s, (status.get(s) ?? 0) + 1)
       }
       // 人物弧线覆盖：character frontmatter 的 timeline 字段（人确认的权威数据）；非法 timeline 计为坏值不毒化统计
-      let withTimeline = 0
-      let timelineEntries = 0
-      const arcLines: string[] = []
-      const broken: string[] = []
-      for (const c of characters) {
-        try {
-          const timeline = parseTimeline(c.frontmatter['timeline'])
-          if (timeline.length > 0) {
-            withTimeline++
-            timelineEntries += timeline.length
-            arcLines.push(`${c.id}（至第 ${timeline[timeline.length - 1].chapter} 章共 ${timeline.length} 条）`)
-          } else {
-            arcLines.push(`${c.id}（无时间线）`)
-          }
-        } catch {
-          broken.push(c.id)
-        }
-      }
+      const arc = arcCoverageOf(characters)
       const lines = [
         `章节：${chapters.length} 章，共约 ${totalChars} 字`,
         `卷分布：${[...volumes.entries()].map(([v, n]) => `${v}×${n}`).join('、')}`,
         `人物：${characters.length} 个`,
-        `人物弧线覆盖：${withTimeline}/${characters.length}（timeline 共 ${timelineEntries} 条${broken.length > 0 ? `；⚠ 非法 timeline：${broken.join('、')}` : ''}）`,
-        ...(characters.length > 0 ? ['', '人物时间线一览：', ...arcLines.map((l) => `- ${l}`)] : []),
+        `人物弧线覆盖：${arc.withTimeline}/${arc.characters}（timeline 共 ${arc.entries} 条${arc.broken.length > 0 ? `；⚠ 非法 timeline：${arc.broken.join('、')}` : ''}）`,
+        ...(characters.length > 0 ? ['', '人物时间线一览：', ...arc.arcs.map((a) => `- ${a.id}${a.lastChapter !== undefined ? `（至第 ${a.lastChapter} 章共 ${a.count} 条）` : '（无时间线）'}${arc.broken.includes(a.id) ? '（⚠ 非法 timeline）' : ''}`)] : []),
         plots.length > 0 ? `伏笔：${[...status.entries()].map(([s, n]) => `${s}×${n}`).join('、')}` : '伏笔：无',
         events !== undefined ? '关键事件：已记录' : '关键事件：未记录',
         `维护派生覆盖：${chapters.length - stale.length}/${chapters.length}${stale.length > 0 ? `（待维护 pass：${stale.join('、')}）` : ''}`,

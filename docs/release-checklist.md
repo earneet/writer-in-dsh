@@ -8,7 +8,9 @@
 - [ ] 十包版本一致提升（workspace 互相依赖为精确版本 `0.1.0`，改版本须同步全部引用处）。
 - [ ] `@deepseek-ai/*` 运行时依赖与 dsh 宿主**严格同版本**（当前 `0.2.0-rc.2`；cordis `4.0.4`、schemastery `3.18.4`）——版本漂移会实例分裂致调度器崩（§8 轮次 2）。
 - [ ] 全部包已去 `private: true`（仓库根 `writer-in-dsh` 保持 private 不发布）。
-- [ ] 每包 `engines.node >= 20` 与 `files` 已声明（当前形态：main 指向 `src/index.ts`，由宿主 tsx 加载 TS 源码——**发布 TS 源是显式选择**，宿主 ≥0.2.0 自带 tsx；若未来要求预构建，加 `tsc` 产出 `lib/` 并把 main/types/files 切到 `lib`）。
+- [ ] 每包 `engines.node >= 20` 与 `files` 已声明（当前形态：main 指向 `src/index.ts`，由宿主 tsx 加载 TS 源码）。**发布 TS 源是显式选择但有已知风险**：宿主对 tsx 的加载（`dsh-sandbox-local` 注册 `tsx/esm/api`、`dsh-subprocess-local` 经 `import.meta.resolve('tsx/esm')`）属实现细节而非稳定契约，宿主升级可能失效；tarball 安装场景（无 `lib/`）完全依赖该前提。**因此 §5 的发布后 registry 安装复验是强制项**；长期更稳形态仍是 `lib/` 预构建（构建产物切 main/types/files）。
+- [ ] 运行时直接 import 的宿主包在 `dependencies` 且钉 `0.2.0-rc.2`（engine/rag→`@deepseek-ai/dsh-llm`、tools/guard→`dsh-tools`、skills→`dsh-skill`）：不依赖 pnpm auto-install-peers 默认行为（非契约，禁用即缺包崩）。
+- [ ] `writer-bundle` 无 main/types 为**有意形态**（组合包无 JS 入口，cordis.patch.yml 按包名引用各包入口；与 research.md 官方示例的 main 差异在此留痕）。
 - [ ] `writer-skills` 的 `files` 含 `assets`（技能资产随包分发）；`writer-bundle` 的 `files` 含 `cordis.patch.yml`。
 - [ ] 根 `npm run typecheck` 零错、`npm test` 全绿。
 
@@ -20,7 +22,7 @@
 ## 3. 安装路径验证（发布后或发布前用 tarball 预演）
 
 - [ ] **link 路径**（本地开发）：`dsh plugin --profile <p> add <包绝对路径>` 逐包按依赖序（domain → core → store → engine → skills → export → rag → guard → tools → bundle），再装 app bundle 并钉版本：`dsh plugin --profile <p> add @deepseek-ai/dsh-headless@0.2.0-rc.2`（或 `@deepseek-ai/dsh-web-app@0.2.0-rc.2`）。
-- [ ] **npm 路径**（发布后真实形态；发布前用 `npm pack` tarball 等价预演）：`dsh plugin --profile <p> add ./dsh-writer-<x>-<ver>.tgz`。注意：**tarball 安装只对无 workspace 依赖的包可独立完成**（如 writer-domain），含 workspace 依赖的包须等全部包上 registry 后按包名安装（`dsh plugin add dsh-writer-bundle` 一步拉全图）。
+- [ ] **npm 路径**（发布后真实形态；发布前用 `npm pack` tarball 等价预演）：`dsh plugin --profile <p> add ./dsh-writer-<x>-<ver>.tgz`。注意：**tarball 安装只对无包间依赖的包可独立完成**（如 writer-domain），含包间依赖（精确 `0.1.0`）的包须等全部包上 registry 后按包名安装（`dsh plugin add dsh-writer-bundle` 一步拉全图）。
 - [ ] 安装后 `dsh --profile <p> --dump-config` 核对组合树（`# == dsh-writer-bundle` 分节含 store→engine→skills→export→rag→guard→tools 行序）。
 - [ ] 从小说项目目录启动 headless 跑一次 `writer_stats`（projectRoot 默认 `process.cwd()`）。
 

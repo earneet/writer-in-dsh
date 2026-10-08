@@ -154,9 +154,10 @@ export default class WriterRagService extends RagService {
       const cacheKey = sha256(`${chunk.id}\u0000${chunk.text}`)
       let counts = this.tokenCache.get(cacheKey)
       if (counts === undefined) {
+        // 满即先清后插（而非插满再清）：语料略超上限时避免每次 search 都在溢出点整体清空、命中率恒 0 的抖动
+        if (this.tokenCache.size >= WriterRagService.TOKEN_CACHE_MAX) this.tokenCache.clear()
         counts = tokenCountsOf(chunk.text)
         this.tokenCache.set(cacheKey, counts)
-        if (this.tokenCache.size > WriterRagService.TOKEN_CACHE_MAX) this.tokenCache.clear()
       }
       return counts
     })

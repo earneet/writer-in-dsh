@@ -77,9 +77,16 @@ test('分词缓存：重复查询结果一致且缓存被填充；块内容变�
   try {
     const first = await rag.search('绿焰 雨夜', { maxResults: 5 })
     // 缓存键 = sha256(块id + 块文本)：首查后应已建立频次表条目
-    const cacheSizeAfterFirst = (rag as unknown as { tokenCache: Map<string, unknown> }).tokenCache.size
-    assert.ok(cacheSizeAfterFirst > 0, '首查后分词缓存被填充')
+    const cache = (rag as unknown as { tokenCache: Map<string, Map<string, number>> }).tokenCache
+    assert.ok(cache.size > 0, '首查后分词缓存被填充')
+    // 身份断言：二查命中路径必须复用同一 Map 实例（重算会产出新对象，此断言即区分缓存命中与重算）
+    const snapshotOfFirstQuery = new Map(cache)
     const second = await rag.search('绿焰 雨夜', { maxResults: 5 })
+    let reused = 0
+    for (const [key, counts] of snapshotOfFirstQuery) {
+      if (cache.get(key) === counts) reused++
+    }
+    assert.ok(reused > 0, `二查复用了首查的频次表实例（reused=${reused}）`)
     assert.deepEqual(
       second.map((h) => [h.chunkId, Number(h.score.toFixed(6))]),
       first.map((h) => [h.chunkId, Number(h.score.toFixed(6))]),

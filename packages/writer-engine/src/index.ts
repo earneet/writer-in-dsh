@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import {
-  applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions, detectTimelineInversions,
+  applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions, inspectTimelines,
   extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, parseConsistencyBatchOutput,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
   renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
@@ -329,8 +329,9 @@ export default class WriterEngineServiceImpl extends EngineService {
         description: `时间锚倒序：chapter/${inversion.earlier.chapterId}（${inversion.earlier.raw}）晚于其后 chapter/${inversion.later.chapterId}（${inversion.later.raw}）`,
       })
     }
-    // 确定性人物时间线矛盾检测（P5：轮次 8 限制⑥清偿——timeline 是人确认的权威数据，脏值/倒序必须暴露）
-    const timeline = detectTimelineInversions(characters)
+    // 确定性人物时间线体检（P5：轮次 8 限制⑥清偿——timeline 是人确认的权威数据，脏值/倒序必须暴露）。
+    // 刻意不随 scope 过滤：timeline 是人物级全书数据（与章节区间无关），与 detectTimeInversions 的章节级 scope 语义不同。
+    const timeline = inspectTimelines(characters)
     for (const inversion of timeline.inversions) {
       issues.push({
         dimension: '人物一致性',
@@ -345,6 +346,14 @@ export default class WriterEngineServiceImpl extends EngineService {
         severity: 'high',
         refs: [`character/${bad.characterId}`],
         description: `人物状态时间线无法解析：${bad.reason}`,
+      })
+    }
+    for (const bad of timeline.invalid) {
+      issues.push({
+        dimension: '人物一致性',
+        severity: 'medium',
+        refs: [`character/${bad.characterId}`],
+        description: `人物状态时间线条目非法：${bad.errors.join('；')}`,
       })
     }
     return { issues, batches, summary: summaries.join('\n') }

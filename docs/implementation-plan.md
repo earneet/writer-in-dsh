@@ -62,7 +62,7 @@ default-export `WriterEngineService` 发布 `ctx.writerEngine`（写作/审稿/�
 - **write_chapter 三模式**：full（整章 + 工具白名单上下文）/ assist（轻上下文续写）/ rewrite（补丁协议优先、大改回退全文）。manual 无需引擎（直接 store 保存）。**节拍模式不做**（R-改进：降为可选后置，首版不实现）。
 - **维护 pass（保存后异步）**：**默认两次调用**——①章节摘要（流畅文本）②事实/伏笔/人物状态抽取（分节 JSON schema + 引用存在性校验 + 按节重试）；产出写回派生数据 + Markdown 待办清单（`pending.md`）供人确认（R-改进：不复制六维抽取管道与水位/幂等键体系；**保留轻量收敛语义**——同章 inflight 去重 + 完成 hash 锚定，防重复触发读己之写）。
 - **一致性检查**：全书（plot/outline/key_events/principles vs 已写章节）+ 世界观条目间/条目 vs 章节；输出结构化矛盾报告（预览不自动持久化）。**改进原项目已知缺陷**：原实现 12 章/8000 字截断且维度与契约不符（w10 审计）——改为按预算分批检查、维度与 schema 对齐。
-- **改稿期一致性（新增，最高优先领域缺口）**：`recomputeDerived(chapterId | range)` 标记/重算下游派生物（摘要、人物状态时间线、伏笔 milestone、事件描述）；与原 impact-analysis 语义合并。
+- **改稿期一致性（新增，最高优先领域缺口）**：`recomputeDerived(chapterId | range)` 标记/重算下游派生物（摘要、characterStates 建议、伏笔事件建议）；与原 impact-analysis 语义合并。（P5 起：人物状态时间线升格为 frontmatter `timeline` 字段、由人确认维护，不在 recompute 派生面内，见 §8 轮次 10。）
 - 人物状态时间线维护（新增 #4 缺口）；断更恢复快照（从章节/事件派生项目快照 Markdown，时距取 git log 时间）。
 - `inject: ['writer', 'llm']`；对外接口：`writeChapter()` / `reviewChapter()` / `consistencyCheck()` / `maintenancePass()` / `recomputeDerived()` / `recoverySnapshot()`。
 
@@ -134,7 +134,7 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
 1. Markdown SoT；frontmatter 承载状态（伏笔状态、事件 stale、章节卷/线/时间锚、人物关系邻接清单）。
 2. 原子写 + content_hash 乐观锁；派生索引可全量重建。
 3. 卷级节点、storyline/POV、结构化时间锚从第一版就进 schema（R-改进：原项目结构性缺失，事后补成本高）。
-4. 人物状态时间线 = 显式派生数据（随章节维护），兼作改稿重算与弧线追踪载体。
+4. 人物状态时间线 = character frontmatter 的 `timeline` 字段（**人确认后的权威 SoT**，随章节维护，P5 起）；维护 pass 的 characterStates 派生缓存是**建议**，经 pending.md 提示升格到 timeline。兼作改稿核对与弧线追踪载体。
 
 ## 5. 分阶段落地
 

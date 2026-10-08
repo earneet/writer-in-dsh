@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  appendTimelineEntry, detectTimelineInversions, parseTimeline, serializeTimeline, validateTimeline,
+  appendTimelineEntry, arcCoverageOf, inspectTimelines, parseTimeline, serializeTimeline, validateTimeline,
   type CharacterTimelineEntry, type WriterEntity,
 } from '../src/index.ts'
 
@@ -74,24 +74,25 @@ describe('appendTimelineEntry', () => {
 
 describe('validateTimeline', () => {
   it('合法时间线返回空错误清单', () => {
-    assert.deepEqual(validateTimeline([entry('001', 'a'), entry('001', 'a2'), entry('004', 'b')]), [])
+    assert.deepEqual(validateTimeline([entry('001', 'a'), entry('002', 'a2'), entry('004', 'b')]), [])
   })
 
-  it('章锚非法 / state 空 / 章序倒序逐条报错', () => {
+  it('章锚非法 / state 空 / 章序倒序 / 同章重复逐条报错', () => {
     const errors = validateTimeline([entry('1', 'a'), entry('002', '  '), entry('003', 'b'), entry('002', 'c')])
-    assert.equal(errors.length, 3)
+    assert.equal(errors.length, 4)
     assert.match(errors[0], /章节锚非法/)
     assert.match(errors[1], /state 为空/)
-    assert.match(errors[2], /章序倒序/)
+    assert.match(errors[2], /章节锚重复/)
+    assert.match(errors[3], /章序倒序/)
   })
 
-  it('同章重复条目不算倒序（单调不减语义）', () => {
-    assert.deepEqual(validateTimeline([entry('002', 'a'), entry('002', 'b')]), [])
+  it('同章重复条目报错（append 同章覆盖语义隐含每章唯一）', () => {
+    assert.equal(validateTimeline([entry('002', 'a'), entry('002', 'b')]).length, 1)
   })
 })
 
-describe('detectTimelineInversions', () => {
-  const character = (id: string, timeline: string | undefined): WriterEntity => ({
+describe('inspectTimelines', () => {
+  const character = (id: string, timeline: string | number | undefined): WriterEntity => ({
     kind: 'character',
     id,
     path: `characters/${id}.md`,
@@ -105,26 +106,74 @@ describe('detectTimelineInversions', () => {
       character('elin', undefined),
       character('kael', JSON.stringify([entry('001', 'a'), entry('003', 'b')])),
     ]
-    const result = detectTimelineInversions(clean)
+    const result = inspectTimelines(clean)
     assert.deepEqual(result.inversions, [])
     assert.deepEqual(result.malformed, [])
+    assert.deepEqual(result.invalid, [])
   })
 
-  it('章序下降报告倒序对（含两侧章节锚）', () => {
-    const bad = character('elin', JSON.stringify([entry('004', 'a'), entry('002', 'b')]))
-    const result = detectTimelineInversions([bad])
+  it('章序下降报告倒序对（相邻对语义：003→001→002 只报 003→001 一对）', () => {
+    const bad = character('elin', JSON.stringify([entry('003', 'a'), entry('001', 'b'), entry('002', 'c')]))
+    const result = inspectTimelines([bad])
     assert.equal(result.inversions.length, 1)
     assert.equal(result.inversions[0].characterId, 'elin')
-    assert.equal(result.inversions[0].earlier.chapter, '004')
-    assert.equal(result.inversions[0].later.chapter, '002')
+    assert.equal(result.inversions[0].earlier.chapter, '003')
+    assert.equal(result.inversions[0].later.chapter, '001')
   })
 
-  it('非法 JSON 计入 malformed（不静默）', () => {
-    const broken = character('elin', '{oops')
-    const result = detectTimelineInversions([broken])
+  it('非法 JSON / 非字符串脏值计入 malformed（不静默）', () => {
+    const broken = [character('elin', '{oops'), character('kael', 5)]
+    const result = inspectTimelines(broken)
     assert.deepEqual(result.inversions, [])
-    assert.equal(result.malformed.length, 1)
+    assert.equal(result.malformed.length, 2)
     assert.match(result.malformed[0].reason, /JSON 解析失败/)
+    assert.match(result.malformed[1].reason, /必须是 JSON 字符串/)
+  })
+
+  it('JSON 合法但条目非法（章锚脏/同章重复/state 空）计入 invalid——堵形状脏值逃逸', () => {
+    const bad = character('elin', JSON.stringify([entry('2', 'a'), entry('004', 'b'), entry('004', 'c'), entry('005', '  ')]))
+    const result = inspectTimelines([bad])
+    assert.deepEqual(result.malformed, [])
+    assert.equal(result.invalid.length, 1)
+    assert.equal(result.invalid[0].characterId, 'elin')
+    assert.equal(result.invalid[0].errors.length, 3, '章锚非法 + 同章重复 + state 空')
+  })
+})
+
+describe('arcCoverageOf', () => {
+  const character = (id: string, timeline: string | undefined): WriterEntity => ({
+    kind: 'character',
+    id,
+    path: `characters/${id}.md`,
+    frontmatter: timeline === undefined ? {} : { timeline },
+    content: '',
+    hash: 'x',
+  })
+
+  it('无人物时零覆盖不炸', () => {
+    assert.deepEqual(arcCoverageOf([]), { withTimeline: 0, characters: 0, entries: 0, arcs: [], broken: [] })
+  })
+
+  it('空 timeline / 有 timeline / 非法 timeline 三分支：坏值不毒化其余统计', () => {
+    const result = arcCoverageOf([
+      character('empty', undefined),
+      character('elin', JSON.stringify([entry('001', 'a'), entry('003', 'b')])),
+      character('bad', '{oops'),
+    ])
+    assert.equal(result.withTimeline, 1)
+    assert.equal(result.characters, 3)
+    assert.equal(result.entries, 2)
+    assert.deepEqual(result.broken, ['bad'])
+    assert.deepEqual(result.arcs, [
+      { id: 'empty', count: 0 },
+      { id: 'elin', lastChapter: '003', count: 2 },
+      { id: 'bad', count: 0 },
+    ])
+  })
+
+  it('lastChapter 取最大章号（倒序落盘数据不误导展示）', () => {
+    const result = arcCoverageOf([character('elin', JSON.stringify([entry('005', 'a'), entry('002', 'b')]))])
+    assert.equal(result.arcs[0].lastChapter, '005')
   })
 })
 
