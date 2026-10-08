@@ -1,25 +1,27 @@
 {
   "name": "dsh-writer-bundle",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "files": [
     "cordis.patch.yml"
   ],
   "dependencies": {
-    "dsh-writer-domain": "*",
-    "dsh-writer-core": "*",
-    "dsh-writer-store": "*",
-    "dsh-writer-engine": "*",
-    "dsh-writer-skills": "*",
-    "dsh-writer-export": "*",
-    "dsh-writer-rag": "*",
-    "dsh-writer-guard": "*",
-    "dsh-writer-tools": "*"
+    "dsh-writer-domain": "0.1.0",
+    "dsh-writer-core": "0.1.0",
+    "dsh-writer-store": "0.1.0",
+    "dsh-writer-engine": "0.1.0",
+    "dsh-writer-skills": "0.1.0",
+    "dsh-writer-export": "0.1.0",
+    "dsh-writer-rag": "0.1.0",
+    "dsh-writer-guard": "0.1.0",
+    "dsh-writer-tools": "0.1.0"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
