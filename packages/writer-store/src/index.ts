@@ -117,9 +117,13 @@ export default class WriterStoreService extends WriterService {
       // 显式 create 语义：不带乐观锁的 save 仅允许创建，已存在即抛错（防 "new" 误填静默覆盖）
       if (existing !== undefined) throw new Error(`实体已存在：${kind}/${id}。更新必须先 read 并提供 expectHash`)
     } else if (existing === undefined) {
-      throw new Error(`乐观锁失败：实体不存在（${kind}/${id}），创建请省略 expectHash`)
+      throw new Error(`乐观锁失败：实体不存在（${kind}/${id}）。创建请将 expectHash 填 "new"（服务层调用则省略 expectHash）`)
     } else if (existing.hash !== expectHash) {
-      throw new Error(`乐观锁失败：磁盘版本已变化（${kind}/${id}），请重新 read`)
+      // 区分「用了列表预览的截断 hash」与「内容真被改过」：前者是新手高频打转点，必须给出可行动指引
+      const hint = expectHash.length < existing.hash.length && existing.hash.startsWith(expectHash)
+        ? '你填的是列表预览的截断 hash——请带 id 重新 writer_read 取完整 hash'
+        : '内容已变化，请重新 read 后用新 hash 重试'
+      throw new Error(`乐观锁失败：hash 不符（${kind}/${id}，当前完整 hash=${existing.hash}），${hint}`)
     }
     if (patch.frontmatter === undefined && patch.content === undefined) {
       throw new Error('保存补丁为空：frontmatter 与 content 至少提供其一')
@@ -178,8 +182,11 @@ export default class WriterStoreService extends WriterService {
     let raw: string
     try {
       raw = await readFile(abs, 'utf8')
-    } catch {
-      return undefined
+    } catch (err) {
+      // ENOENT = 派生缺失（正常，按 undefined 处理由维护 pass 重建）；
+      // 其他 IO 错（EACCES/EBUSY 等）是环境故障，静默当缺失会掩盖问题并多耗一次模型重算——响亮失败
+      if ((err as { code?: string }).code === 'ENOENT') return undefined
+      throw new Error(`派生数据读取失败：${relativePathOf(this.projectRoot, abs)}：${String(err)}`)
     }
     try {
       return JSON.parse(raw) as unknown

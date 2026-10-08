@@ -23,5 +23,10 @@
     "prepublishOnly": "npm run build"
   },
   "description": "Provider：Markdown SoT 存储（原子写 + content_hash 乐观锁 + 派生缓存），发布 ctx.writer",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-store"
+  }
 }

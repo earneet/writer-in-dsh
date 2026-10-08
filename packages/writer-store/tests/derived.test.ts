@@ -50,6 +50,17 @@ test('派生数据：不存在/坏 JSON 按缺失处理；kind 与 id 做路径�
   }
 })
 
+test('派生数据：ENOENT 按缺失、其他 IO 错（路径被目录占位）响亮失败不静默', async () => {
+  const { store, root } = await makeStore()
+  try {
+    // 目录占位派生文件路径：readFile 得到 EISDIR（非 ENOENT 的 IO 错误）→ 修复前被静默当缺失
+    await mkdir(join(root, '.writer/derived/maintenance/dirblock.json'), { recursive: true })
+    await assert.rejects(() => store.readDerived('maintenance', 'dirblock'), /派生数据读取失败/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('appendPending：首建 → 追加（原子写，尾换行规整）', async () => {
   const { store, root } = await makeStore()
   try {
