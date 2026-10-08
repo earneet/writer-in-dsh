@@ -78,7 +78,9 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - P5（时间线升格 + 发布准备）：人物状态时间线结构化（character frontmatter `timeline` 字段 = 人确认权威 SoT；domain timeline.ts 纯函数：解析/追加/校验/体检/弧线覆盖；一致性检查确定性并入倒序+脏值检测；writer_update 写入前响亮校验；pending.md 建议行给出升格 JSON；writer_stats 弧线覆盖）；RAG 分词缓存（内容 hash 锚定 + 先清后插，顺修 external 向量缓存同型抖动）；发布前清理（10 包去 private、全依赖钉精确版本、运行时宿主依赖入 dependencies、engines/files 声明；`docs/release-checklist.md` 全清单；npm tarball 与 link 双安装路径实测 + profile dump-config/headless/web 三线复验）。
 - P6（发布冲刺）：lib/ 预构建（TS `rewriteRelativeImportExtensions`，零新增构建依赖；9 代码包 main/types/files 切 lib，`prepublishOnly` guard，test/typecheck 串 build）；timeline_update 工具（服务端时间线合并，清偿轮次 10 限制①）；npm 元数据齐备（MIT LICENSE + 十包 README + description）；`docs/release-checklist.md` 更新为预构建形态（git 直装不支持、repository 待补等留痕）。预构建形态 tarball+link 双安装路径、writer-p6 profile dump-config/headless、overlay 双场景全部实测通过。
 - P7（清欠冲刺）：pending.md 归档语义（pending_cleanup 工具 + archive-first 锁定区变更 + .writer/pending-archive.md 只增归档）；维护 pass 排空（drainMaintenance + maintenance_flush 工具）；guard 措辞契约测试（错误文案↔模式表漂移即红，顺修模式表真实缺口）；external 档代码路径 stub 集成测试；writer-tools 测试面补强（九用例）；broken 弧线话术修正。
-- 已验证：单测 195/195、typecheck 零错、build 零错；overlay+headless 与 profile 双形态实测；P5 四轮 / P6 两轮 / P7 两轮审查均收敛（详见 §8 轮次 10/11/12）。
-- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12。
+- 轮次 13（全量审计）：三线对抗审查（实现偏离/工具工作流/代码横切）后修复 12 项——maintenancePass force 竞态、一致性检查 scope 越界引用误弃、chapter_limit 校验、rag 超时 Config 化、乐观锁错误文案（截断 hash 检测）、focus 无效维度响亮报错、维护 pass 链路提示；补齐 review-guide / reverse-reference 两技能；onboarding/chapter-writing 过期文案与章后维护闭环；5 处设计文档正文对齐实现 + 4 项裁定留痕（详见 implementation-plan §8 轮次 13）。
+- 轮次 16（挂账清偿 + 上架）：实现审查报告挂账项（chunkChapterText NaN 防护、readDerived IO 错区分、export 剥离重复章标题 + XHTML 1.1 doctype）+ 测试盲区补强（净增 7 例，共 202/202）；创建 GitHub 仓库 earneet/writer-in-dsh 并推送；11 个 package.json 补 repository 字段（详见 implementation-plan §8 轮次 16）。
+- 已验证：单测 195/195、typecheck 零错、build 零错；overlay+headless 与 profile 双形态实测；P5 四轮 / P6 两轮 / P7 两轮审查均收敛（详见 §8 轮次 10/11/12）；轮次 13 审计修复后 typecheck/build/测试复验全过；轮次 16 后单测 202/202。
+- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13。
 
-**下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；repository 字段待仓库公开后补；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。
+**下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。

@@ -27,10 +27,10 @@ packages/
 
 **不含 dsh.bundle**，是其余包的公共依赖（普通 npm 库形态，`dsh plugin` 装它只作依赖）。内容全部为纯函数/类型，可独立单测：
 
-- 实体类型：Project / Principles / OutlineNode（含 volume 卷级）/ Chapter（含 storyline/POV、故事内时间锚）/ Character（含关系邻接、状态时间线条目）/ PlotPoint（伏笔状态机）/ KeyEvent（含 stale）/ Idea / StyleRef / WritingStat。
+- 实体形态（**实现为扁平 WriterEntity + EntityKind 白名单 + 开放 frontmatter**，强类型清单是语义参考：卷级 volume、storyline/POV、时间锚等以 frontmatter 键承载，见 §4.3 轮次 13 留痕；timeline 为唯一强校验例外）：章节（含 volume/storyline/POV/时间锚键）、人物（关系邻接、状态时间线 `timeline`）、伏笔（状态机）、事件（含 stale 键）、灵感、风格参照。
 - frontmatter 解析与序列化（gray-matter 语义自实现，避免依赖）；content_hash 规范化（正文 + frontmatter 稳定序列化）。
 - 伏笔状态机 `planned→planted→resolved/abandoned` + milestones 纯转换函数（非法迁移抛错）。
-- **领域公理（显式约束函数）**：①「未写章节大纲自由调整 / 已写章节情节变更须一致性检查」二分（`assertOutlineEditable(chapter)`：已写章节的大纲变更必须携带 consistency 标记）；② ideas→plot_points→outline **单向流**（plot 可溯源 idea，反向仅经「整理」入口，禁止 outline 直接改写 ideas 原文）。
+- **领域公理（显式约束函数）**：①「未写章节大纲自由调整 / 已写章节情节变更须一致性检查」二分（`assertOutlineEditable(chapter)`：已写章节的大纲变更必须携带 consistency 标记）；② ideas→plot_points→outline **单向流**（plot 可溯源 idea，反向仅经「整理」入口，禁止 outline 直接改写 ideas 原文）。**轮次 13 裁定：两条公理降级为软约束落地，不实现显式函数**——扁平 Markdown SoT 下无法可靠做大纲逐章 diff 与改写意图判定，硬拦截会误伤合法人工整理；实际防线 = skill 纪律（chapter-writing「审稿先行」、onboarding「用户原话不可覆盖」）+ consistency_check / recompute_derived 工具闭环 + git 存档点可回滚。
 - rewrite 补丁协议：`{find,replace}` 锚点匹配（空白归一、唯一命中才替换）、丢句守卫（原句保留率检测）、补丁不命中降级。
 - 上下文组装器（纯函数）：输入实体集 + 模型窗口预算 → 预注入清单（principles 全量、本章大纲永不截断、窗口化大纲降级序、前文按线感知注入、防剧透过滤、人物精简摘要、伏笔指令、事件注入）。预算是**参数**而非常量（R-改进：32K 时代精打细算层不复制，大窗口直接注原文）。
 - 维护 pass 的分节 JSON schema 定义 + 抽取引用存在性校验函数（章节/人物/伏笔 id 必须存在于实体集，否则拒收该节——R-改进：堵原项目「引用脏值致入库失败」复发病）。
@@ -38,20 +38,20 @@ packages/
 
 ### 1.2 `writer-core`（Service Definition）
 
-导出**抽象服务基类** `WriterService`（Cordis 惯例：定义包导出抽象基类与事件声明，由 Provider 包继承实现——core 自身不发布 `ctx.writer` 实例），含 `ctx.writer` 的接口类型（declaration merging）与 typed events：
+导出**抽象服务基类** `WriterService`（Cordis 惯例：定义包导出抽象基类与事件声明，由 Provider 包继承实现——core 自身不发布 `ctx.writer` 实例），含 `ctx.writer` 的接口类型（declaration merging）与 typed events（**接口命名以 [writer-core/src/index.ts](../packages/writer-core/src/index.ts) 实现为准，下述为语义概览**）：
 
-- 只读接口：`getProject()` / `listEntities(kind, query)` / `getEntity(kind, id)` / `assembleContext(chapterId, opts)`（委托 domain 组装器）。
-- 写接口：`saveChapter()` / `saveEntity()`（统一走 store，返回 diff + 新 content_hash）。
-- 领域事件（typed events，进程内同步，无 outbox——R-改进：抛弃微服务三件套）：`writer/chapter-saved`、`writer/entity-updated`、`writer/outline-changed`。
+- 只读接口：`list(kind)` / `get(kind, id)`（上下文组装 `assembleContext` 未设为 core 契约——引擎私有 assemble 委托 domain 组装器，仅 engine 消费）。
+- 写接口：`save(kind, id, patch, expectHash?)`（乐观锁 + 显式 create 语义，返回新实体）+ 派生缓存（`readDerived`/`writeDerived`/`deleteDerived`/`listDerived`）+ `appendPending` / `archivePending` / `appendPendingArchive` + `rebuildIndex()` + `root`。
+- 领域事件（typed events，进程内同步，无 outbox——R-改进：抛弃微服务三件套）：`writer/entity-saved`（store 落盘后发，engine 维护 pass 挂钩）、`writer/chapter-written`（引擎写作保存后发）、`writer/maintenance-pass`（维护 pass 完成发）。
 - **本包不实现存储与 LLM**，仅定义契约 + 事件；被 store 继承、被 engine/tools/export 注入。
 
 ### 1.3 `writer-store`（Provider）
 
 实现并发布 `ctx.writer`：default-export 继承 core 抽象基类的 `WriterStoreService`（服务就绪后 engine/tools 的 inject 才放行）：
 
-- **Markdown SoT**：项目目录布局 `writer.yaml`、`principles.md`、`outline.md`、`chapters/{NNN}-{title}.md`、`characters/{name}.md`、`worldbuilding/*.md`、`plots/*.md`、`events.md`、`ideas.md`、`style/*.md`、`.writer/index/`（派生索引目录，gitignore）。
+- **Markdown SoT**：项目目录布局 `writer.yaml`、`principles.md`、`outline.md`、`chapters/{NNN}.md`（三位序号即 id，标题在 frontmatter）、`characters/{name}.md`、`worldbuilding/*.md`、`plots/*.md`、`events.md`、`ideas.md`、`style/*.md`、`.writer/`（派生数据目录，gitignore）。
 - **原子写**（temp + rename，R-改进：半写文件是索引可重建的隐性破坏者）+ content_hash 乐观锁（update 前强制 read，双校验）。
-- **派生索引**：`.writer/index/index.json`（实体清单、hash、章节卷/线归属、字数统计）——**纯缓存，删除后 `writer.rebuildIndex()` 全量重建**（R-改进：不复制 SQLite 双写事务，索引失败标脏不阻塞写作）。
+- **派生索引**：实体清单、hash、章节卷/线归属、字数统计——**纯缓存，删除后 `writer.rebuildIndex()` 全量重建**（R-改进：不复制 SQLite 双写事务，索引失败标脏不阻塞写作）。**实现形态为进程内解析快照缓存（mtime+size 锚定，轮次 2① 裁定磁盘 `.writer/index/` 不落地）**，语义不变：list 恒反映磁盘现状，外部编辑即失效重读。
 - 外部编辑检测：read 时 hash 对比 + 依赖宿主 workspace 文件事件（若可用；开放项，被动 hash 兜底——见 review §5）。
 - `inject: ['writer']`（core 的服务定义）。
 
@@ -72,8 +72,8 @@ default-export `WriterEngineService` 发布 `ctx.writerEngine`（写作/审稿/�
 
 | 工具 | 说明 |
 |---|---|
-| `writer_read(entity, params?)` | 通用读，entity 白名单裁剪（写作子代理白名单单独配置） |
-| `writer_update(entity, {action}, modifications)` | 通用写，read-before-update + content_hash 双校验，返回 diff/warnings |
+| `writer_read(entity, id?)` | 通用读（entity 走 ENTITY_KINDS 白名单；子代理白名单不实现，见下方裁定） |
+| `writer_update(entity, id, expectHash, content?, frontmatter?)` | 通用写（创建填 expectHash="new"），read-before-update + content_hash 双校验，character.timeline 写前过领域校验，返回保存回执（新 hash/path） |
 | `write_chapter(mode, ...)` | 委托 engine；progressive 进度经 tool 输出 |
 | `review_chapter(chapter_id, focus?)` | 3+1 维审稿（ReviewSuggestion 结构化契约，quote 定位 + rewriteOption） |
 | `foreshadow_update(id, action, ...)` | 伏笔状态机（plant/resolve/abandon/milestone，走 domain 纯转换；P2 落地，此处补记） |
@@ -86,18 +86,18 @@ default-export `WriterEngineService` 发布 `ctx.writerEngine`（写作/审稿/�
 | `export_book(format, options)` | 委托 writer-export |
 | `writer_search(query, chapter_limit?)` | 委托 writer-rag 混合检索（P4；rag 缺席返回「检索插件未启用」降级；chapter_limit 启用防剧透过滤） |
 
-权限：allow/ask 经 `tools/pre-execute` 类型化决策 + `ctx.tools.guard()`（`writer_update` destructive action、`export_book` 默认 ask；R-改进：不建 PermissionManager，落点在 pre-execute 决策层而非 policy 旋钮）。
-`inject: ['writer', 'tools']`（write_chapter/review/consistency/recompute 委托 engine；export 委托 writer-export）。**engine 为可选依赖**：经 `ctx.get('writerEngine')` 获取（dsh 惯例：可选服务用 `ctx.get` 而非 inject 属性代理），缺席时写作类工具正常注册但执行返回「引擎未启用」——保证 P1 仅装 core+store+tools 即可跑通读写闭环（第 1 轮对抗审查修正的注入断链）。
+权限：allow/ask 经 `tools/pre-execute` 类型化决策 + `ctx.tools.guard()`（`export_book` 默认 ask；`writer_update` 不设 destructive ask——**轮次 13 裁定**：read-before-update 乐观锁 + git 存档点已覆盖误写回滚，逐次写审批会打断写作循环；R-改进：不建 PermissionManager，落点在 pre-execute 决策层而非 policy 旋钮）。
+`inject: ['writer', 'tools']`（write_chapter/review/consistency/recompute 委托 engine；export 委托 writer-export）。**engine 为可选依赖**：经 `ctx.get('writerEngine')` 获取（dsh 惯例：可选服务用 `ctx.get` 而非 inject 属性代理），缺席时写作类工具正常注册但执行返回「引擎未启用」——保证 P1 仅装 core+store+tools 即可跑通读写闭环（第 1 轮对抗审查修正的注入断链）。**writer_read 的「写作子代理白名单单独配置」不实现**（轮次 13 裁定：子代理能力裁剪属宿主 agent 配置层职责，插件层 ENTITY_KINDS 白名单已足）。
 
 ### 1.6 `writer-skills`（bundled skills + 注册插件）
 
 注册 bundled skill provider（`BUNDLED_SKILL_RANK` + `resourceBase` 指向资产目录）：
 
-- `writer-onboarding`：创作起步 checklist（8 阶段降为叙事引导，非流程状态机——R-改进）。
-- `chapter-writing`：章节写作规范（含防剧透规则、伏笔指令格式、风格示范用法）。
+- `writer-onboarding`：创作起步 checklist（8 阶段降为叙事引导，非流程状态机——R-改进）。含单文件实体固定 id 表与起步动作。
+- `chapter-writing`：章节写作规范（含防剧透规则、伏笔指令格式、风格示范用法、章后维护清单）。
 - `foreshadow-guide`：伏笔状态机语义、milestones 类型、完整性报告使用。
-- `review-guide`：审稿 3+1 维度定义与建议格式。
-- `reverse-reference`：参照小说学习流程（原反向分析参照模式，不建表）。
+- `review-guide`：审稿 3+1 维度定义与建议格式（轮次 13 补齐——此前仅存在于设计承诺）。
+- `reverse-reference`：参照小说学习流程（原反向分析参照模式，不建表；轮次 13 补齐）。
 
 ### 1.7 `writer-export`（Consumer）
 
@@ -136,7 +136,7 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
 
 1. Markdown SoT；frontmatter 承载状态（伏笔状态、事件 stale、章节卷/线/时间锚、人物关系邻接清单、人物状态时间线 `timeline` 字段）。
 2. 原子写 + content_hash 乐观锁；派生索引可全量重建。
-3. 卷级节点、storyline/POV、结构化时间锚从第一版就进 schema（R-改进：原项目结构性缺失，事后补成本高）。
+3. 卷级节点、storyline/POV、结构化时间锚从第一版就进 schema（R-改进：原项目结构性缺失，事后补成本高）。**实现形态（轮次 13 留痕）**：除 timeline（强校验）外均以开放 frontmatter 键承载（volume/storyline/pov/time_anchor 等），未建 OutlineNode/KeyEvent 等强类型——读写路径 schema 自由度换取扁平 SoT 的简单性，消费端（组装器/一致性检查）按需读取；如后续需要强校验再按 timeline 范式升格。
 4. 人物状态时间线 = character frontmatter 的 `timeline` 字段（**人确认后的权威 SoT**，随章节维护，P5 起）；维护 pass 的 characterStates 派生缓存是**建议**，经 pending.md 提示升格到 timeline。兼作改稿核对与弧线追踪载体。
 5. `pending.md` 是活跃待办清单（只追加，git 跟踪）；确认/作废后按章归档到 `.writer/pending-archive.md`（P7：archive-first 锁定区变更，归档只增不删、pending 重写失败不丢待办）。归档文件随 `.writer/` 整目录 gitignore（与恢复快照同待遇——非权威 SoT，丢失可接受）。
 
@@ -189,3 +189,8 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
   - **记录的偏离与已知限制（P6 新增）**：① d.ts 内保留 `.ts` 相对说明符（TS 不重写声明文件属预期；临时消费者工程实测 NodeNext 解析到同目录 .d.ts 零错；个别非 tsc 工具链可能报怨，留意）；② 真实 `npm publish`（需凭据与 2FA）与发布后 registry 安装复验待用户配合执行（checklist §5 强制项）；③ external embedding 档继续挂账；④ engine/guard 的 @deepseek-ai/* 同置 dependencies+peerDependencies 略冗余（同版本 dedupe 无风险，审查裁定可接受）。
 - 轮次 12（完成·P7 清欠收口）：六项挂账清偿。**① pending.md 归档语义**（轮次 8 限制⑤）：domain `pending.ts` 纯函数（切节/归属/重建/按章分区——**归属只认节头行**（正文跨章引用不算，防过度归档）、跳过 ``` 围栏、CRLF 归一）；store `archivePending`（pending.md 链锁定区内：mutator 分区 → **先**原子追加归档 → **再**原子重写清单，失败方向安全——归档先落则 pending 重写失败时待办仍在、重试只多副本；归档写入走 appendPendingArchive 串行链防并发丢段）；工具 `pending_cleanup`（按章归档 + 幂等 no-op + `# [已归档]` 时间戳头分层）。**② 维护 pass 排空**（轮次 8 限制①缓解）：engine `drainMaintenance`/`pendingMaintenanceCount`（快照语义，TOCTOU 补跑逃逸已注释——连续两次 flush 收敛）+ 工具 `maintenance_flush`（模型收尾前可调）。**③ guard 措辞契约测试**（轮次 9 限制⑤防护）：扫四包全部 throw 消息（模板插值占位 + 代表实参重试），全部须可分类或命中基建白名单（白名单逐条裁定：IO/模型/内部不变量/用户级），软失败全量 return 扫描同构——**措辞漂移即红**；顺带修模式表真实缺口（timeline/milestones 家族、「未知X」无空格变体、人物实体不存在软失败、rewrite 疑似 JSON→parse）。**④ external 档代码路径集成测试**（轮次 9 限制②部分清偿）：本地 OpenAI 兼容 stub（确定性向量/请求计数/Bearer 累计断言/unref 防挂起）——检索走 embeddings、向量缓存（同查询+未变语料零新请求）、改写后语料键失效（查询固定已缓存词，新增请求只能来自新块文本）、无 key 响亮失败。**⑤ writer-tools 测试面补强**（轮次 10 限制④）：tools.test.ts 九用例（writer_read 清单/单体、writer_stats 全分支+真实 store 冒烟、foreshadow_update 四动作+终态拒绝、引擎缺席降级×5、export/rag 缺席降级、archive_point 非 git、pending_cleanup、maintenance_flush）。**⑥ broken 人物弧线话术**（轮次 10 限制⑤）：改「（timeline 无法解析，请修复 frontmatter）」。验证：typecheck 零错、单测 195/195（净增 23）；overlay 实测 pending_cleanup（真实归档落盘）+ maintenance_flush（空排空）。对抗审查两轮收敛：首轮 2 subagent 返回 6M+11L，逐条复核全部成立或裁定记录，修复 6M（归档两步原子性→archive-first 锁定区、归属只认头行、drain 快照语义注释、external 失效断言锁语料、软失败契约全量化、白名单死条目清理）+ L 大部（围栏/CRLF/Bearer 累计/# 级归档头/L1 并发缝根治为走归档链）；二轮确认五组修复正确，新发现 3L（L1 已根治；L2 成功前缀弱锚为白名单机制固有取舍、L3 未闭合围栏单节化不丢数据——均记录）。
   - **记录的偏离与已知限制（P7 新增）**：① external 档**效果**实测仍待有 key 环境（本轮只清偿代码路径，检索质量未验）；② guard 软失败契约的成功前缀（已/没有/当前…）是语义弱锚——防「漏报红」不防「错误文案伪装成成功」，新增错误型软失败应避免这些开头（机制固有取舍）；③ pending.md 未闭合围栏会使其后 `## ` 头全部并入当前节（单节化不丢数据，重开围栏即恢复）；④ maintenance_flush 非协作退出（进程被杀）仍无法覆盖（原限制①只缓解非根治）；⑤ npm publish / repository / export_book 真人审批 / external key 四项用户介入挂账不变。
+- 轮次 13（完成·全量审计轮）：按「实现 vs 设计 + 工具工作流合理性 + 代码质量横切」三线并行对抗审查（3 subagent），逐条复核后修复与裁定。**修复（代码）**：① maintenancePass force 竞态——force 等待 inflight 期间新 pass 入表会被无条件覆盖（击穿去重致同章双跑），且 finally 误删后继登记致 drainMaintenance 漏等；改为重入等待最新 inflight + 身份校验清理；② consistencyCheck 带 scope 时 validRefs 只含 in-scope 章节，引用更早章的合法证据被当幻觉静默丢弃——引用存在性集合改用全部已写章节；③ writer_search chapter_limit 无校验（0/负数会静默滤空全部章节块）——入口校验正整数；④ rag external 档 30s 超时硬编码 → Config `embeddingTimeoutMs`；⑤ guard watchedTools 默认清单补 timeline_update/pending_cleanup/maintenance_flush（对齐 14 工具全量）；⑥ store 乐观锁错误文案三处改进——附当前完整 hash、检测「截断预览 hash」给专项指引（防新手打转）、创建提示对齐工具层 `expectHash="new"` 口径；⑦ review_chapter focus 无有效维度时响亮报错（原先静默滤空建议致「无问题」误判）；⑧ write_chapter 输出附维护 pass 异步提示（补 pending 确认环链路可见性）。**修复（技能/文档）**：⑨ 补齐 §1.6 承诺但从未落地的两个技能——review-guide（3+1 维度定义/severity 分级/审改复审工作流）与 reverse-reference（参照学习一次性提炼沉淀 style，不建表，版权红线）；⑩ onboarding 修正「导出是后续版本能力」过期文案并补单文件实体固定 id 表；⑪ chapter-writing 补「章后维护清单」（pending.md 确认环→pending_cleanup→maintenance_flush→archive_point，及 recompute_derived/consistency_check/writer_search 时机）、写前三连收敛为「默认信任引擎组装，仅 plot 盘点必做」、伏笔双通道明确「档案自动注入为权威」；⑫ §1.2 core 契约命名、§1.3 索引形态、§1.5 权限/白名单、§1.6、§4.3 五处正文与实现对齐。**裁定（记录不改）**：领域公理显式约束函数降级为软约束（§1.1 留痕）；writer_update 不设 destructive ask（乐观锁+存档点覆盖）；子代理白名单归宿主配置层；§4.3 结构化 schema 以开放 frontmatter 承载。guard 模式表同步（focus 无有效维度/chapter_limit 非法）。验证：typecheck 零错、build 零错、单测 24/25 文件全过（p4.test.ts 的 git spawn EPERM 为已记录沙箱环境坑非回归，此前轮次同因）。
+  - **记录的偏离与已知限制（轮次 13 新增）**：① store readDerived 把 EACCES/EBUSY 等临时 IO 错当「缺失」返回 undefined（派生按缺失重算，无损坏但多耗一次模型调用；ENOENT 与其他 IO 错未区分）；② archivePending 失败重试会在归档文件留重复副本（archive-first 语义固有，只增不删无去重手段）；③ saveLocked 的 parseCache 锚在 rename→stat 间存在外部改写的极窄窗口（可能短暂读到旧内容直至文件再变）；④ changedDuringRun 检查与 appendPending 之间的窄窗口可能写入旧版建议（有人工时间戳可辨别）；⑤ recompute mark 与在飞 maintenancePass 不协调（mark 后在飞 pass 完成会写回旧 sourceHash 派生，hash 锚定语义上等同过期、无数据损坏）；⑥ timeline.ts inspectTimelines 用文本 `includes('章序倒序')` 防双报与 validateTimeline 措辞强耦合（无契约测试锁定）；⑦ domain chunkChapterText 对 NaN/非有限入参静默产出空语料（Config 路径有防护，纯函数直调路径无）；⑧ 测试盲区若干：pending 无 CRLF/未闭合围栏用例、consistency 无 scope 越界引用用例、guard 无 null 失败滑窗扣减断言、embed 非 2xx 分支未锁定、maintenancePass 竞态无用例；⑨ consistency_check 报告仅预览不落盘（上下文压缩后丢失，可考虑可选 persist 到 .writer/derived）；⑩ writer_stats 人物时间线一览无截断（大项目输出膨胀）；⑪ write_chapter 参数名 `chapter` 与其他工具的 `id` 命名不一致（改动破坏兼容，留待大版本统一）。
+- 轮次 14（完成·收敛验证轮）：两个独立审查员复验——① 轮次 13 八处修复逐一推演：全部「正确」无功能回归（仅 2 条文案改进：维护提示改条件前置措辞已采纳；focus 报错措辞裁定不改）；② 上轮未覆盖面（writer-export 全量 / skills 加载器与 4 个 SKILL.md / bundle+overlay / example-project / 本轮文档改动）：export 路径防穿越、转义、ZIP 构建器逐字段核对通过；bundle 挂载序与 inject 一致。**新发现并修复**：onboarding 固定 id 表漏 idea（store FILE_KINDS 单文件实体，id 必须为 "idea"，原表误导模型被 assertSafeId 拒绝）+ 补 id 字符集说明（ASCII 限定）；reverse-reference 明确 style id 须 ASCII 命名；example-project 002/003 补 volume frontmatter（消除导出卷组织割裂）；§1.1 实体类型清单 / §1.3 章节文件名 / §1.5 工具表三处文档漂移对齐实现。**记录不改（export 观感/合规）**：HTML/ePub 渲染不剥离正文 markdown 标记（示例章节 `## ` 标题呈字面段落且与生成标题重复，TXT 保留 markdown 为既定语义）；EPUB 2.0 配 HTML5 doctype（严格规范要求 XHTML 1.1 DTD，宽容阅读器可读，epubcheck 会报——与既有「未跑 epubcheck」限制同族）。验证：typecheck 零错、tools/skills 相关测试复跑全绿。
+- 轮次 15（完成·收敛终验）：独立审查员 + 主线双路复验轮次 14 全部变更——onboarding 固定 id 表与 store FILE_KINDS/KIND_LAYOUT/assertSafeId 逐字一致（审查员）；reverse-reference ASCII id 约束一致（审查员）；example-project 卷归属/文档 §1.1·§1.3·§1.5/维护提示措辞（主线核对）；审查员终验交付与本条初稿结论一致（初稿先行写入、终验后确认措辞无需改写，仅补此留痕时机说明）。**无新问题，审计循环收敛**。终态：typecheck 零错、build 零错、单测 24/25 文件全过（p4.test.ts git spawn EPERM 为已记录沙箱环境坑）。三轮审计循环合计：修复 19 项（代码 8 + 技能 6 + 示例项目 2 + 文档对齐 3 类）、裁定留痕 4 项、新记录已知限制 13 条（轮次 13 ⑪ + 轮次 14 ②）。
+- 轮次 16（完成·挂账清偿 + 上架 GitHub）：按用户指令实现审查报告挂账项并推送 GitHub。**清偿**：① domain chunkChapterText 非有限入参响亮拒绝（轮 13 限⑦）；② store readDerived 区分 ENOENT（按缺失）与其他 IO 错（响亮失败，轮 13 限①）；③ export HTML/ePub 渲染剥离与生成标题重复的正文首行 markdown 标题（stripDuplicateHeading：归一化比较 + 章序号前缀剥离，非重复头不误删；TXT 保留原文，轮 14 记录项①）；④ EPUB 章节与卷首 XHTML 换 XHTML 1.1 DTD 声明（轮 14 记录项②）。**测试盲区补强（轮 13 限⑧）**：pending CRLF 归一 + 未闭合围栏单节化行为锁定；consistency scope 越界引用保留（集成测试）；guard null 失败滑窗扣减断言；embed 非 2xx 与缺 embedding 字段分支（stub 分流）；maintenancePass force 并发门控测试（共享/单跑/登记清理三断言）。**更正**：轮 13 限⑥（timeline 防双报措辞耦合）复核发现已被 timeline.test「倒序只进 inversions 不在 invalid 双报」用例锁定（措辞漂移会使 invalid.length 变 1 即红），非盲区。验证：typecheck/build 零错，单测 202/202（净增 7；p4.test.ts 沙箱 git spawn 环境坑不变）。**上架**：创建 github.com/earneet/writer-in-dsh 公开仓库并推送；10 包 + 根 package.json 补 repository 字段（清偿发布清单「repository 待补」挂账）。
