@@ -69,12 +69,13 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 
 ## 当前状态
 
-**P1 + P1.5 + P2 + P3 + P4 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-9）：
+**P1 + P1.5 + P2 + P3 + P4 + P5 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-10）：
 
 - 10 包可用：domain / core / store / engine / tools / skills / export / rag / guard / bundle；示例项目 + dev overlay 就绪。
 - P3（治理）：维护 pass（保存后异步，摘要 + 事实/伏笔/人物状态抽取两次调用；分节 schema + 引用存在性校验 + 按节重试；同章 inflight 去重 + 完成 hash 锚定；产出写回 `.writer/derived/` + `pending.md` 待办）；一致性检查（按预算分批全书覆盖 + 维度/schema 对齐 + 引用校验 + 时间锚倒序检测，报告预览不持久化）；recompute_derived（mark/recompute）；writer_stats / archive_point（git 显式存档点）；writer-export（TXT/HTML/ePub，XSS/XML 转义，export_book 默认 ask 权限路径）。
 - P4（增量）：writer-rag（混合检索：关键词先行 CJK bigram TF-IDF + 可选语义档 none/llm/external + RRF 融合；语料=章节切片+新鲜摘要+人物/伏笔/世界观；防剧透 chapterLimit 块级过滤；engine 组装增强注入 + writer_search 工具，缺席降级）；writer-guard（tools/post-execute 业务错误预算，滚动窗口超预算注入纠偏提示，不熔断）；engine recoverySnapshot（断更恢复快照，git 时间锚）；store list() 解析快照缓存；节拍模式评估裁定**不做独立引擎**（理由与替代路径见 §8 轮次 9）；export_book 批准路径 seam 级复验通过。
-- 已验证：单测 140/140、typecheck 零错；overlay+headless 与 profile 双形态实测（检索命中/guard 纠偏注入/rag 缺席降级/export 批准与 fail-closed 对照/恢复快照）。
-- 已知限制见 §8 轮次 2/6/7/8/9。
+- P5（时间线升格 + 发布准备）：人物状态时间线结构化（character frontmatter `timeline` 字段 = 人确认权威 SoT；domain timeline.ts 纯函数：解析/追加/校验/体检/弧线覆盖；一致性检查确定性并入倒序+脏值检测；writer_update 写入前响亮校验；pending.md 建议行给出升格 JSON；writer_stats 弧线覆盖）；RAG 分词缓存（内容 hash 锚定 + 先清后插，顺修 external 向量缓存同型抖动）；发布前清理（10 包去 private、全依赖钉精确版本、运行时宿主依赖入 dependencies、engines/files 声明；`docs/release-checklist.md` 全清单；npm tarball 与 link 双安装路径实测 + profile dump-config/headless/web 三线复验）。
+- 已验证：单测 169/169、typecheck 零错；overlay+headless 与 profile 双形态实测；对抗审查四轮收敛（累计修复 M8 + L 若干，详见 §8 轮次 10）。
+- 已知限制见 §8 轮次 2/6/7/8/9/10。
 
-**下一步**：人物状态时间线结构化升格（§8 轮次 8 限制⑥，继续顺延）；external embedding 档实测（待有 key 环境）；发布前清理（去 private、依赖精确范围、lib/ 预构建，见 §8 轮次 6 限制③）。
+**下一步**：external embedding 档效果实测（待有 key 环境）；正式 npm 发布（lib/ 预构建决策 + registry 安装复验，`docs/release-checklist.md` 已列）；可选 timeline_update 专用工具（§8 轮次 10 限制①）。
