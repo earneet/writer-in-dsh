@@ -82,7 +82,7 @@ test('maintenancePass：done 落派生 + pending.md；二次调用 hash 锚定 u
     assert.equal(derived.summary, done.summary)
     const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
     assert.match(pending, /chapter\/001/)
-    assert.match(pending, /人物状态建议.*更新人物卡/)
+    assert.match(pending, /人物状态建议.*timeline 字段/)
     // hash 锚定：内容未变 → up-to-date，不再调模型
     const again = await setup.engine.maintenancePass('001')
     assert.equal(again.status, 'up-to-date')
@@ -190,6 +190,29 @@ test('consistencyCheck：新鲜派生摘要代正文（扩批容量）', async (
     const report = await setup.engine.consistencyCheck()
     assert.equal(report.batches.length, 1, '摘要使两章同批')
     assert.ok(setup.llm.requests[0].user.includes('短摘要一'))
+  } finally {
+    await rm(setup.root, { recursive: true, force: true })
+  }
+})
+
+test('consistencyCheck：人物时间线倒序/非法 JSON 确定性并入人物一致性维度（P5）', async () => {
+  const setup = await makeSetup()
+  try {
+    await seedChapter(setup, '001', '正文一。')
+    await seedChapter(setup, '002', '正文二。')
+    // elin 时间线章序倒序；kael timeline 非法 JSON
+    await setup.store.save('character', 'elin', { content: 'x', frontmatter: { timeline: JSON.stringify([{ chapter: '004', state: 'a' }, { chapter: '002', state: 'b' }]) } })
+    await setup.store.save('character', 'kael', { content: 'y', frontmatter: { timeline: '{oops' } })
+    setup.llm.reply(JSON.stringify({ summary: '', issues: [] }), JSON.stringify({ summary: '', issues: [] }))
+    const report = await setup.engine.consistencyCheck()
+    const inversion = report.issues.find((i) => i.dimension === '人物一致性' && /时间线倒序/.test(i.description))
+    assert.notEqual(inversion, undefined, '倒序确定性检测并入')
+    assert.deepEqual(inversion!.refs, ['character/elin'])
+    assert.match(inversion!.description, /004.*002/s)
+    const malformed = report.issues.find((i) => i.dimension === '人物一致性' && /无法解析/.test(i.description))
+    assert.notEqual(malformed, undefined, '非法 timeline 报告不静默')
+    assert.equal(malformed!.severity, 'high')
+    assert.deepEqual(malformed!.refs, ['character/kael'])
   } finally {
     await rm(setup.root, { recursive: true, force: true })
   }

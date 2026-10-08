@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import {
-  applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions,
+  applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions, detectTimelineInversions,
   extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, parseConsistencyBatchOutput,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
   renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
@@ -329,6 +329,24 @@ export default class WriterEngineServiceImpl extends EngineService {
         description: `时间锚倒序：chapter/${inversion.earlier.chapterId}（${inversion.earlier.raw}）晚于其后 chapter/${inversion.later.chapterId}（${inversion.later.raw}）`,
       })
     }
+    // 确定性人物时间线矛盾检测（P5：轮次 8 限制⑥清偿——timeline 是人确认的权威数据，脏值/倒序必须暴露）
+    const timeline = detectTimelineInversions(characters)
+    for (const inversion of timeline.inversions) {
+      issues.push({
+        dimension: '人物一致性',
+        severity: 'medium',
+        refs: [`character/${inversion.characterId}`],
+        description: `人物状态时间线倒序：chapter/${inversion.earlier.chapter}（${inversion.earlier.state}）排在 chapter/${inversion.later.chapter}（${inversion.later.state}）之前——请核对手改的 timeline 字段并按章序整理`,
+      })
+    }
+    for (const bad of timeline.malformed) {
+      issues.push({
+        dimension: '人物一致性',
+        severity: 'high',
+        refs: [`character/${bad.characterId}`],
+        description: `人物状态时间线无法解析：${bad.reason}`,
+      })
+    }
     return { issues, batches, summary: summaries.join('\n') }
   }
 
@@ -632,7 +650,7 @@ export function renderPendingSection(chapterId: string, record: MaintenanceDeriv
     lines.push(`- 伏笔事件建议：plot/${event.plot} ${event.action}${event.note !== undefined ? `——${event.note}` : ''}（如属实请用 foreshadow_update 确认）`)
   }
   for (const state of record.extraction.characterStates) {
-    lines.push(`- 人物状态建议：character/${state.character} → ${state.state}（如属实请更新人物卡）`)
+    lines.push(`- 人物状态建议：character/${state.character} 第 ${chapterId} 章末 → ${state.state}（如属实请确认写入该人物卡 frontmatter 的 timeline 字段：与现有条目合并、同章覆盖，如 {"chapter":"${chapterId}","state":${JSON.stringify(state.state)}}；用 writer_update 提交）`)
   }
   if (record.partial === true) {
     lines.push('- ⚠ 部分抽取条目因引用校验未通过被拒收（重试预算耗尽）：')

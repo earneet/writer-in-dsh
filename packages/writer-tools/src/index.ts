@@ -10,7 +10,7 @@ import { defineTool, type PreToolDecision, type ToolRunContext } from '@deepseek
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
-  ENTITY_KINDS, parseChapterRange, parseMilestones, transitionForeshadow,
+  ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline, transitionForeshadow,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
@@ -258,7 +258,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'writer_stats',
-    description: '写作统计：章节数/总字数/卷分布/伏笔状态分布/维护派生覆盖率（哪些章节的摘要与抽取已过期）。',
+    description: '写作统计：章节数/总字数/卷分布/伏笔状态分布/维护派生覆盖率/人物弧线覆盖（哪些人物已有结构化状态时间线及其最新章节锚）。',
     parameters: {},
     output: {
       schema: { type: 'string' },
@@ -290,10 +290,31 @@ export function apply(ctx: Context): void {
         const s = String(p.frontmatter['status'] ?? 'planned')
         status.set(s, (status.get(s) ?? 0) + 1)
       }
+      // 人物弧线覆盖：character frontmatter 的 timeline 字段（人确认的权威数据）；非法 timeline 计为坏值不毒化统计
+      let withTimeline = 0
+      let timelineEntries = 0
+      const arcLines: string[] = []
+      const broken: string[] = []
+      for (const c of characters) {
+        try {
+          const timeline = parseTimeline(c.frontmatter['timeline'])
+          if (timeline.length > 0) {
+            withTimeline++
+            timelineEntries += timeline.length
+            arcLines.push(`${c.id}（至第 ${timeline[timeline.length - 1].chapter} 章共 ${timeline.length} 条）`)
+          } else {
+            arcLines.push(`${c.id}（无时间线）`)
+          }
+        } catch {
+          broken.push(c.id)
+        }
+      }
       const lines = [
         `章节：${chapters.length} 章，共约 ${totalChars} 字`,
         `卷分布：${[...volumes.entries()].map(([v, n]) => `${v}×${n}`).join('、')}`,
         `人物：${characters.length} 个`,
+        `人物弧线覆盖：${withTimeline}/${characters.length}（timeline 共 ${timelineEntries} 条${broken.length > 0 ? `；⚠ 非法 timeline：${broken.join('、')}` : ''}）`,
+        ...(characters.length > 0 ? ['', '人物时间线一览：', ...arcLines.map((l) => `- ${l}`)] : []),
         plots.length > 0 ? `伏笔：${[...status.entries()].map(([s, n]) => `${s}×${n}`).join('、')}` : '伏笔：无',
         events !== undefined ? '关键事件：已记录' : '关键事件：未记录',
         `维护派生覆盖：${chapters.length - stale.length}/${chapters.length}${stale.length > 0 ? `（待维护 pass：${stale.join('、')}）` : ''}`,

@@ -82,7 +82,7 @@ test('renderPendingSection：三节条目 + partial 拒收提示（人机确认�
   assert.match(section, /- 摘要：摘要文本/)
   assert.match(section, /- 事实：事实A（人物：elin）（伏笔：green-flame）/)
   assert.match(section, /- 伏笔事件建议：plot\/green-flame planted——第七盏灯.*foreshadow_update/)
-  assert.match(section, /- 人物状态建议：character\/elin → 左手受伤/)
+  assert.match(section, /- 人物状态建议：character\/elin 第 001 章末 → 左手受伤（如属实请确认写入该人物卡 frontmatter 的 timeline 字段/)
   assert.match(section, /⚠ 部分抽取条目因引用校验未通过被拒收/)
   assert.match(section, /plot\/ghost/)
 })

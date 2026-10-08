@@ -616,6 +616,8 @@ export * from './consistency.ts'
 export * from './rag.ts'
 export * from './guard.ts'
 export * from './recovery.ts'
+// P5：人物状态时间线结构化升格（轮次 8 限制⑥清偿）
+export * from './timeline.ts'
 
 /** 码点安全截断（避免 UTF-16 slice 切开代理对产生孤立代理项；emoji/扩展区汉字场景）。 */
 export function truncateCodePoints(text: string, max: number): string {
