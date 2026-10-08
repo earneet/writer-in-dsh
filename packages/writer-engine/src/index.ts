@@ -438,6 +438,18 @@ export default class WriterEngineServiceImpl extends EngineService {
     return { path: absPath, markdown, chapters: chapters.length }
   }
 
+  // —— 维护 pass 排空（P7：headless 收尾前等待在飞 pass，缓解退出截断）——
+
+  /** 当前在飞维护 pass 数（含自动触发；0 = 无在飞，drain 立即返回）。 */
+  pendingMaintenanceCount(): number {
+    return this.maintenanceInflight.size
+  }
+
+  async drainMaintenance(): Promise<void> {
+    // 失败只吞错：排空语义是「等到不在飞」，不是「保证成功」；失败派生由下次保存/recompute 补齐
+    await Promise.allSettled([...this.maintenanceInflight.values()])
+  }
+
   // —— full：整章生成，一次调用，创建或整体替换 ——
 
   private async writeFull(request: ChapterWriteRequest, existing: WriterEntity | undefined): Promise<ChapterWriteResult> {

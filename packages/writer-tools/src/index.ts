@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
   arcCoverageOf, appendTimelineEntry, ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline,
-  serializeTimeline, transitionForeshadow, validateTimeline,
+  partitionPendingByChapter, serializeTimeline, transitionForeshadow, validateTimeline,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
@@ -308,10 +308,12 @@ export function apply(ctx: Context): void {
         `人物：${characters.length} 个`,
         `人物弧线覆盖：${arc.withTimeline}/${arc.characters}（timeline 共 ${arc.entries} 条${arc.broken.length > 0 ? `；⚠ 非法 timeline：${arc.broken.join('、')}` : ''}）`,
         ...(characters.length > 0 ? ['', '人物时间线一览：', ...arc.arcs.map((a) => {
-          const label = a.lastChapter !== undefined
-            ? `（至第 ${a.lastChapter} 章共 ${a.count} 条）`
-            : a.count > 0 ? `（${a.count} 条，章锚均非法）` : '（无时间线）'
-          return `- ${a.id}${label}${arc.broken.includes(a.id) ? '（⚠ 非法 timeline）' : ''}`
+          const label = arc.broken.includes(a.id)
+            ? '（timeline 无法解析，请修复 frontmatter）'
+            : a.lastChapter !== undefined
+              ? `（至第 ${a.lastChapter} 章共 ${a.count} 条）`
+              : a.count > 0 ? `（${a.count} 条，章锚均非法）` : '（无时间线）'
+          return `- ${a.id}${label}`
         })] : []),
         plots.length > 0 ? `伏笔：${[...status.entries()].map(([s, n]) => `${s}×${n}`).join('、')}` : '伏笔：无',
         events !== undefined ? '关键事件：已记录' : '关键事件：未记录',
@@ -391,6 +393,51 @@ export function apply(ctx: Context): void {
       const merged = appendTimelineEntry(parseTimeline(character.frontmatter['timeline']), { chapter: args.chapter, state: args.state })
       const saved = await ctx.writer.save('character', args.id, { frontmatter: { timeline: serializeTimeline(merged) } }, args.expectHash)
       return `已更新人物时间线 ${saved.id}（hash=${saved.hash}）：本章 ${args.chapter} → ${args.state.trim()}（时间线共 ${merged.length} 条，同章已覆盖/按章序合并）`
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'maintenance_flush',
+    description: '排空在飞的维护 pass：等待全部后台维护任务（章节摘要/事实抽取）完成后再返回。适用于任务收尾前确保派生数据已落盘（headless 进程退出会截断在飞维护）。无在飞任务时立即返回。',
+    parameters: {},
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      const engine = getEngine(ctx)
+      if ('unavailable' in engine) return engine.unavailable
+      const before = engine.pendingMaintenanceCount()
+      await engine.drainMaintenance()
+      return before > 0
+        ? `已排空 ${before} 个在飞维护 pass（派生数据已落盘或已失败告警）。`
+        : '当前没有在飞的维护 pass。'
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'pending_cleanup',
+    description: '待办清单归档：把 pending.md 中归属某章的全部待办节（维护 pass 建议 / recompute mark 作废提示）移出并归档到 .writer/pending-archive.md（只增不删，可追溯）。适用于该章的建议已全部确认处理（timeline_update / foreshadow_update / writer_update 落实）或已作废之后清理清单。该章没有待办节时无操作返回。',
+    parameters: {
+      chapter: { type: 'string', required: true, description: '章节 id（三位序号，如 "002"）' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec: ToolRunContext) {
+      exec.signal.throwIfAborted()
+      if (!/^\d{3}$/.test(args.chapter)) {
+        throw new Error(`章节 id 必须为三位序号：${JSON.stringify(args.chapter)}`)
+      }
+      const archived = await ctx.writer.mutatePending((text) => {
+        const { keep, archived } = partitionPendingByChapter(text, args.chapter)
+        return { next: keep, extracted: archived }
+      })
+      if (archived.length === 0) return `chapter/${args.chapter} 在 pending.md 中没有待办节，无需归档。`
+      await ctx.writer.appendPendingArchive(`## [已归档] chapter/${args.chapter}（${new Date().toISOString()}）\n\n${archived.trim()}`)
+      return `已归档 chapter/${args.chapter} 的待办节到 .writer/pending-archive.md（pending.md 已移除对应节）。`
     },
   }))
 

@@ -218,6 +218,24 @@ test('consistencyCheck：人物时间线倒序/非法 JSON 确定性并入人物
   }
 })
 
+test('drainMaintenance：排空在飞维护 pass（P7：headless 收尾排空语义）', async () => {
+  const setup = await makeSetup()
+  try {
+    await seedChapter(setup, '001', '正文。')
+    await seedRefs(setup)
+    setup.llm.reply('摘要。', JSON.stringify({ facts: [], foreshadowEvents: [], characterStates: [] }))
+    const inflight = setup.engine.maintenancePass('001')
+    assert.equal(setup.engine.pendingMaintenanceCount(), 1, '执行中计 1 个在飞')
+    await setup.engine.drainMaintenance()
+    assert.equal((await inflight).status, 'done')
+    assert.equal(setup.engine.pendingMaintenanceCount(), 0, '排空后归零')
+    // 空排空立即返回；失败 pass 只吞错不抛（排空语义是等到不在飞）
+    await setup.engine.drainMaintenance()
+  } finally {
+    await rm(setup.root, { recursive: true, force: true })
+  }
+})
+
 test('recomputeDerived：no-chapter / up-to-date / mark（pending 作废提示）/ recompute', async () => {
   const setup = await makeSetup()
   try {
