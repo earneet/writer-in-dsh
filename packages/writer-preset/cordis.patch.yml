@@ -7,6 +7,11 @@
 # 与 dsh-writer-bundle 的区别：bundle 是 profile 级全局挂载（所有会话）；preset 是会话级按需挂载。
 # projectRoot 默认取会话工作目录（!!js 由 preset 的 group 标记延迟到子插件加载时求值）。
 - insert:
+    # 写作面板 UI（客户端插件）：全局层挂载——clientModules 扫描宿主 Loader 活动
+    # 条目发现 dsh.client 包；不能放进上面 preset 的会话级 plugins（同包多 source
+    # 组合失败），浏览器半经 /plugins/dsh-writer-ui/client.js 运行期加载。
+    - id: writer-ui
+      name: dsh-writer-ui
     - id: preset-writer
       name: '@deepseek-ai/dsh-agent-preset'
       config:

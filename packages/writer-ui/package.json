@@ -1,0 +1,37 @@
+{
+  "name": "dsh-writer-ui",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node build-client.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "esbuild": "0.25.12"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "description": "「写作面板」Web 客户端插件：侧边栏写作动态面板（章节/字数/伏笔/时间线）与 write_chapter/review_chapter/writer_stats 等工具结果富卡片（dsh-writer 工具链配套 UI）",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earneet/writer-in-dsh.git",
+    "directory": "packages/writer-ui"
+  }
+}
