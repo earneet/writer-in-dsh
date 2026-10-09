@@ -4,7 +4,7 @@
     - id: writer-store
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
       config:
-        projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project'
+        projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project/novel'
     - id: writer-engine
       name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-engine/src/index.ts'
       config:

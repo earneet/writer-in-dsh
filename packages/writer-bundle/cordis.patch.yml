@@ -1,12 +1,12 @@
 # writer-bundle 组合层：按依赖序挂载全部 writer 插件。
 # writer-core 是纯契约包（抽象基类 + 事件声明，无 apply），不出现在插件行，仅作依赖安装。
-# writer-store 的 projectRoot 默认取 dsh 启动目录；在更高层（profile/home/overlay patch）
-# 重写本行 config.projectRoot 即可指向实际小说项目。
+# writer-store 的 projectRoot 默认取 dsh 启动目录下的 novel/ 子目录（轮次 18 布局）；
+# 在更高层（profile/home/overlay patch）重写本行 config.projectRoot 即可指向实际小说项目。
 - insert:
     - id: writer-store
       name: dsh-writer-store
       config:
-        projectRoot: !!js process.cwd()
+        projectRoot: !!js process.getBuiltinModule('node:path').join(process.cwd(), 'novel')
     # 写作引擎：provider/model 是部署相关可调参数，此处给 deepseek 官方路由默认值，
     # 更高层（profile/home/overlay patch）可按实际模型路由覆盖。
     - id: writer-engine

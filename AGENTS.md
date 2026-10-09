@@ -66,7 +66,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - **profile 安装**：`dsh plugin --profile <name> add <绝对路径>` 逐包按依赖序安装（link: 形态，兄弟包依赖经本仓库根 node_modules 解析）；**新建 profile 只含 base+功能 bundle 时无 app 入口会无限空转**（进程空转无输出不报错），须另装 app bundle 且钉版本：`@deepseek-ai/dsh-headless@0.2.0-rc.2` 或 `@deepseek-ai/dsh-web-app@0.2.0-rc.2`（npm 源默认解析到不兼容旧版 0.0.1-rc.1）。
 - **本地功能验证**：overlay 方式跑 headless 即可——`npx @deepseek-ai/dsh --profile headless --patch ./dev.cordis.yml "<任务>"`；最终形态验证再走 profile 安装路径（`--dump-config` 核对组合树 + web/headless 启动）。
 - **临时插件位置**：overlay 里挂载的临时 .ts 插件文件**必须放在有 package.json 的包目录内**（如 packages/ 下）；放仓库根目录会导致首次模型调用 REQUEST_EXTENSION 失败（插件清单解析需要包身份）。
-- **projectRoot**：writer-bundle 默认 `!!js process.cwd()`，验证时须从 `example-project/` 目录启动 dsh。
+- **projectRoot**：writer-bundle/writer-preset 默认 `<启动目录>/novel/`（轮次 18 布局：创作与工作文件全收 novel/ 子目录），验证时从含 novel/ 的目录启动 dsh 或显式覆盖 projectRoot；writer.yaml 已废除（project → novel/project.md 可写实体）。
 - **构建先行（P6 起）**：包产物在 `lib/`（.gitignore），`npm test`/`npm run typecheck` 已自动串 build；overlay/profile 形态下修改 domain/core 等**被裸导入包**的源码后须 `npm run build` 才生效（overlay 入口指 src，但 src 内包间裸导入经 main 解析到 lib）。
 
 ## 当前状态

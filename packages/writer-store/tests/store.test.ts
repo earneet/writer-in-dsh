@@ -162,10 +162,17 @@ test('N1 回归（单文件实体）：坏 principles 不阻塞其他 kind 的 l
   }
 })
 
-test('N3 回归：store 层拒绝写入 project 配置', async () => {
+test('project 实体：project.md 正文实体可写（writer.yaml 已废除，轮次 18）', async () => {
   const { store, root } = await makeStore()
   try {
-    await assert.rejects(() => store.save('project', 'project', { content: 'x' }), /只读/)
+    const created = await store.save('project', 'project', { content: '简介正文。', frontmatter: { genre: '奇幻', target_words: 300000 } })
+    assert.equal(created.path, 'project.md')
+    const read = await store.get('project', 'project')
+    assert.equal(read?.frontmatter['genre'], '奇幻')
+    assert.equal(read?.content, '简介正文。\n', '落盘规范化补尾换行（与所有 Markdown 实体一致）')
+    const updated = await store.save('project', 'project', { frontmatter: { target_words: 400000 } }, created.hash)
+    assert.equal(updated.frontmatter['target_words'], 400000, 'frontmatter 合并保留其余键')
+    assert.equal(updated.frontmatter['genre'], '奇幻')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

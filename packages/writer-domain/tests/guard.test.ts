@@ -33,7 +33,6 @@ test('classifyBusinessError：行首锚定防误报（正文含关键词不算�
 test('classifyBusinessError：soft 模式只认白名单前缀', () => {
   assert.equal(classifyBusinessError('实体不存在：chapter/009（可先不带 id 列出清单）', 'soft'), 'not-found')
   assert.equal(classifyBusinessError('伏笔实体不存在：plot/ghost（可先 writer_read 列出）', 'soft'), 'not-found')
-  assert.equal(classifyBusinessError('project 实体（writer.yaml）为项目配置，只可 read 不可 update。', 'soft'), 'validation')
   // 软失败成功正文含关键词：不分类（防成功调用被误计为失败）
   assert.equal(classifyBusinessError('已保存 chapter/002（hash=…）\n正文提及状态机与 schema', 'soft'), undefined)
   assert.equal(classifyBusinessError('审稿完成……乐观锁失败只是剧情梗概', 'soft'), undefined)

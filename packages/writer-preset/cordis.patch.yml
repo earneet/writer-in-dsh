@@ -68,7 +68,8 @@
               - id: writer-store
                 name: dsh-writer-store
                 config:
-                  projectRoot: !!js process.cwd()
+                  # novel/ 子目录布局（轮次 18）：projectRoot 取会话 cwd 下的 novel/
+                  projectRoot: !!js process.getBuiltinModule('node:path').join(process.cwd(), 'novel')
               # 引擎默认路由可被更高层（profile patch / Web 编辑器）覆盖
               - id: writer-engine
                 name: dsh-writer-engine

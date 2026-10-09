@@ -26,7 +26,7 @@ export const Config: Schema<Config> = Schema.object({
 
 /** 实体扫描表：kind → 目录/文件约定与 id 派生。 */
 const KIND_LAYOUT: Readonly<Record<EntityKind, { dir: string } | { file: string }>> = {
-  project: { file: 'writer.yaml' },
+  project: { file: 'project.md' },
   principles: { file: 'principles.md' },
   outline: { file: 'outline.md' },
   chapter: { dir: 'chapters' },
@@ -109,8 +109,6 @@ export default class WriterStoreService extends WriterService {
 
   /** 串行化保护下的实际保存（read→校验→原子写→索引→emit 的临界区）。 */
   private async saveLocked(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
-    // project（writer.yaml）是项目配置而非创作实体，store 层即只读（tools/engine 任何路径都不可覆盖）
-    if (kind === 'project') throw new Error('project 实体（writer.yaml）为项目配置，只读不可写入')
     assertSafeId(kind, id)
     const existing = await this.readFromDisk(kind, id)
     if (expectHash === undefined) {

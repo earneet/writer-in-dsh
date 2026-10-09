@@ -78,7 +78,6 @@ export function apply(ctx: Context): void {
     },
     async execute(args) {
       const kind = assertKind(args.entity)
-      if (kind === 'project') return 'project 实体（writer.yaml）为项目配置，只可 read 不可 update。'
       if (args.content === undefined && args.frontmatter === undefined) {
         throw new Error('content 与 frontmatter 至少提供其一')
       }

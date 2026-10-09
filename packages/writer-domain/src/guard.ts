@@ -25,7 +25,7 @@ const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> =
   ['illegal-transition', /^伏笔状态非法迁移/],
   ['not-found', /^(实体不存在|章节不存在|伏笔实体不存在|人物实体不存在)/],
   // 「未知X」家族含无空格变体（未知导出格式：/未知实体种类：）——\s? 兼容两种措辞
-  ['validation', /^未知\s?(action|mode|实体种类|写作模式|导出格式)|^focus 无有效维度|milestone_type 非法|章节 id 必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|(max_results|chapter_limit) 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON|实体 .* 是单文件实体|^project 实体（writer\.yaml）为项目配置，只读不可写入|^timeline (章节锚非法|state 不能为空)|^现有 timeline 非法，拒绝追加|^character\/.+ 的 timeline 字段非法/],
+  ['validation', /^未知\s?(action|mode|实体种类|写作模式|导出格式)|^focus 无有效维度|milestone_type 非法|章节 id 必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|(max_results|chapter_limit) 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON|实体 .* 是单文件实体|^timeline (章节锚非法|state 不能为空)|^现有 timeline 非法，拒绝追加|^character\/.+ 的 timeline 字段非法/],
 ]
 
 /**
@@ -34,7 +34,6 @@ const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> =
  */
 const SOFT_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> = [
   ['not-found', /^(实体不存在|伏笔实体不存在|人物实体不存在)/],
-  ['validation', /^project 实体（writer\.yaml）为项目配置，只可 read 不可 update/],
 ]
 
 /** 类别 → 纠偏提示（注入给模型的行动指引，不熔断）。 */

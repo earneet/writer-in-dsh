@@ -10,7 +10,7 @@ whenToUse: "新项目冷启动、素材盘点、写作卡住时的下一步建�
 
 ## 阶段盘点
 
-1. **项目** — `writer_read(entity="project", id="project")` 读 `writer.yaml`（项目配置，只读）：流派、简介、目标字数。缺失或过时请提醒用户手改，不要试图覆盖它。
+1. **项目** — `writer_read(entity="project", id="project")` 读 `project.md`（项目元数据实体：frontmatter 存流派/目标字数，正文存简介）。缺失时与用户对谈生成一版，用 `writer_update(entity="project", id="project", expectHash="new")` 创建；过时就按 read-before-update 修改。
 2. **创作准则** — `principles`：叙事风格、基调、红线。准则是全篇最高约束；写任何章节前必读。没有就先和用户对谈生成一版存入 `principles`。
 3. **大纲** — `outline`：卷级结构、章节规划、storyline/POV。已写章节的大纲属于情节变更，调整前必须提示一致性风险。
 4. **人物** — `characters/{name}`：背景、性格、关系、成长弧线。出场人物先读再写，避免人设漂移。
@@ -25,7 +25,7 @@ whenToUse: "新项目冷启动、素材盘点、写作卡住时的下一步建�
 
 | entity | id | 文件 |
 |---|---|---|
-| project | `project` | writer.yaml（只读） |
+| project | `project` | project.md（项目元数据，可写） |
 | principles | `principles` | principles.md |
 | outline | `outline` | outline.md |
 | event | `event` | events.md |
