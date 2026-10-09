@@ -1,0 +1,76 @@
+# 「写作模式」agent preset：一条 @deepseek-ai/dsh-agent-preset 声明（与 standard/ptc/minimal
+# 同机制，见宿主 packages/preset/agent-preset/README）。安装进含 dsh-web-app 的 profile 后，
+# Web「新建会话」的模式选择器会出现「写作模式」；仅选中该模式的会话按本声明组合插件
+# （standing mount），其余会话不受影响。
+#
+# 组合 = 写作人设 + 写作所需的基础工具（fs/skill/todo/ask-user/平台 shell）+ 全部 writer 插件。
+# 与 dsh-writer-bundle 的区别：bundle 是 profile 级全局挂载（所有会话）；preset 是会话级按需挂载。
+# projectRoot 默认取会话工作目录（!!js 由 preset 的 group 标记延迟到子插件加载时求值）。
+- insert:
+    - id: preset-writer
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: writer
+        name: 写作模式
+        description: >-
+          长篇小说协作写作模式：写作引擎（整章/续写/补丁改写）、审稿、伏笔状态机、
+          人物时间线、一致性检查与防剧透检索，全部面向 Markdown 权威稿件。适合在小说
+          项目目录中开一个写作会话长期创作；需要跑命令或写代码的任务请用其他模式。
+        order: 5
+        plugins:
+          # 写作人设：固定身份与开场动作（工具细节由 writer 技能目录承载）
+          - id: writer-persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                你是长篇小说协作写作助手，由 {{model}} 模型驱动。你的工作目录是一个小说写作项目，
+                正文与设定以 Markdown 为权威来源。开始创作前先用 skill 工具加载 writer-onboarding
+                技能，并按其中的叙事顺序盘点项目素材；写作规范见 chapter-writing，伏笔纪律见
+                foreshadow-guide，审稿方法见 review-guide。
+              suffix: 你的工作目录是 {{cwd}}（小说项目根：writer.yaml、principles.md、outline.md、chapters/）。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          # 平台 shell（读者/作者偶尔需要 git 存档点等命令操作）
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          # 文件工具：读 pending.md、查示例、人工核对稿件
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          # 技能加载工具：writer-onboarding 等五个 bundled 技能经此进入上下文
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          # —— writer 插件（挂载序与 dsh-writer-bundle 一致：被依赖者在前，tools 最后）——
+          - id: writer-store
+            name: dsh-writer-store
+            config:
+              projectRoot: !!js process.cwd()
+          # 引擎默认路由可被更高层（profile patch / Web 编辑器）覆盖
+          - id: writer-engine
+            name: dsh-writer-engine
+            config:
+              provider: deepseek-official
+              model: deepseek-chat
+          - id: writer-skills
+            name: dsh-writer-skills
+          - id: writer-export
+            name: dsh-writer-export
+          - id: writer-rag
+            name: dsh-writer-rag
+            config:
+              embeddingBackend: none
+          - id: writer-guard
+            name: dsh-writer-guard
+          - id: writer-tools
+            name: dsh-writer-tools

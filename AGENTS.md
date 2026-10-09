@@ -51,7 +51,8 @@ packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 i
 ├── writer-export/   # Consumer：TXT/HTML/ePub 导出（发布 ctx.writerExport）
 ├── writer-rag/      # Provider：混合检索（关键词 + 可选语义档），发布 ctx.writerRag
 ├── writer-guard/    # Consumer：工具业务错误预算（tools/post-execute 观测，只注入纠偏提示）
-└── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→engine→skills→export→rag→guard→tools
+├── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→engine→skills→export→rag→guard→tools（profile 级全局）
+└── writer-preset/   # 「写作模式」agent preset：Web 模式选择器的会话级预制组合（bundle，仅 Web 形态生效）
 example-project/     # 验证用示例小说项目（Markdown SoT）
 dev.cordis.yml       # 本地开发 overlay（绝对路径引用各包 src/index.ts）
 docs/                # 本项目设计文档（落地规划、审查裁定）
@@ -72,7 +73,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 
 **P1 + P1.5 + P2 + P3 + P4 + P5 + P6 + P7 已收口**（迭代记录见 `docs/implementation-plan.md` §8 轮次 0-12）：
 
-- 10 包可用：domain / core / store / engine / tools / skills / export / rag / guard / bundle；示例项目 + dev overlay 就绪。
+- 11 包可用：domain / core / store / engine / tools / skills / export / rag / guard / bundle / preset；示例项目 + dev overlay 就绪。
 - P3（治理）：维护 pass（保存后异步，摘要 + 事实/伏笔/人物状态抽取两次调用；分节 schema + 引用存在性校验 + 按节重试；同章 inflight 去重 + 完成 hash 锚定；产出写回 `.writer/derived/` + `pending.md` 待办）；一致性检查（按预算分批全书覆盖 + 维度/schema 对齐 + 引用校验 + 时间锚倒序检测，报告预览不持久化）；recompute_derived（mark/recompute）；writer_stats / archive_point（git 显式存档点）；writer-export（TXT/HTML/ePub，XSS/XML 转义，export_book 默认 ask 权限路径）。
 - P4（增量）：writer-rag（混合检索：关键词先行 CJK bigram TF-IDF + 可选语义档 none/llm/external + RRF 融合；语料=章节切片+新鲜摘要+人物/伏笔/世界观；防剧透 chapterLimit 块级过滤；engine 组装增强注入 + writer_search 工具，缺席降级）；writer-guard（tools/post-execute 业务错误预算，滚动窗口超预算注入纠偏提示，不熔断）；engine recoverySnapshot（断更恢复快照，git 时间锚）；store list() 解析快照缓存；节拍模式评估裁定**不做独立引擎**（理由与替代路径见 §8 轮次 9）；export_book 批准路径 seam 级复验通过。
 - P5（时间线升格 + 发布准备）：人物状态时间线结构化（character frontmatter `timeline` 字段 = 人确认权威 SoT；domain timeline.ts 纯函数：解析/追加/校验/体检/弧线覆盖；一致性检查确定性并入倒序+脏值检测；writer_update 写入前响亮校验；pending.md 建议行给出升格 JSON；writer_stats 弧线覆盖）；RAG 分词缓存（内容 hash 锚定 + 先清后插，顺修 external 向量缓存同型抖动）；发布前清理（10 包去 private、全依赖钉精确版本、运行时宿主依赖入 dependencies、engines/files 声明；`docs/release-checklist.md` 全清单；npm tarball 与 link 双安装路径实测 + profile dump-config/headless/web 三线复验）。
@@ -80,6 +81,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - P7（清欠冲刺）：pending.md 归档语义（pending_cleanup 工具 + archive-first 锁定区变更 + .writer/pending-archive.md 只增归档）；维护 pass 排空（drainMaintenance + maintenance_flush 工具）；guard 措辞契约测试（错误文案↔模式表漂移即红，顺修模式表真实缺口）；external 档代码路径 stub 集成测试；writer-tools 测试面补强（九用例）；broken 弧线话术修正。
 - 轮次 13（全量审计）：三线对抗审查（实现偏离/工具工作流/代码横切）后修复 12 项——maintenancePass force 竞态、一致性检查 scope 越界引用误弃、chapter_limit 校验、rag 超时 Config 化、乐观锁错误文案（截断 hash 检测）、focus 无效维度响亮报错、维护 pass 链路提示；补齐 review-guide / reverse-reference 两技能；onboarding/chapter-writing 过期文案与章后维护闭环；5 处设计文档正文对齐实现 + 4 项裁定留痕（详见 implementation-plan §8 轮次 13）。
 - 轮次 16（挂账清偿 + 上架）：实现审查报告挂账项（chunkChapterText NaN 防护、readDerived IO 错区分、export 剥离重复章标题 + XHTML 1.1 doctype）+ 测试盲区补强（净增 7 例，共 202/202）；创建 GitHub 仓库 earneet/writer-in-dsh 并推送；11 个 package.json 补 repository 字段（详见 implementation-plan §8 轮次 16）。
+- 轮次 17（写作模式 preset）：新包 dsh-writer-preset（第 11 包）——「写作模式」agent preset，Web 新建会话的模式选择器与标准/PTC 模式并列出现；会话级挂载写作人设 + 基础工具 + 全部 writer 插件（与 writer-bundle 全局挂载二选一）。profile writer-preset（dump-config 组合树 + web 启动 401 门）实测通过（详见 implementation-plan §8 轮次 17）。
 - 已验证：单测 195/195、typecheck 零错、build 零错；overlay+headless 与 profile 双形态实测；P5 四轮 / P6 两轮 / P7 两轮审查均收敛（详见 §8 轮次 10/11/12）；轮次 13 审计修复后 typecheck/build/测试复验全过；轮次 16 后单测 202/202。
 - 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13。
 
