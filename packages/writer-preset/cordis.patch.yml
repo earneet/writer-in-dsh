@@ -52,25 +52,38 @@
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           # —— writer 插件（挂载序与 dsh-writer-bundle 一致：被依赖者在前，tools 最后）——
-          - id: writer-store
-            name: dsh-writer-store
+          # 四个 Provider（store/engine/export/rag）发布 Cordis 服务，preset 规约要求
+          # 服务提供方落 isolate 域（realm 私有符号发布，防泄漏到根域）——与 cordis 预设
+          # 的 planMode/workflowEngine isolate 组同范式；消费者（tools 等）同在组内，
+          # inject/ctx.get 在域内正常解析。
+          - id: writer-suite
+            name: cordis:group
+            group: true
+            isolate:
+              writer: true
+              writerEngine: true
+              writerExport: true
+              writerRag: true
             config:
-              projectRoot: !!js process.cwd()
-          # 引擎默认路由可被更高层（profile patch / Web 编辑器）覆盖
-          - id: writer-engine
-            name: dsh-writer-engine
-            config:
-              provider: deepseek-official
-              model: deepseek-chat
-          - id: writer-skills
-            name: dsh-writer-skills
-          - id: writer-export
-            name: dsh-writer-export
-          - id: writer-rag
-            name: dsh-writer-rag
-            config:
-              embeddingBackend: none
-          - id: writer-guard
-            name: dsh-writer-guard
-          - id: writer-tools
-            name: dsh-writer-tools
+              - id: writer-store
+                name: dsh-writer-store
+                config:
+                  projectRoot: !!js process.cwd()
+              # 引擎默认路由可被更高层（profile patch / Web 编辑器）覆盖
+              - id: writer-engine
+                name: dsh-writer-engine
+                config:
+                  provider: deepseek-official
+                  model: deepseek-chat
+              - id: writer-skills
+                name: dsh-writer-skills
+              - id: writer-export
+                name: dsh-writer-export
+              - id: writer-rag
+                name: dsh-writer-rag
+                config:
+                  embeddingBackend: none
+              - id: writer-guard
+                name: dsh-writer-guard
+              - id: writer-tools
+                name: dsh-writer-tools
