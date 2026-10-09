@@ -21,7 +21,7 @@
 
 ## 插件架构约定
 
-- 遵循 dsh 能力缝三分法（Service Definition / Provider / Consumer），按 `novel-writer-analysis.md` §14.3 的包规划组织：`writer-domain`（纯函数域库，无插件行）、`writer-core`（`ctx.writer` 抽象基类 + 领域事件声明，纯契约包**不上 cordis 行**）、`writer-store`（Provider：Markdown SoT + 派生索引）、`writer-engine`（P2）、`writer-tools`（Consumer：defineTool 注册）、`writer-skills`（bundled skills）、`writer-rag`（P4）、`writer-export`（P3）、`writer-bundle`（组合包）。
+- 遵循 dsh 能力缝三分法（Service Definition / Provider / Consumer），按 `novel-writer-analysis.md` §14.3 的包规划组织：`writer-domain`（纯函数域库，无插件行）、`writer-core`（`ctx.writer` 抽象基类 + 领域事件声明，纯契约包**不上 cordis 行**）、`writer-store`（Provider：Markdown SoT + 派生索引）、`writer-engine`（P2）、`writer-tools`（Consumer：defineTool 注册）、`writer-skills`（bundled skills）、`writer-rag`（P4）、`writer-export`（P3）、`writer-bundle`（组合包：profile 级全局挂载）、`writer-preset`（「写作模式」agent preset：Web 模式选择器的会话级组合，bundle 形态）、`writer-ui`（客户端插件：`dsh.client` 双半形态，浏览器半经 /plugins 动态加载）。
 - 插件形态遵守 dsh 规则：函数插件具名导出 `name`/`inject`/`Config`/`apply` 且**无 default export**；服务包 default-export Service 子类；注册一律走 effect；可选服务用 `ctx.get()`；配置用 Schemastery schema，禁止硬编码可调参数，配置错误响亮失败。
 - 能用 **skill**（Markdown 指令）解决的不写代码插件；bundled 技能放 `writer-skills/assets/<name>/SKILL.md`（frontmatter 为候选元数据单一真源，范式见 `packages/writer-skills/src/index.ts`）。
 - 领域事件用 dsh typed events（declaration merging）；进程内同步场景不建 outbox，仅跨进程/崩溃恢复需求才引入。
@@ -52,9 +52,9 @@ packages/            # dsh 插件包（dsh-writer-*，按能力缝切分；见 i
 ├── writer-rag/      # Provider：混合检索（关键词 + 可选语义档），发布 ctx.writerRag
 ├── writer-guard/    # Consumer：工具业务错误预算（tools/post-execute 观测，只注入纠偏提示）
 ├── writer-bundle/   # 组合包：cordis.patch.yml 挂载 store→engine→skills→export→rag→guard→tools（profile 级全局）
-└── writer-preset/   # 「写作模式」agent preset：Web 模式选择器的会话级预制组合（bundle，仅 Web 形态生效）
-packages/writer-ui/  # 写作面板客户端插件（dsh.client + ./client → lib/client.js，esbuild factory-form CJS；随 writer-preset 全局行挂载）
-example-project/     # 验证用示例小说项目（Markdown SoT）
+├── writer-preset/   # 「写作模式」agent preset：Web 模式选择器的会话级预制组合（bundle，仅 Web 形态生效；含 writer-ui 全局行 + isolate 域 writer 服务组）
+└── writer-ui/       # 写作面板客户端插件（dsh.client + ./client → lib/client.js，esbuild factory-form CJS；侧边栏面板 + 工具富卡片）
+example-project/     # 验证用示例小说项目（novel/ 子目录布局：全部创作与工作文件收进 novel/）
 dev.cordis.yml       # 本地开发 overlay（绝对路径引用各包 src/index.ts）
 docs/                # 本项目设计文档（落地规划、审查裁定）
 .dsh/skills/         # 项目级技能（开发期临时技能也可放这里）
@@ -84,7 +84,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 16（挂账清偿 + 上架）：实现审查报告挂账项（chunkChapterText NaN 防护、readDerived IO 错区分、export 剥离重复章标题 + XHTML 1.1 doctype）+ 测试盲区补强（净增 7 例，共 202/202）；创建 GitHub 仓库 earneet/writer-in-dsh 并推送；11 个 package.json 补 repository 字段（详见 implementation-plan §8 轮次 16）。
 - 轮次 17（写作模式 preset）：新包 dsh-writer-preset（第 11 包）——「写作模式」agent preset，Web 新建会话的模式选择器与标准/PTC 模式并列出现；会话级挂载写作人设 + 基础工具 + 全部 writer 插件（与 writer-bundle 全局挂载二选一）。profile writer-preset（dump-config 组合树 + web 启动 401 门）实测通过（详见 implementation-plan §8 轮次 17）。
 - 轮次 18（存储重规划 + Web UI）：①废除 writer.yaml → project.md 可写实体；②novel/ 子目录布局（全部创作与工作文件收进 novel/，根目录干净）；③新包 dsh-writer-ui（第 12 包，客户端插件）——侧边栏「写作面板」+ 五张工具富卡片（factory-form CJS 经 /plugins 动态加载，boot 图发现 + 组合路由 200 实测）。typecheck 零错、26/26 测试文件全过（详见 implementation-plan §8 轮次 18）。
-- 已验证：单测 195/195、typecheck 零错、build 零错；overlay+headless 与 profile 双形态实测；P5 四轮 / P6 两轮 / P7 两轮审查均收敛（详见 §8 轮次 10/11/12）；轮次 13 审计修复后 typecheck/build/测试复验全过；轮次 16 后单测 202/202。
-- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13。
+- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；P5 四轮 / P6 两轮 / P7 两轮审查均收敛（详见 §8 轮次 10/11/12）；轮次 13 审计修复后复验全过；轮次 16 后单测 202/202；轮次 18 后 26/26 测试文件全过（约 209 例，含 writer-ui 解析器 7 例）。
+- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。

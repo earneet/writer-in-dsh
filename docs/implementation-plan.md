@@ -117,6 +117,14 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
 
 函数插件（`inject: ['tools']`），`tools/post-execute` 观测：按滚动窗口统计受观测写作工具的可分类业务失败率（乐观锁冲突/解析失败/引用拒收/非法迁移/实体不存在/参数校验，分类纯函数在 domain `guard.ts`），超预算向该次工具决策附加纠偏提示（`additionalContexts`，范式参照宿主 repeat-tool-reminder：先委托再折入，block 变体同样携带）。**不熔断**（绝不 deny/block 工具调用）、不重复造宿主轮子（重试/超时/权限归宿主）；软失败（返回错误文案字符串）同样分类计数。可独立禁用：不装包即无观测。
 
+### 1.11 `writer-preset`（「写作模式」agent preset，轮次 17）
+
+纯 bundle 包（无 JS 入口）。patch 插入两类行：① `writer-ui` 全局行（客户端插件挂载，见 §1.12——放全局层而非 preset 会话级，同包多 source 组合失败）；② `preset-writer` 声明行（`@deepseek-ai/dsh-agent-preset`）：id=`writer`、名称「写作模式」，plugins = 写作人设（dsh-persona）+ 基础行（agent-instructions / tool-fs / tool-skill / tool-todo / tool-ask-user / 平台 shell）+ 全部 7 个 writer 插件（**包进 `cordis:group` + `isolate: { writer, writerEngine, writerExport, writerRag }`**——注册表规约要求 preset 内的服务提供方落 isolate 域，违者 roster 标记 broken 并从选择器隐藏）。选中该模式的会话按声明做会话级组合；与 writer-bundle 全局挂载二选一（同装未验证）。仅 Web 形态生效（headless 无 agent-preset-registry）。
+
+### 1.12 `writer-ui`（写作面板客户端插件，轮次 18）
+
+双半包：宿主半空 apply（仅包身份）；浏览器半 `dsh.client { platform: 'web' }` + `exports['./client']` → `lib/client.js`（esbuild factory-form CJS，与宿主 tsdown clientBundle 预设逐字对齐；基线模块外部化经注入 require 供给），由宿主 clientModules 发现并经 `/plugins/??<pkg>/client.js&rev=…` 组合路由运行期加载。注册面：侧边栏「写作面板」（`main` keyed + `sidebar.panellist`：全书概况/最近写作/写作动态）+ 五张工具富卡片（keyed `tool.call.toolview`：write_chapter/review_chapter/writer_stats/foreshadow_update/consistency_check）。数据从工具结果文本派生（纯函数解析器 + 会话级模块存储）；不新增宿主 remote 端点（第三方不可加）、不 import 其他功能插件值。v1 取舍见 README/§8 轮次 18。
+
 ## 2. 共同依赖
 
 | 依赖 | 类型 | 使用方 |
