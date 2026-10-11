@@ -10,6 +10,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { WriterPanel, WriterPanelIcon } from './Panel.tsx'
 import { ReviewCard, StatsCard, SummaryCard, WriteChapterCard } from './Cards.tsx'
+import { setBrowserContext } from './load.ts'
 
 /** 浏览器侧 slots 服务的本地最小契约（第三方不做 ui-slots 类型依赖；运行时由模块表供给同源实现）。 */
 interface SlotsService {
@@ -19,11 +20,14 @@ interface SlotsService {
 type BrowserContext = Context & { slots: SlotsService }
 
 export const name = 'dsh-writer-ui'
-export const inject = ['slots']
+// remote 命名空间按属性粒度授权（与第一方 dsh-client-ui-sidebar-files 同款声明）；
+// sessions 用于活跃会话探测（workspaceFiles 的 scope 是会话工作区根）。
+export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'sessions']
 
 /** 注册全部 UI 面：侧边栏面板 + 五个工具结果卡片。 */
 export function apply(context: Context): void {
   const ctx = context as BrowserContext
+  setBrowserContext(ctx)
   ctx.effect(() => {
     const disposers: Array<() => void> = []
 

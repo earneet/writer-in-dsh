@@ -9,6 +9,16 @@
  */
 import { build } from 'esbuild'
 
+/** 把 `node:crypto` 重定向到浏览器桩（domain 包顶部 import createHash；面板路径不调用）。 */
+const nodeCryptoStub = {
+  name: 'node-crypto-stub',
+  setup(build) {
+    build.onResolve({ filter: /^node:crypto$/ }, () => ({
+      path: new URL('./src/client/crypto-stub.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+    }))
+  },
+}
+
 const PLATFORM_MODULES = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-store',
@@ -27,6 +37,7 @@ await build({
   jsx: 'automatic',
   sourcemap: false,
   external: PLATFORM_MODULES,
+  plugins: [nodeCryptoStub],
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
     'import.meta.env.MODE': JSON.stringify('production'),

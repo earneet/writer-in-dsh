@@ -4,3 +4,6 @@ node_modules/
 .pnpm-probe/
 .pnpm-probe2/
 packages/*/lib/
+
+packages/writer-ui/scripts/browser-test-out/
+dev-diag.json
