@@ -1,27 +1,105 @@
 # writer-in-dsh 本地开发 overlay（npx @deepseek-ai/dsh web --patch ./dev.cordis.yml）
 # 路径必须绝对（loader 约定）。
 - insert:
+    - id: dev-diag
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-preset/src/dev-diag.ts'
     - id: writer-store
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
       config:
         projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project/novel'
     - id: writer-engine
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-engine/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-engine/src/index.ts'
       config:
         provider: deepseek-official
         model: deepseek-chat
     - id: writer-skills
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
     - id: writer-export
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-export/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-export/src/index.ts'
     - id: writer-rag
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-rag/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-rag/src/index.ts'
       config:
         embeddingBackend: none
     - id: writer-guard
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-guard/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-guard/src/index.ts'
       config:
         windowSize: 5
         failureBudget: 0.3
     - id: writer-tools
-      name: 'C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'
+      config: {}
+    - id: writer-ui
+      name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-ui/src/index.ts'
+    # 「写作模式」agent preset（与 packages/writer-preset/cordis.patch.yml 的 preset-writer 行一致；
+    # writer-ui 已在上方全局层挂载，此处不重复）。插件经根 node_modules 的 workspace 链接解析到各包 lib/。
+    - id: preset-writer
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: writer
+        name: 写作模式
+        description: >-
+          长篇小说协作写作模式：写作引擎（整章/续写/补丁改写）、审稿、伏笔状态机、
+          人物时间线、一致性检查与防剧透检索，全部面向 Markdown 权威稿件。适合在小说
+          项目目录中开一个写作会话长期创作；需要跑命令或写代码的任务请用其他模式。
+        order: 5
+        plugins:
+          - id: writer-persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                你是长篇小说协作写作助手，由 {{model}} 模型驱动。你的工作目录是一个小说写作项目，
+                正文与设定以 Markdown 为权威来源。开始创作前先用 skill 工具加载 writer-onboarding
+                技能，并按其中的叙事顺序盘点项目素材；写作规范见 chapter-writing，伏笔纪律见
+                foreshadow-guide，审稿方法见 review-guide。
+              suffix: 你的工作目录是 {{cwd}}（小说项目根：writer.yaml、principles.md、outline.md、chapters/）。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: writer-suite
+            name: cordis:group
+            group: true
+            isolate:
+              writer: true
+              writerEngine: true
+              writerExport: true
+              writerRag: true
+            config:
+              - id: writer-store
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-store/src/index.ts'
+                config:
+                  # overlay 形态下宿主 cwd 是仓库根（无 novel/），钉到示例项目；正式 preset 包保持 !!js cwd 形式
+                  projectRoot: 'C:/Users/earne/workspace/writer-in-dsh/example-project/novel'
+              - id: writer-engine
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-engine/src/index.ts'
+                config:
+                  provider: deepseek-official
+                  model: deepseek-chat
+              - id: writer-skills
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-skills/src/index.ts'
+              - id: writer-export
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-export/src/index.ts'
+              - id: writer-rag
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-rag/src/index.ts'
+                config:
+                  embeddingBackend: none
+              - id: writer-guard
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-guard/src/index.ts'
+              - id: writer-tools
+                name: 'file:///C:/Users/earne/workspace/writer-in-dsh/packages/writer-tools/src/index.ts'
