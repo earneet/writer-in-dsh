@@ -32,7 +32,7 @@ await page.goto(url, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(12000)
 await page.screenshot({ path: new URL('./browser-test-out/1-load.png', import.meta.url).pathname.replace(/^\//, '') && './browser-test-out/1-load.png' })
 
-// 尝试打开写作面板（侧边栏面板入口）
+// 尝试打开写作面板（侧边栏面板入口）并逐页签采样
 let clicked = false
 for (const label of ['写作面板']) {
   const el = page.getByText(label, { exact: false }).first()
@@ -40,6 +40,10 @@ for (const label of ['写作面板']) {
 }
 await page.waitForTimeout(6000)
 await page.screenshot({ path: './browser-test-out/2-panel.png' })
+for (const tab of ['章节', '伏笔', '人物', '待办']) {
+  const el = page.getByRole('button', { name: tab, exact: true }).first()
+  if (await el.count() > 0) { await el.click({ timeout: 2000 }).then(() => {}, () => {}); await page.waitForTimeout(500) }
+}
 writeReport('writer-in-dsh 会话', page)
 
 // 切到默认工作区的一个会话再开面板（用户实际场景：旧布局根目录直铺）

@@ -119,9 +119,18 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
     }
   }
 
-  let characterCount = 0
+  const characters: any[] = []
   const characterEntries = await listDir(sessionId, join(root, 'characters'), signal)
-  if (characterEntries !== null) characterCount = mdFiles(characterEntries).length
+  if (characterEntries !== null) {
+    for (const entry of mdFiles(characterEntries)) {
+      const raw = await readText(sessionId, join(join(root, 'characters'), entry.name), signal)
+      characters.push({ name: entry.name, frontmatter: splitSource(raw).frontmatter })
+    }
+  }
+
+  let worldbuildingCount = 0
+  const worldbuildingEntries = await listDir(sessionId, join(root, 'worldbuilding'), signal)
+  if (worldbuildingEntries !== null) worldbuildingCount = mdFiles(worldbuildingEntries).length
 
   const projectEntries = rootEntries ?? []
   let project: any = null
@@ -139,5 +148,5 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
     pendingLines = extractPendingLines(await readText(sessionId, join(root, 'pending.md'), signal))
   }
 
-  return { root: root === '' ? '.' : root, project, chapters, plots, characterCount, pendingLines }
+  return { root: root === '' ? '.' : root, project, chapters, plots, characters, worldbuildingCount, pendingLines }
 }

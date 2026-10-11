@@ -3,7 +3,7 @@
  *
  * 与 novel-writer 的「打开项目即拉存储」范式对齐：不依赖本会话跑过工具；
  * 输入是 workspaceFiles remote 拉到的 Markdown 文本，解析复用 domain 纯函数
- * （parseFrontmatter），输出直接可渲染的视图模型。
+ * （parseFrontmatter），输出直接可渲染的视图模型（概况 + 章节/伏笔/人物/待办四栏）。
  */
 import { parseFrontmatter, type Frontmatter } from 'dsh-writer-domain'
 
@@ -20,6 +20,12 @@ export interface PlotSource {
   frontmatter: Frontmatter
 }
 
+/** 一个人物的原始文件（frontmatter；timeline 为结构化状态时间线）。 */
+export interface CharacterSource {
+  name: string
+  frontmatter: Frontmatter
+}
+
 /** 项目级 frontmatter（project.md）。 */
 export type ProjectSource = Frontmatter | null
 
@@ -29,16 +35,38 @@ export interface NovelScan {
   project: ProjectSource
   chapters: ChapterSource[]
   plots: PlotSource[]
-  characterCount: number
+  characters: CharacterSource[]
+  worldbuildingCount: number
   pendingLines: string[]
 }
 
-/** 最近一章行。 */
+/** 章节行（章节页签 + 概况最近章节）。 */
 export interface ChapterRow {
   id: string
   title: string
   volume: string
   chars: number
+  status: string
+  storyline: string
+}
+
+/** 伏笔行（伏笔页签）。 */
+export interface PlotRow {
+  id: string
+  hint: string
+  status: string
+  type: string
+  plannedChapter: string
+}
+
+/** 人物行（人物页签）。 */
+export interface CharacterRow {
+  id: string
+  name: string
+  role: string
+  arc: string
+  timelineCount: number
+  relationCount: number
 }
 
 /** 冷启动总览视图模型。 */
@@ -52,8 +80,11 @@ export interface NovelOverview {
   progress: number | null // 完成率（0-1，无目标时 null）
   volumes: Array<{ name: string; count: number }>
   foreshadow: Array<{ status: string; count: number }>
-  characterCount: number
   recentChapters: ChapterRow[]
+  chapterRows: ChapterRow[]
+  plotRows: PlotRow[]
+  characterRows: CharacterRow[]
+  worldbuildingCount: number
   pendingLines: string[]
 }
 
@@ -68,6 +99,43 @@ function str(value: unknown, fallback: string): string {
 
 function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function chapterRow(source: ChapterSource): ChapterRow {
+  return {
+    id: source.name.replace(/\.md$/, ''),
+    title: str(source.frontmatter.title, source.name),
+    volume: str(source.frontmatter.volume, ''),
+    chars: charCount(source.content),
+    status: str(source.frontmatter.status, ''),
+    storyline: str(source.frontmatter.storyline, ''),
+  }
+}
+
+function plotRow(source: PlotSource): PlotRow {
+  const fm = source.frontmatter
+  const planned = fm.planned_chapter ?? fm.planted_chapter ?? ''
+  return {
+    id: source.name.replace(/\.md$/, ''),
+    hint: str(fm.hint, source.name),
+    status: str(fm.status, 'unknown'),
+    type: str(fm.type, fm.status !== undefined ? 'foreshadow' : ''),
+    plannedChapter: typeof planned === 'string' ? planned : '',
+  }
+}
+
+function characterRow(source: CharacterSource): CharacterRow {
+  const fm = source.frontmatter
+  const timeline = fm.timeline
+  const relations = fm.relations
+  return {
+    id: source.name.replace(/\.md$/, ''),
+    name: str(fm.name, source.name.replace(/\.md$/, '')),
+    role: str(fm.role, ''),
+    arc: str(fm.arc, ''),
+    timelineCount: Array.isArray(timeline) ? timeline.length : 0,
+    relationCount: Array.isArray(relations) ? relations.length : 0,
+  }
 }
 
 /** 从扫描结果计算总览（纯函数，单测覆盖）。 */
@@ -95,6 +163,10 @@ export function buildOverview(scan: NovelScan): NovelOverview {
   const targetWords = project !== null ? num(project.target_words) : null
   const chapterTarget = project !== null ? num(project.chapters) : null
 
+  const chapterRows = sorted.map(chapterRow)
+  const characterRows = scan.characters.map(characterRow)
+    .sort((a, b) => b.timelineCount - a.timelineCount || a.id.localeCompare(b.id))
+
   return {
     title: project !== null ? str(project.title, '未命名项目') : '未命名项目',
     genre: project !== null ? str(project.genre, '') : '',
@@ -105,14 +177,12 @@ export function buildOverview(scan: NovelScan): NovelOverview {
     progress: targetWords !== null && targetWords > 0 ? Math.min(totalChars / targetWords, 1) : null,
     volumes: [...volumeMap.entries()].map(([name, count]) => ({ name, count })),
     foreshadow: [...foreshadowMap.entries()].map(([status, count]) => ({ status, count })),
-    characterCount: scan.characterCount,
-    recentChapters: sorted.slice(-5).reverse().map(ch => ({
-      id: ch.name.replace(/\.md$/, ''),
-      title: str(ch.frontmatter.title, ch.name),
-      volume: str(ch.frontmatter.volume, ''),
-      chars: charCount(ch.content),
-    })),
-    pendingLines: scan.pendingLines.slice(0, 8),
+    recentChapters: chapterRows.slice(-5).reverse(),
+    chapterRows,
+    plotRows: scan.plots.map(plotRow).sort((a, b) => a.status.localeCompare(b.status) || a.id.localeCompare(b.id)),
+    characterRows,
+    worldbuildingCount: scan.worldbuildingCount,
+    pendingLines: scan.pendingLines.slice(0, 30),
   }
 }
 

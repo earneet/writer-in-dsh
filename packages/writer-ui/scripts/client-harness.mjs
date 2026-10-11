@@ -46,7 +46,10 @@ const fileSystem = {
   'novel': [{ name: 'project.md', type: 'file' }, { name: 'pending.md', type: 'file' }, { name: 'chapters', type: 'directory' }, { name: 'characters', type: 'directory' }, { name: 'plots', type: 'directory' }],
   '': [{ name: 'novel', type: 'directory' }],
   'novel/chapters': [{ name: '001.md', type: 'file' }, { name: '002.md', type: 'file' }],
-  'novel/characters': [{ name: 'a.md', type: 'file' }],
+  'novel/characters': [{ name: 'a.md', type: 'file' }, { name: 'hero.md', type: 'file' }],
+  'novel/characters/a.md': `---\nname: "甲"\n---\n人物\n`,
+  'novel/characters/hero.md': `---\nname: "主角"\nrole: "主角"\ntimeline: [{}, {}]\n---\n人物\n`,
+  'novel/worldbuilding': [{ name: 'w.md', type: 'file' }],
   'novel/plots': [{ name: 'p1.md', type: 'file' }],
   'novel/project.md': `---\ntitle: "测试书"\ngenre: "测试"\ntarget_words: 1000\nchapters: 10\n---\n简介\n`,
   'novel/pending.md': `# 待办\n\n- 002 章伏笔升级\n- 复核时间线\n`,
@@ -104,7 +107,7 @@ if (Panel === undefined) {
   console.log('--- scan:', JSON.stringify({ root: scan.root, chapters: scan.chapters.length, characters: scan.characterCount, pending: scan.pendingLines }))
   console.log('--- overview:', JSON.stringify({ title: overview.title, chapters: overview.chapters, totalChars: overview.totalChars, foreshadow: overview.foreshadow }))
   const scanOk = overview.title === '测试书' && overview.chapters === 2 && overview.totalChars === 10
-    && overview.foreshadow.length === 1 && overview.characterCount === 1 && overview.pendingLines.length === 2
+    && overview.foreshadow.length === 1 && overview.characterRows.length === 2 && overview.pendingLines.length === 2
   console.log('--- scan verdict:', scanOk ? 'PASS（冷启动总览聚合成功）' : 'FAIL')
 
   // ③ 旧布局回退：工作区根直铺（无 novel/、无 chapters/，仅 outline+characters+plots）
@@ -114,12 +117,14 @@ if (Panel === undefined) {
   ]
   fileSystem['outline.md'] = `# 《根目录书》\n\n## 第一章\n大纲内容\n`
   fileSystem['characters'] = fileSystem['novel/characters']
+  fileSystem['characters/a.md'] = fileSystem['novel/characters/a.md']
+  fileSystem['characters/hero.md'] = fileSystem['novel/characters/hero.md']
   fileSystem['plots'] = fileSystem['novel/plots']
   fileSystem['plots/p1.md'] = fileSystem['novel/plots/p1.md']
   const legacyScan = await scanNovel('s1', new AbortController().signal)
   const legacyOverview = buildOverview(legacyScan)
-  console.log('--- legacy scan:', JSON.stringify({ root: legacyScan.root, chapters: legacyScan.chapters.length, characters: legacyScan.characterCount }))
-  const legacyOk = legacyScan.root === '.' && legacyOverview.title === '《根目录书》' && legacyOverview.chapters === 0 && legacyOverview.characterCount === 1
+  console.log('--- legacy scan:', JSON.stringify({ root: legacyScan.root, chapters: legacyScan.chapters.length, characters: legacyScan.characters.length }))
+  const legacyOk = legacyScan.root === '.' && legacyOverview.title === '《根目录书》' && legacyOverview.chapters === 0 && legacyOverview.characterRows.length === 2
   console.log('--- legacy verdict:', legacyOk ? 'PASS（根目录直铺布局识别成功）' : 'FAIL')
   process.exitCode = noCrash && scanOk && legacyOk ? 0 : 1
 } else {

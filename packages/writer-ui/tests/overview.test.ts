@@ -9,21 +9,25 @@ const chapter = (name: string, frontmatter: Record<string, unknown>, content: st
   name, frontmatter, content,
 })
 
-test('buildOverview：全字段聚合（卷/伏笔/进度/最近章节倒序）', () => {
+test('buildOverview：全字段聚合（卷/伏笔/进度/最近章节倒序/人物行）', () => {
   const scan = {
     root: 'novel',
     project: { title: '长夜有歌', genre: '都市', target_words: 1000, chapters: 10 },
     chapters: [
-      chapter('002.md', { number: 2, title: '夜航', volume: '第一卷' }, '四个字'),
+      chapter('002.md', { number: 2, title: '夜航', volume: '第一卷', status: 'draft' }, '四个字'),
       chapter('001.md', { number: 1, title: '守灯', volume: '第一卷' }, '两个\n字'),
       chapter('003.md', { number: 3 }, '另起一卷'),
     ],
     plots: [
       { name: 'a.md', frontmatter: { status: 'planned' } },
-      { name: 'b.md', frontmatter: { status: 'planted' } },
+      { name: 'b.md', frontmatter: { status: 'planted', hint: '镜子', planned_chapter: '066' } },
       { name: 'c.md', frontmatter: { status: 'planted' } },
     ],
-    characterCount: 5,
+    characters: [
+      { name: 'su-mian.md', frontmatter: { name: '苏眠', role: '主角', timeline: [{}, {}], relations: [{}] } },
+      { name: 'zhou-ning.md', frontmatter: {} },
+    ],
+    worldbuildingCount: 1,
     pendingLines: [],
   }
   const overview = buildOverview(scan)
@@ -34,11 +38,17 @@ test('buildOverview：全字段聚合（卷/伏笔/进度/最近章节倒序）'
   assert.deepEqual(overview.volumes, [{ name: '第一卷', count: 2 }, { name: '未分卷', count: 1 }])
   assert.deepEqual(overview.foreshadow, [{ status: 'planned', count: 1 }, { status: 'planted', count: 2 }])
   assert.deepEqual(overview.recentChapters.map(c => c.id), ['003', '002', '001'])
-  assert.equal(overview.characterCount, 5)
+  assert.deepEqual(overview.characterRows.map(c => c.name), ['苏眠', 'zhou-ning'])
+  assert.equal(overview.characterRows[0].timelineCount, 2)
+  assert.equal(overview.characterRows[0].relationCount, 1)
+  const mirror = overview.plotRows.find(p => p.id === 'b')
+  assert.notEqual(mirror, undefined)
+  assert.equal(mirror!.hint, '镜子')
+  assert.equal(mirror!.plannedChapter, '066')
 })
 
 test('buildOverview：无 project / 无目标字数时进度为 null，标题回退', () => {
-  const overview = buildOverview({ root: 'novel', project: null, chapters: [], plots: [], characterCount: 0, pendingLines: [] })
+  const overview = buildOverview({ root: 'novel', project: null, chapters: [], plots: [], characters: [], worldbuildingCount: 0, pendingLines: [] })
   assert.equal(overview.title, '未命名项目')
   assert.equal(overview.progress, null)
   assert.equal(overview.targetWords, 0)
@@ -49,7 +59,7 @@ test('buildOverview：超额完成进度封顶 1', () => {
     root: 'novel',
     project: { target_words: 2 },
     chapters: [chapter('001.md', {}, '很多很多字')],
-    plots: [], characterCount: 0, pendingLines: [],
+    plots: [], characters: [], worldbuildingCount: 0, pendingLines: [],
   })
   assert.equal(overview.progress, 1)
 })
