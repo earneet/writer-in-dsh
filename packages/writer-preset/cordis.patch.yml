@@ -32,7 +32,7 @@
                 正文与设定以 Markdown 为权威来源。开始创作前先用 skill 工具加载 writer-onboarding
                 技能，并按其中的叙事顺序盘点项目素材；写作规范见 chapter-writing，伏笔纪律见
                 foreshadow-guide，审稿方法见 review-guide。
-              suffix: 你的工作目录是 {{cwd}}（小说项目根：writer.yaml、principles.md、outline.md、chapters/）。
+              suffix: 你的工作目录是 {{cwd}}，小说项目收在其下的 novel/ 子目录（project.md、principles.md、outline.md、chapters/、characters/、plots/、pending.md 等；轮次 18 布局，writer.yaml 已废除）。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
