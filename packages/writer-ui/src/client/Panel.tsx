@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
-  Button, DisclosureRow, SegmentedTabs, Tag, TextShimmer, Tooltip,
+  Button, DisclosureRow, MarkdownText, SegmentedTabs, Tag, TextShimmer, Tooltip,
   IconChecklistOutlineRegular, IconEditOutlineMedium, IconInfoOutlineRegular,
   IconListPenOutlineRegular, IconRefreshOutlineRegular, IconUsersOutlineRegular,
   IconDataOutlineRegular, IconWarningTriangleOutlineMedium,
@@ -267,6 +267,30 @@ const subSectionTitle: React.CSSProperties = {
 }
 const previewStyle: React.CSSProperties = { color: 'var(--dsw-alias-label-secondary)' }
 
+/**
+ * Markdown 渲染的本地化 chrome（**模块级常量，引用必须稳定**——labels 引用变化会
+ * 丢弃 MarkdownText 的渲染缓存；M3 全面接管正文渲染时收编为 locale 资源）。
+ * 提前落地自 M3：大纲/人物正文小节先走 MarkdownText（GFM 表格/子标题正确渲染），
+ * 折叠摘要（章节/伏笔 preview）仍为纯文本。
+ */
+const markdownLabels = {
+  code: {
+    copyLabel: '复制',
+    copiedLabel: '已复制',
+    toolbarLabels: { codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '不换行' },
+  },
+  footnotes: '脚注',
+} as const
+
+/** 正文小节渲染容器（限高滚动；Markdown 内容走 MarkdownText）。 */
+function MarkdownBody({ text, maxHeight }: { text: string; maxHeight: number }): React.ReactElement {
+  return (
+    <div style={{ maxHeight, overflowY: 'auto', fontSize: 12, lineHeight: 1.7 }}>
+      <MarkdownText text={text} labels={markdownLabels} />
+    </div>
+  )
+}
+
 /** 人物关系 SVG 图（环形布局：节点=参与边的两端人物，边=名字能对上号的关系；颜色全 token）。 */
 function RelationGraph({ rows }: { rows: CharacterRow[] }) {
   // 边 = 各人物 relations 中对方也是本列表人物的（双向关系按无向 key 合并去重，避免两条重叠线段）
@@ -484,7 +508,7 @@ function OutlineTab({ o }: { o: NovelOverview }): React.ReactElement {
       {outline.sections.map((section, i) => (
         <CollapsibleRow key={i} title={section.title} defaultOpen={i === 0}
           aside={<span style={{ ...rowAside, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{section.body.slice(0, 60)}</span>}>
-          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 360, overflowY: 'auto' }}>{section.body}</div>
+          <MarkdownBody text={section.body} maxHeight={360} />
         </CollapsibleRow>
       ))}
     </>
@@ -594,7 +618,7 @@ function CharacterDetail({ row }: { row: CharacterRow }) {
       {row.sections.map((section, i) => (
         <div key={i}>
           <div style={subSectionTitle}>{section.title}</div>
-          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 200, overflowY: 'auto' }}>{section.body}</div>
+          <MarkdownBody text={section.body} maxHeight={200} />
         </div>
       ))}
       {row.timeline.length > 0 && (

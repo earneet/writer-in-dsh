@@ -36,6 +36,7 @@ function makePrimitivesStub(jsx) {
   return {
     DisclosureRow: ({ icon: ic, title, open, expandable, collapsedContent, children }) =>
       jsx('div', { 'data-disclosure': String(open), children: [ic, title, collapsedContent, open ? children : null] }),
+    MarkdownText: ({ text }) => jsx('div', { 'data-md': String(typeof text === 'string' ? text.length : 0) }),
     Tag: ({ children }) => jsx('span', { children }),
     TextShimmer: ({ children }) => jsx('span', { children }),
     Button: ({ children }) => jsx('button', { children }),
