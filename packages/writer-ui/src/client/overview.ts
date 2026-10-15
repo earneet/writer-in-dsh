@@ -7,11 +7,12 @@
  */
 import { parseFrontmatter, type Frontmatter } from 'dsh-writer-domain'
 
-/** 一章的原始文件（frontmatter + 正文）。 */
+/** 一章的原始文件（frontmatter + 正文；subdir = 一层卷子目录名，顶层章节缺省）。 */
 export interface ChapterSource {
   name: string
   frontmatter: Frontmatter
   content: string
+  subdir?: string
 }
 
 /** 一条情节/伏笔的原始文件（frontmatter + 正文，正文供展开预览）。 */
@@ -48,6 +49,17 @@ export interface NovelScan {
   worldbuildingCount: number
   /** 待办分节（extractPendingSections 产出：倒序 + 跨 pass 去重 + [x] 过滤）。 */
   pending: PendingSection[]
+  // —— M1a 扫描缺口补全（对照 writer-store KIND_LAYOUT；面板暂不消费，实体图消费）——
+  /** 单文件实体 principles.md（KIND_LAYOUT:30）。 */
+  principles?: OutlineSource
+  /** 单文件实体 events.md（KIND_LAYOUT:35；全书事件权威 SoT）。 */
+  events?: OutlineSource
+  /** 单文件实体 ideas.md（KIND_LAYOUT:36）。 */
+  ideas?: OutlineSource
+  /** style/ 目录（KIND_LAYOUT:37；风格示范 few-shot）。 */
+  style?: PlotSource[]
+  /** worldbuilding 条目 id 清单（M1a 仅扫描名字；全文读取随 M1b 总线）。 */
+  worldbuildingNames?: string[]
 }
 
 /** 章节行（章节页签 + 概况最近章节；preview 为展开预览文本）。 */

@@ -4,7 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  parseConsistency, parseForeshadow, parseReview, parseWriteChapter, parseWriterStats,
+  parseConsistency, parseConsistencyIssues, parseForeshadow, parseReview, parseWriteChapter, parseWriterStats,
 } from '../src/client/parse.ts'
 import { readPanelState, recordToolResult } from '../src/client/state.ts'
 
@@ -109,4 +109,68 @@ test('面板状态：recordToolResult 派生快照与动态时间线', () => {
   assert.equal(state!.writes.length, 1)
   assert.equal(state!.activities.length >= 2, true)
   assert.equal(state!.activities[0].tool, 'write_chapter')
+})
+
+// —— M1a 解析器盲区收敛（千章/缩进续行/数字开头卷名）——
+
+test('parseWriteChapter：千章以上四位章号（\\d{3} 原失配静默丢章号）', () => {
+  const parsed = parseWriteChapter('已完成 full 写作并保存 chapter/1001（hash=abc，字数≈3200）')
+  assert.notEqual(parsed, null)
+  assert.equal(parsed!.chapterId, '1001')
+  const noop = parseWriteChapter('rewrite 判定无需修改，未落盘（chapter/1234 保持原样，hash=abc）')
+  assert.equal(noop!.chapterId, '1234')
+})
+
+test('parseReview：缩进续行捕获（原文/建议/改写方案，A9 直接根因）', () => {
+  const parsed = parseReview(REVIEW)
+  assert.notEqual(parsed, null)
+  const [first, second] = parsed!.suggestions
+  assert.equal(first!.quote, '火焰无声地偏了偏')
+  assert.equal(first!.suggestion, '改为呼应认主后的行为')
+  assert.equal(first!.rewriteOption, null)
+  assert.equal(second!.quote, null)
+  assert.equal(second!.suggestion, '穿插动作描写')
+  // 改写方案字段（review 渲染可选行）
+  const withRewrite = parseReview('审稿完成（1 条建议）。总评：x\n\n1. [medium] 文学质量：节奏\n   原文：q\n   建议：s\n   改写方案：r')
+  assert.equal(withRewrite!.suggestions[0]!.rewriteOption, 'r')
+})
+
+test('parseWriterStats：数字开头卷名（(\\D…) 原整卷静默失配）', () => {
+  const stats = parseWriterStats(STATS.replace('卷分布：第一卷×3', '卷分布：2023卷×2、第一卷×3'))
+  assert.deepEqual(stats!.volumes, [{ name: '2023卷', count: 2 }, { name: '第一卷', count: 3 }])
+})
+
+test('parseConsistencyIssues：逐条明细（severity/refs/描述/证据）', () => {
+  const text = [
+    '一致性检查完成（1 批：001-002），发现 2 条矛盾。',
+    '',
+    '1. [high] 情节一致性（chapter/001、chapter/002）：绿焰设定矛盾',
+    '   证据：第 1 章写蓝焰，第 2 章写绿焰',
+    '2. [low] 设定一致性：地名前后不一',
+  ].join('\n')
+  const report = parseConsistencyIssues(text)
+  assert.notEqual(report, null)
+  assert.equal(report!.batches, '1 批：001-002')
+  assert.deepEqual(report!.issues[0], {
+    severity: 'high', dimension: '情节一致性', refs: ['chapter/001', 'chapter/002'],
+    description: '绿焰设定矛盾', evidence: '第 1 章写蓝焰，第 2 章写绿焰',
+  })
+  assert.deepEqual(report!.issues[1], {
+    severity: 'low', dimension: '设定一致性', refs: [], description: '地名前后不一', evidence: null,
+  })
+  assert.equal(parseConsistencyIssues('别的'), null)
+})
+
+test('CRLF 行尾容错（逐行解析不因 \r 整行失配）', () => {
+  const saved = parseWriteChapter('已完成 full 写作并保存 chapter/004（hash=abc123，字数≈3200）\r\n补丁协议：命中 0 条，跳过 0 条\r\n')
+  assert.equal(saved!.chapterId, '004')
+  const crlfReview = '审稿完成（1 条建议）。总评：x\r\n\r\n1. [high] 情节一致性：矛盾\r\n   原文：引文\r\n   建议：修订'
+  const review = parseReview(crlfReview)
+  assert.notEqual(review, null)
+  assert.equal(review!.suggestions[0]!.problem, '矛盾')
+  assert.equal(review!.suggestions[0]!.quote, '引文')
+  const crlfConsistency = '一致性检查完成（1 批：001-001），发现 1 条矛盾。\r\n\r\n1. [high] 情节一致性（chapter/001）：矛盾\r\n   证据：引文'
+  const report = parseConsistencyIssues(crlfConsistency)
+  assert.equal(report!.issues[0]!.description, '矛盾')
+  assert.equal(report!.issues[0]!.evidence, '引文')
 })

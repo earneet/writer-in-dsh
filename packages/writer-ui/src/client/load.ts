@@ -114,10 +114,24 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
   {
     const entries = await listDir(sessionId, join(root, 'chapters'), signal)
     if (entries !== null) {
-      for (const entry of mdFiles(entries)) {
-        const raw = await readText(sessionId, join(join(root, 'chapters'), entry.name), signal)
-        const { frontmatter, content } = splitSource(raw)
-        chapters.push({ name: entry.name, frontmatter, content })
+      for (const entry of entries) {
+        if (signal.aborted) throw new DOMException('aborted', 'AbortError')
+        if (entry.type === 'file' && /\.md$/i.test(entry.name)) {
+          const raw = await readText(sessionId, join(join(root, 'chapters'), entry.name), signal)
+          const { frontmatter, content } = splitSource(raw)
+          chapters.push({ name: entry.name, frontmatter, content })
+        } else if (entry.type === 'dir') {
+          // 一层卷子目录（chapters/卷一/001.md 布局——M1a 裁定：支持一层，不深递归）
+          const subEntries = await listDir(sessionId, join(join(root, 'chapters'), entry.name), signal)
+          if (subEntries === null) continue
+          for (const sub of subEntries) {
+            if (signal.aborted) throw new DOMException('aborted', 'AbortError')
+            if (sub.type !== 'file' || !/\.md$/i.test(sub.name)) continue
+            const raw = await readText(sessionId, join(join(join(root, 'chapters'), entry.name), sub.name), signal)
+            const { frontmatter, content } = splitSource(raw)
+            chapters.push({ name: sub.name, frontmatter, content, subdir: entry.name })
+          }
+        }
       }
     }
   }
@@ -143,10 +157,33 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
   }
 
   let worldbuildingCount = 0
+  let worldbuildingNames: string[] = []
   const worldbuildingEntries = await listDir(sessionId, join(root, 'worldbuilding'), signal)
-  if (worldbuildingEntries !== null) worldbuildingCount = mdFiles(worldbuildingEntries).length
+  if (worldbuildingEntries !== null) {
+    worldbuildingNames = mdFiles(worldbuildingEntries).map(e => e.name)
+    worldbuildingCount = worldbuildingNames.length
+  }
 
+  // —— M1a 扫描缺口补全（对照 writer-store KIND_LAYOUT；单文件实体 + style/ 目录）——
   const projectEntries = rootEntries ?? []
+  const readSingleton = async (fileName: string): Promise<any | undefined> => {
+    if (!projectEntries.some(e => e.type === 'file' && e.name === fileName)) return undefined
+    return splitSource(await readText(sessionId, join(root, fileName), signal))
+  }
+  const principles = await readSingleton('principles.md')
+  const events = await readSingleton('events.md')
+  const ideas = await readSingleton('ideas.md')
+
+  const style: any[] = []
+  const styleEntries = await listDir(sessionId, join(root, 'style'), signal)
+  if (styleEntries !== null) {
+    for (const entry of mdFiles(styleEntries)) {
+      const raw = await readText(sessionId, join(join(root, 'style'), entry.name), signal)
+      const { frontmatter, content } = splitSource(raw)
+      style.push({ name: entry.name, frontmatter, content })
+    }
+  }
+
   // 大纲：novel/outline.md（旧布局为根 outline.md），frontmatter + 正文分节均保留
   let outline: any = null
   const outlineName = projectEntries.some(e => e.type === 'file' && e.name === 'outline.md') ? 'outline.md' : null
@@ -168,5 +205,12 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
     pending = extractPendingSections(await readText(sessionId, join(root, 'pending.md'), signal))
   }
 
-  return { root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount, pending }
+  return {
+    root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount, pending,
+    ...(principles !== undefined ? { principles } : {}),
+    ...(events !== undefined ? { events } : {}),
+    ...(ideas !== undefined ? { ideas } : {}),
+    ...(style.length > 0 ? { style } : {}),
+    ...(worldbuildingNames.length > 0 ? { worldbuildingNames } : {}),
+  }
 }

@@ -22,7 +22,7 @@
 
 ## 2. 打包预检
 
-- [ ] 发布前根目录 `npm run build`，随后每包 `npm pack --dry-run` 核对产物内容（lib/、assets/、cordis.patch.yml 进包；src/ 与 tests/ 不在 files 白名单内不进包）。
+- [ ] 发布前根目录 `npm run build`，随后每包 `npm pack --dry-run` 核对产物内容（lib/、assets/、cordis.patch.yml 进包；src/ 与 tests/ 不在 files 白名单内不进包；**无 spike/临时产物混入 lib/**——writer-ui 的 hash-spike 已改内存构建不落盘，此处核对兜底）。
 - [ ] tarball 内 `package.json` 无 `private`、无 `"*"` 依赖。
 
 ## 3. 安装路径验证（发布后或发布前用 tarball 预演）

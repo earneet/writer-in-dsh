@@ -214,6 +214,20 @@ reverse-reference 技能触发即对话路径，UI 无需新面）；**LLM Conte
 - **验收（机制化）**：接口 PR 评审；新增实体构建单测全绿；面板行为零变化
   （现有 216 测试不动的证明）。
 
+> **轮次 25 已实施**（详见 implementation-plan §8 轮次 25）：`types.ts`（冻结实体接口 +
+> 双向索引 + `PageParams`/`paginate` 分页参数位）与 `graph.ts`（`buildEntityGraph` 纯函数，
+> coerce：章号 "002"/中文数字/缺失回退数字文件名、planned_chapter 与 timeline chapter
+> 数字→三位序号补零）落地；扫描补全四实体（principles/events/ideas/style/ +
+> worldbuilding 名单）+ chapters 一层卷子目录（裁定：支持一层，不深递归）；解析器三盲区
+> 收敛（`\d{3,}` 千章、审稿/一致性缩进续行、数字开头卷名）；**hash spike 裁定**：domain
+> 纯函数可打进 client bundle（graph+domain 全量 14KB，node:crypto 桩重定向已有），
+> contentHash 依赖 node:crypto **不可用** → M1b 增量缓存走 client 独立 hash
+> （WebCrypto sha256 + 同口径 canonical 行），两端各自对同内容算 hash 自然一致；
+> spike 体积结论来自自建 bundle（graph+domain 全量 14KB）——**M1b 接线 graph.ts 进浏览器
+> 入口后复测真实 client.js 体积增量**；types.ts 的 `SectionEntry` 暂反向引用 overview.ts，
+> M1b 换源时迁入 types.ts 并让 overview 反向引用（依赖方向留痕）。
+> 面板零改动验证：现有 218 测试全绿不动 + 净增 17 例（235/235）、client-harness 3/3。
+
 #### M1b 数据总线 + 面板换源 + 增量订阅 + 左栏决策面增强
 
 - 模块级 store（扫描结果 + 工具动态合并、版本化快照、subscribe），替换 state.ts 与
