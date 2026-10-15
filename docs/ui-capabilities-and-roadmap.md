@@ -224,8 +224,10 @@ reverse-reference 技能触发即对话路径，UI 无需新面）；**LLM Conte
 > contentHash 依赖 node:crypto **不可用** → M1b 增量缓存走 client 独立 hash
 > （WebCrypto sha256 + 同口径 canonical 行），两端各自对同内容算 hash 自然一致；
 > spike 体积结论来自自建 bundle（graph+domain 全量 14KB）——**M1b 接线 graph.ts 进浏览器
-> 入口后复测真实 client.js 体积增量**；types.ts 的 `SectionEntry` 暂反向引用 overview.ts，
-> M1b 换源时迁入 types.ts 并让 overview 反向引用（依赖方向留痕）。
+> 入口后复测真实 client.js 体积增量**（轮次 26 已兑现：87.1→~117KB）；types.ts 的
+> `SectionEntry` 暂反向引用 overview.ts，M1b 换源时迁入 types.ts 并让 overview 反向引用
+> （依赖方向留痕）——**轮次 26 已兑现**（视图模型类型全部迁入 types.ts，overview 仅
+> type 再导出兼容）。
 > 面板零改动验证：现有 218 测试全绿不动 + 净增 17 例（235/235）、client-harness 3/3。
 
 #### M1b 数据总线 + 面板换源 + 增量订阅 + 左栏决策面增强
@@ -273,6 +275,26 @@ reverse-reference 技能触发即对话路径，UI 无需新面）；**LLM Conte
   订阅单测（mock 流）；三色/角标渲染断言；**「工具渲染格式 ↔ parse.ts」契约测试**（镜像
   guard 措辞契约做法，锁 writer-tools 成功回执文案漂移——轮次 22 补：全部 ✅ 卡片都建立
   在逐字对齐的正则上却无联动测试）；abort 后 resolve、多会话隔离、失败分支补测。
+
+> **轮次 26 已实施**（详见 implementation-plan §8 轮次 26）：bus.ts 数据总线（版本化快照
+> + subscribe + 会话桶 + callId 幂等，替换并删除 state.ts）；换源 projectOverview
+> （buildOverview 改为实体图投影；**「保留旧渲染分支」未保留**——旧聚集体直接删除，
+> 等价由既有 overview 测试 + project 换源等价抽查锁定）；load.ts 强化（readText 保险丝/
+> 4 路并发读/单文件失败清单/进度/staleChapters（client hash 与 domain 同口径，hash.test
+> 锁定）/归档扫描）；changes 订阅 + watch 降级（断流退避重连 ≤3 次，重试耗尽降级手动）
+> + sessions.list.subscribe 替换 2s 轮询（**observable 缺席时回退轮询**，非纯替换）；
+> 左栏决策面全项（情境卡/健康度徽章/伏笔三色+风险排序+逾期 Tag/维护徽章/归档折叠/智能
+> 默认/页签角标；三色口径：红=planned_chapter 超期未回收、黄=停滞（距 planted/最后
+> milestone 超 3 章）或无锚活跃、灰=未种植，新鲜 planted 不计档）；六治理工具通用卡片
+> （14 工具全覆盖）+ export_book 审批语义态（**宿主 toolview props 无审批信号（实证
+> ui-tool/contract/slots.ts）——降级为文案标注「审批/执行中」，留痕**）；正确性修复包
+> ①-⑧ 全清。验收：258/258 测试（契约测试直调 writer-tools execute；watch/mapPool/保险丝/
+> **函数级环路接线测试**「工具落盘→变更帧→重扫→总线新值」）、harness 4/4（**六页签
+> 断言为数据级**——Panel 渲染仍只验不抛错，UI 级断言与「闪断→恰 N 次重连→降级」
+> 编排用例留 M2 browser-test）、产物零字面色（~117KB）。
+> 总线口径留痕：快照=「novel/ 全量扫描 + 本客户端工具结果」的内存派生物（live 动态
+> 不可从 novel/ 重建——工具回执也是派生物，刷新即丢由冷扫描兜底），非第二真源约束
+> 按此口径执行。
 
 #### M2 右栏宽画布工作台（形态落地，高频决策面优先）
 
