@@ -4,7 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildEntityGraph, coerceChapterNumber } from '../src/client/graph.ts'
-import { buildOverview, type NovelScan } from '../src/client/overview.ts'
+import { buildOverview, type NovelScan } from '../src/client/project.ts'
 import { paginate } from '../src/client/types.ts'
 
 const baseScan: NovelScan = {
@@ -202,13 +202,13 @@ test('纯数字串章锚与数字统一补零（"2" 与 2 同命 → "002"）', 
   assert.equal(graph.warnings.some(w => w.includes('章节锚非法')), false)
 })
 
-test('卷子目录章节进入面板总览的现状锁定（volume 空串 → 「未分卷」分组；属修复性纳入）', () => {
+test('卷子目录章节进入面板总览（M1b 起 volume 回退子目录名——修复性纳入的口径锁定）', () => {
   const overview = buildOverview({
     ...baseScan,
     chapters: [{ name: '001.md', frontmatter: { title: '夜航' }, content: '正文', subdir: '卷一' }],
   })
   assert.equal(overview.chapters, 1)
   assert.equal(overview.chapterRows[0]!.id, '001')
-  assert.equal(overview.chapterRows[0]!.volume, '')
-  assert.deepEqual(overview.volumes, [{ name: '未分卷', count: 1 }])
+  assert.equal(overview.chapterRows[0]!.volume, '卷一')
+  assert.deepEqual(overview.volumes, [{ name: '卷一', count: 1 }])
 })

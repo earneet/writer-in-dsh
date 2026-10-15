@@ -86,6 +86,8 @@ function preview(text: string, limit = 200): string {
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/^[-*]\s+/gm, '')
     .replace(/\s+/g, ' ')
+    // CJK 字符间不留空格（与 v5 面板预览口径一致）
+    .replace(/(?<=[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]) (?=[\u3400-\u9fff\u3000-\u303f\uff00-\uffef])/g, '')
     .trim()
   return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
 }
@@ -220,7 +222,8 @@ function buildOutlineNodes(content: string): OutlineNode[] {
 }
 
 function buildOutline(scan: NovelScan): OutlineEntity | null {
-  if (scan.outline === null) return null
+  // == null 兼容缺省 undefined（旧 fixture/旧扫描形状未携带 outline 键）
+  if (scan.outline == null) return null
   const fm = scan.outline.frontmatter
   const nodes = buildOutlineNodes(scan.outline.content)
   const synopsis = str(fm.synopsis, '')

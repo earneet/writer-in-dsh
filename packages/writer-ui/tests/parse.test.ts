@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import {
   parseConsistency, parseConsistencyIssues, parseForeshadow, parseReview, parseWriteChapter, parseWriterStats,
 } from '../src/client/parse.ts'
-import { readPanelState, recordToolResult } from '../src/client/state.ts'
+import { readBus, recordToolResult, resetBus } from '../src/client/bus.ts'
 
 const STATS = [
   '章节：3 章，共约 8500 字',
@@ -99,16 +99,18 @@ test('parseForeshadow / parseConsistency', () => {
   assert.equal(parseConsistency('别的'), null)
 })
 
-test('面板状态：recordToolResult 派生快照与动态时间线', () => {
-  recordToolResult('', 'writer_stats', STATS, { stats: parseWriterStats })
-  recordToolResult('', 'write_chapter', WRITE, { write: parseWriteChapter })
-  const state = readPanelState('')
-  assert.notEqual(state, null)
-  assert.equal(state!.stats?.chapters, 3)
-  assert.equal(state!.lastWrite?.chapterId, '004')
-  assert.equal(state!.writes.length, 1)
-  assert.equal(state!.activities.length >= 2, true)
-  assert.equal(state!.activities[0].tool, 'write_chapter')
+test('数据总线：recordToolResult 派生快照与动态时间线', () => {
+  resetBus()
+  recordToolResult('writer_stats', STATS, { stats: parseWriterStats })
+  recordToolResult('write_chapter', WRITE, { write: parseWriteChapter })
+  const live = readBus().live
+  assert.notEqual(live.stats, null)
+  assert.equal(live.stats!.chapters, 3)
+  assert.equal(live.lastWrite!.chapterId, '004')
+  assert.equal(live.writes.length, 1)
+  assert.equal(live.activities.length >= 2, true)
+  assert.equal(live.activities[0].tool, 'write_chapter')
+  resetBus()
 })
 
 // —— M1a 解析器盲区收敛（千章/缩进续行/数字开头卷名）——

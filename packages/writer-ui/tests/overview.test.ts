@@ -3,7 +3,8 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildOverview, extractBodyRelations, extractPendingSections, splitSections, splitSource } from '../src/client/overview.ts'
+import { buildOverview } from '../src/client/project.ts'
+import { extractBodyRelations, extractPendingSections, splitSections, splitSource } from '../src/client/overview.ts'
 
 const chapter = (name: string, frontmatter: Record<string, unknown>, content: string) => ({
   name, frontmatter, content,
@@ -29,6 +30,7 @@ test('buildOverview：全字段聚合（卷/伏笔/进度/最近章节倒序/人
     ],
     characters: [
       { name: 'su-mian.md', frontmatter: { name: '苏眠', role: '主角', timeline: [{ chapter: '001', state: '登场' }, { chapter: '002', state: '交稿' }], relations: [{ name: '周宁', relation: '挚友' }] }, content: '' },
+      { name: 'wu.md', frontmatter: { name: '吴'}, timeline: [{ chapter: '001', state: '登场' }], content: '' },
       { name: 'zhou-ning.md', frontmatter: {}, content: '' },
     ],
     worldbuildingCount: 1,
@@ -42,7 +44,8 @@ test('buildOverview：全字段聚合（卷/伏笔/进度/最近章节倒序/人
   assert.deepEqual(overview.volumes, [{ name: '第一卷', count: 2 }, { name: '未分卷', count: 1 }])
   assert.deepEqual(overview.foreshadow, [{ status: 'planned', count: 1 }, { status: 'planted', count: 2 }])
   assert.deepEqual(overview.recentChapters.map(c => c.id), ['003', '002', '001'])
-  assert.deepEqual(overview.characterRows.map(c => c.name), ['苏眠', 'zhou-ning'])
+  // 排序键锁定：timelineCount 降序优先（wu 1 条 > zhou-ning 0 条，尽管 id 靠后）
+  assert.deepEqual(overview.characterRows.map(c => c.name), ['苏眠', '吴', 'zhou-ning'])
   assert.equal(overview.characterRows[0]!.timelineCount, 2)
   assert.equal(overview.characterRows[0]!.relationCount, 1)
   const mirror = overview.plotRows.find(p => p.id === 'b')

@@ -6,8 +6,21 @@
  * milestones → parseMilestones 的 {type,chapter,note?}），扫描宽容值（数字型章号、
  * JSON 字符串形态）在 buildEntityGraph 内 coerce，实体层不再出现 unknown。
  * 面板（overview.ts 视图模型）本里程碑零改动——本文件只新增、不迁移。
+ * M1b 换源起本文件同时是**视图模型类型的家**（roadmap M1a 留痕的 SectionEntry 迁移
+ * 兑现：视图类型自 overview.ts 迁入，overview/project/Panel 反向引用本文件）。
  */
-import type { SectionEntry } from './overview.ts'
+
+/** 人物正文小节（## 标题切分）。 */
+export interface SectionEntry {
+  title: string
+  body: string
+}
+
+/** 人物关系条目（frontmatter relations 或正文「## 关系」小节解析）。 */
+export interface RelationEntry {
+  name: string
+  desc: string
+}
 
 /** 伏笔中间事件（domain ForeshadowMilestone 的 UI 冻结形态）。 */
 export interface PlotMilestone {
@@ -159,6 +172,107 @@ export interface Page<T> {
   items: T[]
   /** 还有下一页时为下一页首项 id；取尽为 null。 */
   nextCursor: string | null
+}
+
+// ---------------------------------------------------------------------------
+// 视图模型行类型（M1b 自 overview.ts 迁入；视图语义注释见原定义处与 project.ts）
+// ---------------------------------------------------------------------------
+
+/** 章节行（章节页签 + 概况最近章节；preview 为展开预览文本）。 */
+export interface ChapterRow {
+  id: string
+  title: string
+  volume: string
+  chars: number
+  status: string
+  storyline: string
+  preview: string
+}
+
+/**
+ * 伏笔行（伏笔页签；preview 为展开预览文本）。
+ * 决策面字段：risk 三色档（red=planted 超期未回收/yellow=停滞或无锚活跃/gray=planned
+ * 未种植/none=已收束或新鲜）、overdue 逾期标记、dueDelta 计划章与当前章差值。
+ */
+export interface PlotRow {
+  id: string
+  hint: string
+  status: string
+  type: string
+  plannedChapter: string
+  preview: string
+  risk: 'red' | 'yellow' | 'gray' | 'none'
+  overdue: boolean
+  dueDelta: number | null
+}
+
+/** 人物行（人物页签；展开详情 = 正文小节 + 时间线 + 关系）。 */
+export interface CharacterRow {
+  id: string
+  name: string
+  role: string
+  arc: string
+  timelineCount: number
+  relationCount: number
+  timeline: TimelineEvent[]
+  relations: RelationEntry[]
+  sections: SectionEntry[]
+}
+
+/** 大纲视图模型（大纲页签）。 */
+export interface OutlineOverview {
+  synopsis: string
+  volumes: number
+  chapterTarget: number
+  sections: SectionEntry[]
+}
+
+/** 待办分节（pending.md 的 `## ` 标题 + 该节列表行）。 */
+export interface PendingSection {
+  heading: string
+  lines: string[]
+}
+
+/** 下一步情境卡（概况页决策面；计算见 project.ts nextStepOf）。 */
+export interface NextStep {
+  kind: 'outline' | 'first-chapter' | 'maintain' | 'next-chapter'
+  title: string
+  hint: string
+}
+
+/** 冷启动总览视图模型（M1b 起由 project.ts 从实体图投影）。 */
+export interface NovelOverview {
+  title: string
+  genre: string
+  targetWords: number
+  chapterTarget: number
+  chapters: number
+  totalChars: number
+  progress: number | null // 完成率（0-1，无目标时 null）
+  volumes: Array<{ name: string; count: number }>
+  foreshadow: Array<{ status: string; count: number }>
+  outline: OutlineOverview | null
+  recentChapters: ChapterRow[]
+  chapterRows: ChapterRow[]
+  plotRows: PlotRow[]
+  characterRows: CharacterRow[]
+  worldbuildingCount: number
+  /** 待办分节（倒序：最新维护 pass 在前；跨 pass 建议已去重、[x] 已过滤）。 */
+  pendingSections: PendingSection[]
+  /** 去重后的待办总行数（面板截断提示用）。 */
+  pendingLineTotal: number
+  /** 伏笔三色汇总（红=超期未回收/黄=停滞或活跃/灰=未种植）。 */
+  riskSummary: { red: number; yellow: number; gray: number }
+  /** 当前章（全部章节最大章号；无章 null）。 */
+  currentChapter: number | null
+  /** 待维护 pass 章节清单（维护徽章数据源）。 */
+  staleChapters: string[]
+  /** 单文件读取失败清单（部分失败提示条）。 */
+  failedFiles: string[]
+  /** 归档分节（.writer/pending-archive.md，倒序）。 */
+  pendingArchive: PendingSection[]
+  /** 下一步情境卡。 */
+  nextStep: NextStep
 }
 
 /**

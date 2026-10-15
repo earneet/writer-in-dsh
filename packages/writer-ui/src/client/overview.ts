@@ -1,11 +1,20 @@
 /**
- * 冷启动总览聚合（纯函数）：从 novel/ 扫描到的原始文件集合计算面板数据。
+ * 扫描侧类型与 Markdown 解析基元。
  *
- * 与 novel-writer 的「打开项目即拉存储」范式对齐：不依赖本会话跑过工具；
- * 输入是 workspaceFiles remote 拉到的 Markdown 文本，解析复用 domain 纯函数
- * （parseFrontmatter），输出直接可渲染的视图模型（概况 + 章节/伏笔/人物/待办四栏）。
+ * M1b 换源后：视图模型类型迁至 types.ts（本文件 type 再导出保持旧引用兼容）、总览
+ * 聚合在 project.ts（实体图投影）；本模块保留 NovelScan 扫描形状 + splitSections/
+ * extractBodyRelations/splitSource/extractPendingSections 解析基元（graph.ts 与扫描共用）。
  */
 import { parseFrontmatter, type Frontmatter } from 'dsh-writer-domain'
+import type { PendingSection, RelationEntry, SectionEntry } from './types.ts'
+
+// 视图模型类型的家在 types.ts（M1b 迁移；此处 type 再导出兼容旧引用——TimelineEntry
+// 迁移后更名为实体层同名 TimelineEvent）
+export type {
+  ChapterRow, CharacterRow, NextStep, NovelOverview, OutlineOverview, PendingSection,
+  PlotRow, RelationEntry, SectionEntry, TimelineEvent,
+} from './types.ts'
+export type { TimelineEvent as TimelineEntry } from './types.ts'
 
 /** 一章的原始文件（frontmatter + 正文；subdir = 一层卷子目录名，顶层章节缺省）。 */
 export interface ChapterSource {
@@ -29,7 +38,7 @@ export interface CharacterSource {
   content: string
 }
 
-/** 大纲原始文件（outline.md 的 frontmatter + 正文分节）。 */
+/** 大纲/单文件实体的原始文件（frontmatter + 正文分节）。 */
 export interface OutlineSource {
   frontmatter: Frontmatter
   content: string
@@ -38,7 +47,10 @@ export interface OutlineSource {
 /** 项目级 frontmatter（project.md）。 */
 export type ProjectSource = Frontmatter | null
 
-/** 扫描结果（load.ts 产出，本模块消费）。 */
+/** 扫描产出的单文件实体/项目文件统一形状（frontmatter + 正文）。 */
+export type SingletonSource = { frontmatter: Frontmatter; content: string }
+
+/** 扫描结果（load.ts 产出，本模块与 graph/project 消费）。 */
 export interface NovelScan {
   root: string
   project: ProjectSource
@@ -60,193 +72,13 @@ export interface NovelScan {
   style?: PlotSource[]
   /** worldbuilding 条目 id 清单（M1a 仅扫描名字；全文读取随 M1b 总线）。 */
   worldbuildingNames?: string[]
-}
-
-/** 章节行（章节页签 + 概况最近章节；preview 为展开预览文本）。 */
-export interface ChapterRow {
-  id: string
-  title: string
-  volume: string
-  chars: number
-  status: string
-  storyline: string
-  preview: string
-}
-
-/** 伏笔行（伏笔页签；preview 为展开预览文本）。 */
-export interface PlotRow {
-  id: string
-  hint: string
-  status: string
-  type: string
-  plannedChapter: string
-  preview: string
-}
-
-/** 人物时间线条目（frontmatter timeline 结构化字段；JSON 字符串或数组均可）。 */
-export interface TimelineEntry {
-  chapter: string
-  state: string
-}
-
-/** 人物关系条目（frontmatter relations 或正文「## 关系」小节解析）。 */
-export interface RelationEntry {
-  name: string
-  desc: string
-}
-
-/** 人物正文小节（## 标题切分）。 */
-export interface SectionEntry {
-  title: string
-  body: string
-}
-
-/** 人物行（人物页签；展开详情 = 正文小节 + 时间线 + 关系）。 */
-export interface CharacterRow {
-  id: string
-  name: string
-  role: string
-  arc: string
-  timelineCount: number
-  relationCount: number
-  timeline: TimelineEntry[]
-  relations: RelationEntry[]
-  sections: SectionEntry[]
-}
-
-/** 大纲视图模型（大纲页签）。 */
-export interface OutlineOverview {
-  synopsis: string
-  volumes: number
-  chapterTarget: number
-  sections: SectionEntry[]
-}
-
-/** 待办分节（pending.md 的 `## ` 标题 + 该节列表行）。 */
-export interface PendingSection {
-  heading: string
-  lines: string[]
-}
-
-/** 冷启动总览视图模型。 */
-export interface NovelOverview {
-  title: string
-  genre: string
-  targetWords: number
-  chapterTarget: number
-  chapters: number
-  totalChars: number
-  progress: number | null // 完成率（0-1，无目标时 null）
-  volumes: Array<{ name: string; count: number }>
-  foreshadow: Array<{ status: string; count: number }>
-  outline: OutlineOverview | null
-  recentChapters: ChapterRow[]
-  chapterRows: ChapterRow[]
-  plotRows: PlotRow[]
-  characterRows: CharacterRow[]
-  worldbuildingCount: number
-  /** 待办分节（倒序：最新维护 pass 在前；跨 pass 建议已去重、[x] 已过滤）。 */
-  pendingSections: PendingSection[]
-  /** 去重后的待办总行数（面板截断提示用）。 */
-  pendingLineTotal: number
-}
-
-function charCount(text: string): number {
-  // 正文字数口径：去空白后的码点数（与 writer_stats 的「约 N 字」近似一致）
-  return text.replace(/\s/g, '').length
-}
-
-/** 展开预览文本：去标题/列表记号、折叠空白（CJK 字符间不留空格）、截断。 */
-function preview(text: string, limit = 200): string {
-  const flat = text
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/^[-*]\s+/gm, '')
-    .replace(/\s+/g, ' ')
-    .replace(/(?<=[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]) (?=[\u3400-\u9fff\u3000-\u303f\uff00-\uffef])/g, '')
-    .trim()
-  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
-}
-
-function str(value: unknown, fallback: string): string {
-  if (typeof value === 'string' && value.length > 0) return value
-  return fallback
-}
-
-/** 字符串或有限数字 → 展示文本（frontmatter 裸数字常见：chapter/planned_chapter 等）。 */
-function strNum(value: unknown, fallback: string): string {
-  if (typeof value === 'string' && value.length > 0) return value
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
-  return fallback
-}
-
-function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function chapterRow(source: ChapterSource): ChapterRow {
-  return {
-    id: source.name.replace(/\.md$/, ''),
-    title: str(source.frontmatter.title, source.name),
-    volume: str(source.frontmatter.volume, ''),
-    chars: charCount(source.content),
-    status: str(source.frontmatter.status, ''),
-    storyline: str(source.frontmatter.storyline, ''),
-    preview: preview(source.content),
-  }
-}
-
-function plotRow(source: PlotSource): PlotRow {
-  const fm = source.frontmatter
-  const planned = fm.planned_chapter ?? fm.planted_chapter ?? ''
-  return {
-    id: source.name.replace(/\.md$/, ''),
-    hint: str(fm.hint, source.name),
-    status: str(fm.status, 'unknown'),
-    type: str(fm.type, fm.status !== undefined ? 'foreshadow' : ''),
-    plannedChapter: strNum(planned, ''),
-    preview: preview(source.content),
-  }
-}
-
-/** 宽容解析「数组或 JSON 字符串数组」（timeline/relations 的两种存放形态）。 */
-function parseJsonishArray(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value
-  if (typeof value === 'string' && value.trim().startsWith('[')) {
-    try {
-      const parsed: unknown = JSON.parse(value)
-      if (Array.isArray(parsed)) return parsed
-    } catch { /* 容忍坏 JSON */ }
-  }
-  return []
-}
-
-/** frontmatter timeline → 条目（chapter + state；两种形态、字段名宽容）。 */
-function timelineEntries(value: unknown): TimelineEntry[] {
-  const entries: TimelineEntry[] = []
-  for (const item of parseJsonishArray(value)) {
-    if (item !== null && typeof item === 'object') {
-      const record = item as Record<string, unknown>
-      const chapter = strNum(record.chapter ?? record.at, '')
-      const state = str(record.state ?? record.summary ?? record.event, '')
-      if (chapter.length > 0 || state.length > 0) entries.push({ chapter, state })
-    } else if (typeof item === 'string' && item.trim().length > 0) {
-      entries.push({ chapter: '', state: item.trim() })
-    }
-  }
-  return entries
-}
-
-/** frontmatter relations → 条目（name/target + relation/desc 字段名宽容）。 */
-function relationEntries(value: unknown): RelationEntry[] {
-  const entries: RelationEntry[] = []
-  for (const item of parseJsonishArray(value)) {
-    if (item === null || typeof item !== 'object') continue
-    const record = item as Record<string, unknown>
-    const name = str(record.name ?? record.target ?? record.with, '')
-    const desc = str(record.relation ?? record.desc ?? record.description ?? record.note, '')
-    if (name.length > 0) entries.push({ name, desc })
-  }
-  return entries
+  // —— M1b 数据总线扩展（全部 optional：旧形状扫描结果与既有 fixture 不破坏）——
+  /** 单文件读取失败清单（部分失败语义：不使整扫描失败，面板呈现「N 个文件读取失败」）。 */
+  failedFiles?: string[]
+  /** 待维护 pass 章节清单（client 内容哈希 vs derived sourceHash 同口径比对）。 */
+  staleChapters?: string[]
+  /** .writer/pending-archive.md 归档分节（倒序：最新归档在前）。 */
+  pendingArchive?: PendingSection[]
 }
 
 /** 正文按 `## ` 标题切分小节（首个标题前的导语并入「简介」；开头的一级标题视为文件名头，剥离）。 */
@@ -275,92 +107,6 @@ export function extractBodyRelations(content: string): RelationEntry[] {
     if (m !== null && m[1]!.trim().length > 0) entries.push({ name: m[1]!.trim(), desc: m[2]!.trim() })
   }
   return entries
-}
-
-function characterRow(source: CharacterSource): CharacterRow {
-  const fm = source.frontmatter
-  const timeline = timelineEntries(fm.timeline)
-  // 关系：frontmatter 结构化优先，正文「## 关系」小节补充（按名字去重）
-  const relations = [...relationEntries(fm.relations)]
-  for (const body of extractBodyRelations(source.content)) {
-    if (!relations.some(r => r.name === body.name)) relations.push(body)
-  }
-  return {
-    id: source.name.replace(/\.md$/, ''),
-    name: str(fm.name, source.name.replace(/\.md$/, '')),
-    role: str(fm.role, ''),
-    arc: str(fm.arc, ''),
-    timelineCount: timeline.length,
-    relationCount: relations.length,
-    timeline,
-    relations,
-    sections: splitSections(source.content),
-  }
-}
-
-/** 大纲视图模型（outline.md frontmatter synopsis/volumes/chapters + 正文小节）。 */
-function outlineOverview(source: OutlineSource | null | undefined): OutlineOverview | null {
-  if (source === null || source === undefined) return null
-  const fm = source.frontmatter
-  const synopsis = str(fm.synopsis, '')
-  const sections = splitSections(source.content)
-  if (synopsis.length === 0 && sections.length === 0) return null
-  return {
-    synopsis,
-    volumes: num(fm.volumes) ?? 0,
-    chapterTarget: num(fm.chapters) ?? 0,
-    sections,
-  }
-}
-
-/** 从扫描结果计算总览（纯函数，单测覆盖）。 */
-export function buildOverview(scan: NovelScan): NovelOverview {
-  const sorted = [...scan.chapters].sort((a, b) => {
-    const an = num(a.frontmatter.number) ?? 0
-    const bn = num(b.frontmatter.number) ?? 0
-    return an - bn || a.name.localeCompare(b.name)
-  })
-  const totalChars = sorted.reduce((sum, ch) => sum + charCount(ch.content), 0)
-
-  const volumeMap = new Map<string, number>()
-  for (const ch of sorted) {
-    const volume = str(ch.frontmatter.volume, '未分卷')
-    volumeMap.set(volume, (volumeMap.get(volume) ?? 0) + 1)
-  }
-
-  const foreshadowMap = new Map<string, number>()
-  for (const plot of scan.plots) {
-    const status = str(plot.frontmatter.status, 'unknown')
-    foreshadowMap.set(status, (foreshadowMap.get(status) ?? 0) + 1)
-  }
-
-  const project = scan.project
-  const targetWords = project !== null ? num(project.target_words) : null
-  const chapterTarget = project !== null ? num(project.chapters) : null
-
-  const chapterRows = sorted.map(chapterRow)
-  const characterRows = scan.characters.map(characterRow)
-    .sort((a, b) => b.timelineCount - a.timelineCount || a.id.localeCompare(b.id))
-
-  return {
-    title: project !== null ? str(project.title, '未命名项目') : '未命名项目',
-    genre: project !== null ? str(project.genre, '') : '',
-    targetWords: targetWords ?? 0,
-    chapterTarget: chapterTarget ?? 0,
-    chapters: sorted.length,
-    totalChars,
-    progress: targetWords !== null && targetWords > 0 ? Math.min(totalChars / targetWords, 1) : null,
-    volumes: [...volumeMap.entries()].map(([name, count]) => ({ name, count })),
-    foreshadow: [...foreshadowMap.entries()].map(([status, count]) => ({ status, count })),
-    outline: outlineOverview(scan.outline),
-    recentChapters: chapterRows.slice(-5).reverse(),
-    chapterRows,
-    plotRows: scan.plots.map(plotRow).sort((a, b) => a.status.localeCompare(b.status) || a.id.localeCompare(b.id)),
-    characterRows,
-    worldbuildingCount: scan.worldbuildingCount,
-    pendingSections: scan.pending,
-    pendingLineTotal: scan.pending.reduce((sum, section) => sum + section.lines.length, 0),
-  }
 }
 
 /** 解析一个 Markdown 文件为 frontmatter + 正文（扫描入口用；坏 frontmatter 宽容回退）。 */

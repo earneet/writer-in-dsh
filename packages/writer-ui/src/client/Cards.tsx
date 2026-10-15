@@ -10,15 +10,15 @@
  * useDisclosure 席位）——不 import ui-tool/ui-chat 内部类型（跨插件值/类型依赖
  * 仅限基线模块表）。
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   DisclosureRow, Tag, TextShimmer,
-  IconBranchOutlineRegular, IconClockOutlineRegular, IconDataOutlineRegular,
-  IconDownloadOutlineRegular, IconEditOutlineRegular, IconInspectOutlineRegular,
-  IconSearchOutlineRegular, IconShieldOutlineRegular,
+  IconBranchOutlineRegular, IconClockOutlineRegular,
+  IconDataOutlineRegular, IconDownloadOutlineRegular, IconEditOutlineRegular,
+  IconInspectOutlineRegular, IconSearchOutlineRegular, IconShieldOutlineRegular,
   IconWarningTriangleOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { recordToolResult } from './state.ts'
+import { recordToolResult, type RecordParsers } from './bus.ts'
 import { parseConsistency, parseForeshadow, parseReview, parseWriteChapter, parseWriterStats } from './parse.ts'
 
 /** useDisclosure 的本地最小契约（宿主经 props 注入）。 */
@@ -32,6 +32,8 @@ interface Disclosure {
 export interface ToolViewPropsBase {
   toolName: string
   phase: 'preparing' | 'start' | 'result' | string
+  /** 宿主工具调用 id（§1.5 公共 props；用于面板动态记录幂等去重）。 */
+  callId?: string
   useDisclosure?: () => Disclosure
   block?: {
     call?: { name?: string; argsRaw?: string | null }
@@ -175,13 +177,25 @@ function RunningSummary({ children }: { children: React.ReactNode }) {
   return <TextShimmer active>{children}</TextShimmer>
 }
 
-function onceRecorded(tool: string, content: string, kind: 'stats' | 'write' | 'review' | 'plain', label?: string): void {
-  // 面板状态更新（模块级存储自带版本去抖；重复渲染重复记录由 unshift 上限截断，时间线容忍重复行）
-  recordToolResult('', tool, content,
-    kind === 'stats' ? { stats: parseWriterStats }
-      : kind === 'write' ? { write: parseWriteChapter }
-        : kind === 'review' ? { review: parseReview }
-          : {}, label)
+function parsersOf(kind: 'stats' | 'write' | 'review' | 'plain'): RecordParsers {
+  if (kind === 'stats') return { stats: parseWriterStats }
+  if (kind === 'write') return { write: parseWriteChapter }
+  if (kind === 'review') return { review: parseReview }
+  return {}
+}
+
+/**
+ * 面板动态记录（M1b 正确性修复包①：记录移入 useEffect——渲染期副作用会在重渲染时
+ * 重复 unshift 挤掉上限内真实历史；callId 幂等去重由总线承接，双调安全）。
+ */
+function useRecordResult(props: ToolViewPropsBase, content: string, kind: 'stats' | 'write' | 'review' | 'plain', label?: string): void {
+  const { phase, toolName, callId } = props
+  useEffect(() => {
+    if (phase !== 'result') return
+    // block 缺席的空结果不记动态行（避免空白行挤占时间线）
+    if (content.length === 0 && label === undefined) return
+    recordToolResult(toolName, content, parsersOf(kind), { callId, label })
+  }, [phase, toolName, content, callId, kind, label])
 }
 
 /** 通用错误/兜底展开体。 */
@@ -196,6 +210,10 @@ export function WriteChapterCard(props: ToolViewPropsBase) {
     () => props.phase === 'result' && content.length > 0 ? parseWriteChapter(content) : null,
     [props.phase, content],
   )
+  const isError = props.block?.isError === true
+  const label = isError ? errorSummary(props.block, content)
+    : parsed !== null ? `chapter/${parsed.chapterId}（${parsed.mode}）` : undefined
+  useRecordResult(props, content, 'write', label)
   if (props.phase === 'preparing') {
     return <ToolRow icon={<IconEditOutlineRegular />} title="正在写作…" running summary="准备写作素材" expandable={false} useDisclosure={props.useDisclosure} />
   }
@@ -206,14 +224,11 @@ export function WriteChapterCard(props: ToolViewPropsBase) {
       summary={hint.length > 0 ? <RunningSummary>{hint}</RunningSummary> : '起草中'} />
   }
   if (props.block === undefined) return null
-  if (props.block.isError === true) {
-    const text = errorSummary(props.block, content)
-    onceRecorded('write_chapter', content, 'plain', text)
-    return <ToolRow icon={<IconEditOutlineRegular />} title="写作失败" running={false} isError summary={text} expandable useDisclosure={props.useDisclosure}>
+  if (isError) {
+    return <ToolRow icon={<IconEditOutlineRegular />} title="写作失败" running={false} isError summary={label} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
     </ToolRow>
   }
-  onceRecorded('write_chapter', content, 'write', parsed !== null ? `chapter/${parsed.chapterId}（${parsed.mode}）` : undefined)
   if (parsed === null) {
     return <ToolRow icon={<IconEditOutlineRegular />} title="写作完成" running={false} summary={firstLine(content)} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
@@ -258,25 +273,26 @@ export function WriteChapterCard(props: ToolViewPropsBase) {
   )
 }
 
-/** review_chapter 卡片：审稿行（总评 + 逐条建议，severity 分级 Tag）。 */
+/** review_chapter 卡片：审稿行（总评 + 逐条建议，severity 分级 Tag；M1a 起捕获原文/建议/改写方案续行）。 */
 export function ReviewCard(props: ToolViewPropsBase) {
   const content = props.phase === 'result' ? resultText(props.block) : ''
   const parsed = useMemo(
     () => props.phase === 'result' && content.length > 0 ? parseReview(content) : null,
     [props.phase, content],
   )
+  const isError = props.block?.isError === true
+  const label = isError ? errorSummary(props.block, content)
+    : parsed !== null ? (parsed.count > 0 ? `${parsed.count} 条建议` : '无建议') : undefined
+  useRecordResult(props, content, 'review', label)
   if (props.phase === 'preparing' || props.phase === 'start') {
     return <ToolRow icon={<IconInspectOutlineRegular />} title="审稿进行中" running summary="多维度审读章节" expandable={false} useDisclosure={props.useDisclosure} />
   }
   if (props.block === undefined) return null
-  if (props.block.isError === true) {
-    const text = errorSummary(props.block, content)
-    onceRecorded('review_chapter', content, 'plain', text)
-    return <ToolRow icon={<IconInspectOutlineRegular />} title="审稿失败" running={false} isError summary={text} expandable useDisclosure={props.useDisclosure}>
+  if (isError) {
+    return <ToolRow icon={<IconInspectOutlineRegular />} title="审稿失败" running={false} isError summary={label} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
     </ToolRow>
   }
-  onceRecorded('review_chapter', content, 'review', parsed !== null ? (parsed.count > 0 ? `${parsed.count} 条建议` : '无建议') : undefined)
   if (parsed === null) {
     return <ToolRow icon={<IconInspectOutlineRegular />} title="审稿完成" running={false} summary={firstLine(content)} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
@@ -303,9 +319,16 @@ export function ReviewCard(props: ToolViewPropsBase) {
       <div style={detail}>
         {parsed.summary.length > 0 && <div style={{ color: 'var(--dsw-alias-label-primary)' }}>总评：{parsed.summary}</div>}
         {parsed.suggestions.map((s, i) => (
-          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-            <Tag tone={severityTone(s.severity)}>{s.severity}</Tag>
-            <span><span style={muted}>{s.dimension}：</span>{s.problem}</span>
+          <div key={i}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+              <Tag tone={severityTone(s.severity)}>{s.severity}</Tag>
+              <span><span style={muted}>{s.dimension}：</span>{s.problem}</span>
+            </div>
+            {s.quote !== null && (
+              <div style={{ ...muted, paddingLeft: 8, borderLeft: '2px solid var(--dsw-alias-border-l3)' }}>原文：{s.quote}</div>
+            )}
+            {s.suggestion !== null && <div>建议：{s.suggestion}</div>}
+            {s.rewriteOption !== null && <div>改写方案：{s.rewriteOption}</div>}
           </div>
         ))}
       </div>
@@ -320,17 +343,18 @@ export function StatsCard(props: ToolViewPropsBase) {
     () => props.phase === 'result' && content.length > 0 ? parseWriterStats(content) : null,
     [props.phase, content],
   )
+  const isError = props.block?.isError === true
+  const label = isError ? errorSummary(props.block, content)
+    : parsed !== null ? `${parsed.chapters} 章 / ${parsed.totalChars} 字` : undefined
+  useRecordResult(props, content, 'stats', label)
   if (props.phase !== 'result' || props.block === undefined) {
     return <ToolRow icon={<IconDataOutlineRegular />} title="统计进行中" running summary="汇总全书数据" expandable={false} useDisclosure={props.useDisclosure} />
   }
-  if (props.block.isError === true) {
-    const text = errorSummary(props.block, content)
-    onceRecorded('writer_stats', content, 'plain', text)
-    return <ToolRow icon={<IconDataOutlineRegular />} title="统计失败" running={false} isError summary={text} expandable useDisclosure={props.useDisclosure}>
+  if (isError) {
+    return <ToolRow icon={<IconDataOutlineRegular />} title="统计失败" running={false} isError summary={label} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
     </ToolRow>
   }
-  onceRecorded('writer_stats', content, 'stats', parsed !== null ? `${parsed.chapters} 章 / ${parsed.totalChars} 字` : undefined)
   if (parsed === null) {
     return <ToolRow icon={<IconDataOutlineRegular />} title="全书统计" running={false} summary={firstLine(content)} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
@@ -401,53 +425,75 @@ const TOOL_ARG_KEYS: Record<string, string[]> = {
   writer_read: ['entity', 'id'],
 }
 
+/** 治理类工具的中文标题表（通用卡片 label；M1b 卡片覆盖补全——14 工具全部有卡片）。 */
+export const TOOL_LABELS: Record<string, string> = {
+  writer_read: '读取实体',
+  writer_update: '更新实体',
+  recompute_derived: '派生重算',
+  archive_point: '存档点',
+  pending_cleanup: '待办归档',
+  maintenance_flush: '维护排空',
+  writer_search: '素材检索',
+  timeline_update: '时间线更新',
+  foreshadow_update: '伏笔更新',
+  consistency_check: '一致性检查',
+  export_book: '导出',
+}
+
 export function SummaryCard(props: ToolViewPropsBase & { icon?: React.ReactNode; label?: string }) {
   const icon = props.icon ?? <IconDataOutlineRegular />
-  const label = props.label ?? props.toolName
+  const label = props.label ?? TOOL_LABELS[props.toolName] ?? props.toolName
+  const content = props.phase === 'result' ? resultText(props.block) : ''
+  const isError = props.block?.isError === true
+  // 专项解析只做一次（recordLabel 与结论摘要共用；正则廉价但没必要每渲染两遍）
+  const special = useMemo(() => {
+    if (props.phase !== 'result' || content.length === 0) return null
+    if (props.toolName === 'foreshadow_update') return { foreshadow: parseForeshadow(content) }
+    if (props.toolName === 'consistency_check') return { consistency: parseConsistency(content) }
+    return null
+  }, [props.phase, props.toolName, content])
+  const recordLabel = isError ? `${label}失败：${errorSummary(props.block, content)}`
+    : special?.foreshadow !== undefined
+      ? (special.foreshadow !== null
+        ? (special.foreshadow.milestone !== null
+          ? `${special.foreshadow.id} milestone ${special.foreshadow.milestone.type}@${special.foreshadow.milestone.chapter}`
+          : `${special.foreshadow.id} → ${special.foreshadow.status}`)
+        : undefined)
+      : special?.consistency !== undefined
+        ? (special.consistency !== null ? `发现 ${special.consistency.issues} 条矛盾` : undefined)
+        : undefined
+  // 失败也回写面板动态（与 WriteChapterCard 口径一致：失败痕迹不应从时间线消失）
+  useRecordResult(props, content, 'plain', recordLabel)
   if (props.phase === 'preparing' || props.phase === 'start') {
     const hint = argsHint(props.block?.argsRaw ?? props.block?.call?.argsRaw, TOOL_ARG_KEYS[props.toolName] ?? [])
+    // export_book 默认 ask 审批路径：等待期与真执行在 props 层不可区分——文案如实标注两种可能
+    const waitingApproval = props.toolName === 'export_book'
     return <ToolRow icon={icon} title={`${label}…`} running expandable={false} useDisclosure={props.useDisclosure}
-      summary={hint.length > 0 ? <RunningSummary>{hint}</RunningSummary> : '执行中'} />
+      summary={hint.length > 0
+        ? <RunningSummary>{hint}{waitingApproval ? '（审批/执行中）' : ''}</RunningSummary>
+        : waitingApproval ? '等待审批或执行中' : '执行中'} />
   }
   if (props.block === undefined) return null
-  const content = resultText(props.block)
-  // 失败也回写面板动态（与 WriteChapterCard 口径一致：失败痕迹不应从时间线消失）
-  if (props.block.isError === true) {
-    const text = errorSummary(props.block, content)
-    onceRecorded(props.toolName, content, 'plain', `${label}失败：${text}`)
-    return <ToolRow icon={icon} title={`${label}失败`} running={false} isError summary={text} expandable useDisclosure={props.useDisclosure}>
+  if (isError) {
+    return <ToolRow icon={icon} title={`${label}失败`} running={false} isError summary={errorSummary(props.block, content)} expandable useDisclosure={props.useDisclosure}>
       <RawBody text={content} />
     </ToolRow>
-  }
-  if (props.toolName === 'foreshadow_update') {
-    const parsed = parseForeshadow(content)
-    onceRecorded('foreshadow_update', content, 'plain',
-      parsed !== null ? (parsed.milestone !== null ? `${parsed.id} milestone ${parsed.milestone.type}@${parsed.milestone.chapter}` : `${parsed.id} → ${parsed.status}`) : undefined)
-  } else if (props.toolName === 'consistency_check') {
-    const parsed = parseConsistency(content)
-    onceRecorded('consistency_check', content, 'plain', parsed !== null ? `发现 ${parsed.issues} 条矛盾` : undefined)
-  } else {
-    onceRecorded(props.toolName, content, 'plain')
   }
   // 结论性摘要：一致性检查/伏笔更新有专门解析，其余取首行
   let summary: React.ReactNode = firstLine(content)
   let title = label
-  if (props.toolName === 'consistency_check') {
-    const parsed = parseConsistency(content)
-    if (parsed !== null) {
-      title = '一致性检查'
-      summary = parsed.issues === 0
-        ? <Tag tone="success">无矛盾</Tag>
-        : <span style={tagRowStyle}><Tag tone="danger">{parsed.issues} 条矛盾</Tag><Tag tone="neutral">{parsed.batches}</Tag></span>
-    }
-  } else if (props.toolName === 'foreshadow_update') {
-    const parsed = parseForeshadow(content)
-    if (parsed !== null) {
-      title = `伏笔 ${parsed.id}`
-      summary = parsed.milestone !== null
-        ? <Tag tone="info">milestone {parsed.milestone.type} @ {parsed.milestone.chapter}</Tag>
-        : <Tag tone={statusTone(parsed.status)}>{parsed.status}</Tag>
-    }
+  if (special?.consistency !== undefined && special.consistency !== null) {
+    const parsed = special.consistency
+    title = '一致性检查'
+    summary = parsed.issues === 0
+      ? <Tag tone="success">无矛盾</Tag>
+      : <span style={tagRowStyle}><Tag tone="danger">{parsed.issues} 条矛盾</Tag><Tag tone="neutral">{parsed.batches}</Tag></span>
+  } else if (special?.foreshadow !== undefined && special.foreshadow !== null) {
+    const parsed = special.foreshadow
+    title = `伏笔 ${parsed.id}`
+    summary = parsed.milestone !== null
+      ? <Tag tone="info">milestone {parsed.milestone.type} @ {parsed.milestone.chapter}</Tag>
+      : <Tag tone={statusTone(parsed.status)}>{parsed.status}</Tag>
   }
   return (
     <ToolRow icon={icon} title={title} running={false} summary={summary} expandable={content.includes('\n')} useDisclosure={props.useDisclosure}>

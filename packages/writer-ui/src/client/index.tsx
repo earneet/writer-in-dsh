@@ -15,8 +15,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import { WriterPanel, WriterPanelIcon } from './Panel.tsx'
 import {
   ConsistencyCheckCard, ExportBookCard, ForeshadowUpdateCard, ReviewCard,
-  StatsCard, TimelineUpdateCard, WriterSearchCard, WriteChapterCard,
+  StatsCard, SummaryCard, TimelineUpdateCard, WriterSearchCard, WriteChapterCard,
 } from './Cards.tsx'
+import {
+  IconArchiveOutlineRegular, IconChecklistOutlineRegular, IconEditOutlineRegular,
+  IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconSparkleRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { setBrowserContext } from './load.ts'
 
 /** 浏览器侧 slots 服务的本地最小契约（第三方不做 ui-slots 类型依赖；运行时由模块表供给同源实现）。 */
@@ -59,6 +63,13 @@ export function apply(context: Context): void {
     card('writer_search', WriterSearchCard as never)
     card('timeline_update', TimelineUpdateCard as never)
     card('export_book', ExportBookCard as never)
+    // M1b 卡片覆盖补全：治理类六工具通用卡片（SummaryCard + TOOL_LABELS；治理动作回写「写作动态」）
+    card('writer_read', ((props: never) => <SummaryCard {...props} icon={<IconFolderOpenOutlineRegular />} />) as never)
+    card('writer_update', ((props: never) => <SummaryCard {...props} icon={<IconEditOutlineRegular />} />) as never)
+    card('recompute_derived', ((props: never) => <SummaryCard {...props} icon={<IconRefreshOutlineRegular />} />) as never)
+    card('archive_point', ((props: never) => <SummaryCard {...props} icon={<IconArchiveOutlineRegular />} />) as never)
+    card('pending_cleanup', ((props: never) => <SummaryCard {...props} icon={<IconChecklistOutlineRegular />} />) as never)
+    card('maintenance_flush', ((props: never) => <SummaryCard {...props} icon={<IconSparkleRegular />} />) as never)
 
     return () => {
       for (const dispose of disposers) dispose()

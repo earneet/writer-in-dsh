@@ -1,23 +1,23 @@
 /**
  * 写作面板本体（注册进 main 槽 key=writer-panel；sidebar.panellist 提供入口）。
  *
- * v5：视觉全量走宿主基元与 --dsw-* token（零字面颜色，亮暗主题自动跟随）——
- * 38px 自绘头部（对齐原生面板 chrome 规格）+ SegmentedTabs 六页签 + Tag 状态色 +
- * TextShimmer 加载态；大纲页签（outline.md 分节折叠）、章节/伏笔/人物可折叠展开
- * （预览/正文小节/时间线/关系）、人物关系 SVG 环形图。信息层级：书名 hero（进度）
- * → 四格统计 → 卷分布 → 最近章节 → 伏笔状态 → 会话内动态叠加。数据流不变：
- * 冷启动经 workspaceFiles remote 扫描 novel/ 项目，会话内动态由富卡片回写。
+ * v6（M1b 换源 + 决策面）：数据基座从「组件自持冷扫描 + state.ts 模块态」换为
+ * bus.ts 数据总线（版本化快照 + subscribe；冷扫描产物与工具动态合并）；会话切换经
+ * sessions.list.subscribe（替换 2s 轮询；不可用回退轮询）；接入 workspaceFiles.changes
+ * 增量订阅（工具落盘即重扫——「面板见问题→对话操作→回面板验证」环路闭合；不支持时
+ * 降级手动刷新）。决策面增强：概况情境卡 + 健康度徽章行 + 伏笔三色/风险排序/逾期 Tag +
+ * 维护徽章 + 待办归档折叠 + 折叠智能默认 + 页签风险角标。视觉仍全 token 零字面颜色。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   Button, DisclosureRow, SegmentedTabs, Tag, TextShimmer, Tooltip,
   IconChecklistOutlineRegular, IconEditOutlineMedium, IconInfoOutlineRegular,
   IconListPenOutlineRegular, IconRefreshOutlineRegular, IconUsersOutlineRegular,
-  IconDataOutlineRegular,
+  IconDataOutlineRegular, IconWarningTriangleOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { activeSessionId, scanNovel } from './load.ts'
-import { buildOverview, type CharacterRow, type NovelOverview, type RelationEntry } from './overview.ts'
-import { readPanelState, subscribePanel, type WriterPanelState } from './state.ts'
+import { activeSessionId, scanNovel, subscribeSessions, watchProject } from './load.ts'
+import { publishScan, publishWatchState, readBus, subscribeBus, type WriterBusSnapshot } from './bus.ts'
+import type { CharacterRow, NovelOverview, RelationEntry } from './types.ts'
 
 type Tab = 'overview' | 'outline' | 'chapters' | 'plots' | 'characters' | 'pending'
 
@@ -74,66 +74,137 @@ export interface WriterPanelProps {
   sessionId?: string
 }
 
-function usePanelState(): WriterPanelState | undefined {
-  const [snapshot, setSnapshot] = useState<WriterPanelState | undefined>(() => readPanelState(''))
-  useEffect(() => {
-    const sync = (): void => { setSnapshot(readPanelState('')) }
-    sync()
-    const unsubscribe = subscribePanel(sync)
-    const timer = setInterval(sync, 800)
-    return () => { unsubscribe(); clearInterval(timer) }
-  }, [])
-  return snapshot
+/** 订阅数据总线（版本化快照；引用判等依赖 readBus 的缓存稳定性）。 */
+function useWriterBus(): WriterBusSnapshot {
+  return useSyncExternalStore(subscribeBus, readBus, readBus)
 }
 
-interface ColdState {
+/** 扫描 UI 态（loading/error 本地；数据本体在总线）。 */
+interface ScanUiState {
   loading: boolean
-  overview: NovelOverview | null
   error: string | null
+  progress: { done: number; total: number } | null
 }
 
-/** 冷启动扫描（会话切换自动重拉 + 手动刷新）。 */
-function useColdOverview(): ColdState & { refresh: () => void } {
-  const [state, setState] = useState<ColdState>({ loading: false, overview: null, error: null })
+/** 已成功扫描的会话定位（watch 接线用；值不变时保持引用防 effect 重启）。 */
+interface ScanTarget {
+  session: string
+  dir: string
+}
+
+/**
+ * 项目扫描 + 增量订阅编排：nonce 驱动扫描（发布总线）；会话切换经 sessions observable
+ * （不可用回退 2s 轮询）；扫描成功后接管 changes 增量刷新（去抖 600ms 重扫；
+ * watch 不支持/断流时降级手动刷新并标记）。
+ */
+function useProjectScan(): ScanUiState & { refresh: () => void; bus: WriterBusSnapshot } {
+  const bus = useWriterBus()
+  const [ui, setUi] = useState<ScanUiState>({ loading: false, error: null, progress: null })
   const [nonce, setNonce] = useState(0)
+  const [target, setTarget] = useState<ScanTarget | null>(null)
+  // watch 断流重连纪元（ended 后 bump 重启 watch effect；重试计数按 target 归零——
+  // epoch 重启不清零，否则「≤3 次退避」永不生效）
+  const [watchEpoch, setWatchEpoch] = useState(0)
+  const watchRetries = useRef(0)
+  const retryAnchor = useRef<ScanTarget | null>(null)
   const refresh = useCallback(() => { setNonce(n => n + 1) }, [])
 
+  // 会话切换探测：sessions.list.subscribe（替换 2s 轮询；observable 缺席回退轮询）。
+  // 只在**活跃会话变化**时动作：作废旧 watch target（防旧会话残跑打断新会话扫描）+ 重扫。
   useEffect(() => {
-    // 会话切换探测：活跃会话变化时重扫（2s 轮询，代价可忽略）
-    let lastSession = activeSessionId()
-    const timer = setInterval(() => {
+    let last = activeSessionId()
+    const onSessionChange = (): void => {
       const current = activeSessionId()
-      if (current !== lastSession) {
-        lastSession = current
-        setNonce(n => n + 1)
-      }
-    }, 2000)
+      if (current === last) return
+      last = current
+      setTarget(null)
+      setNonce(n => n + 1)
+    }
+    const { dispose, supported } = subscribeSessions(onSessionChange)
+    if (supported) return dispose
+    const timer = setInterval(onSessionChange, 2000)
     return () => { clearInterval(timer) }
   }, [])
 
+  // 扫描（会话缺席/失败保留旧数据 + 提示条；成功发布总线）
   useEffect(() => {
     const controller = new AbortController()
-    setState(prev => ({ ...prev, loading: true }))
+    setUi(prev => ({ ...prev, loading: true, progress: null }))
     const sessionId = activeSessionId()
     if (sessionId === null) {
-      // 与刷新失败同口径：保留旧数据 + 提示条（避免会话切换瞬间清空面板）
-      setState(prev => ({ loading: false, overview: prev.overview, error: '没有活跃会话，无法定位工作区' }))
+      setUi(prev => ({ ...prev, loading: false, error: '没有活跃会话，无法定位工作区' }))
       return
     }
-    scanNovel(sessionId, controller.signal)
+    scanNovel(sessionId, controller.signal, (done, total) => {
+      if (!controller.signal.aborted) setUi(prev => ({ ...prev, progress: { done, total } }))
+    })
       .then(scan => {
         if (controller.signal.aborted) return
-        setState({ loading: false, overview: buildOverview(scan), error: null })
+        publishScan(scan)
+        const dir = scan.root === '.' ? '' : scan.root
+        setTarget(prev => prev !== null && prev.session === sessionId && prev.dir === dir ? prev : { session: sessionId, dir })
+        setUi({ loading: false, error: null, progress: null })
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        // 刷新失败保留已获数据（prev.overview），错误降级为提示条而不是清空面板
-        setState(prev => ({ loading: false, overview: prev.overview, error: error instanceof Error ? error.message : String(error) }))
+        setUi(prev => ({ ...prev, loading: false, error: error instanceof Error ? error.message : String(error) }))
       })
     return () => { controller.abort() }
   }, [nonce])
 
-  return { ...state, refresh }
+  // changes 增量订阅（target/epoch 变化才重启；ready 标记接管；unsupported 降级手动刷新；
+  // 曾就绪的断流（ended）按 1s/2s/4s 退避重连 ≤3 次——计数只在 target 变化时归零，
+  // 重试耗尽或未就绪即结束 → 降级手动刷新。启动时 watched 置回未决，防旧会话值残留）
+  useEffect(() => {
+    // target 作废（会话切换/未定位）：watched 置回未决，防旧会话 watched=true 残留继承
+    if (target === null) {
+      publishWatchState(null)
+      return
+    }
+    if (retryAnchor.current !== target) {
+      retryAnchor.current = target
+      watchRetries.current = 0
+    }
+    publishWatchState(null)
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let backoff: ReturnType<typeof setTimeout> | null = null
+    let disposed = false
+    let gotReady = false
+    void watchProject(target.session, target.dir, controller.signal, () => {
+      if (timer !== null) clearTimeout(timer)
+      timer = setTimeout(() => {
+        if (!disposed && !controller.signal.aborted) setNonce(n => n + 1)
+      }, 600)
+    }, () => {
+      gotReady = true
+      if (disposed) return
+      publishWatchState(true)
+      // 退避重连后的 ready 补扫一次：断流→重连窗口内（≤7s）的文件变更事件已永久
+      // 丢失，仅靠后续 change 帧无法覆盖——重扫兜底防漏（首次连接不补：扫描刚完成）
+      if (watchRetries.current > 0) setNonce(n => n + 1)
+    }).then(outcome => {
+      if (disposed) return
+      if (outcome === 'ended' && gotReady && watchRetries.current < 3) {
+        watchRetries.current++
+        const delay = 1000 * 2 ** (watchRetries.current - 1)
+        backoff = setTimeout(() => {
+          if (!disposed) setWatchEpoch(e => e + 1)
+        }, delay)
+        return
+      }
+      // unsupported（fs 无 watch / 服务缺席）与重试耗尽/未就绪即结束 → 降级手动刷新
+      publishWatchState(false)
+    })
+    return () => {
+      disposed = true
+      if (timer !== null) clearTimeout(timer)
+      if (backoff !== null) clearTimeout(backoff)
+      controller.abort()
+    }
+  }, [target, watchEpoch])
+
+  return { ...ui, refresh, bus }
 }
 
 function ProgressBar({ progress }: { progress: number | null }): React.ReactElement | null {
@@ -259,7 +330,10 @@ function RelationGraph({ rows }: { rows: CharacterRow[] }) {
   )
 }
 
-function OverviewTab({ o, live }: { o: NovelOverview; live: WriterPanelState | undefined }): React.ReactElement {
+/** 概况页：书名 hero + 情境卡 + 健康度徽章行 + 统计/卷/最近章节/伏笔状态/会话动态。 */
+function OverviewTab({ o, live, watched }: { o: NovelOverview; live: WriterBusSnapshot['live']; watched: boolean | null }): React.ReactElement {
+  const { red, yellow, gray } = o.riskSummary
+  const healthy = red === 0 && yellow === 0 && o.staleChapters.length === 0
   return (
     <>
       <div style={card}>
@@ -274,6 +348,36 @@ function OverviewTab({ o, live }: { o: NovelOverview; live: WriterPanelState | u
             : `约 ${o.totalChars} 字`}
         </div>
       </div>
+
+      {/* 情境卡（M1b 决策面：当前项目状态下最有价值的下一步动作） */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <IconListPenOutlineRegular />
+          <strong>下一步：{o.nextStep.title}</strong>
+        </div>
+        <div style={{ ...dim, fontSize: 12, marginTop: 4 }}>{o.nextStep.hint}</div>
+      </div>
+
+      {/* 健康度徽章行（伏笔三色 + 待维护；全绿给正面反馈） */}
+      <div style={{ ...tagRowStyle, marginBottom: 8, padding: '0 2px' }}>
+        {healthy && <Tag tone="success">健康</Tag>}
+        {red > 0 && <Tag tone="danger">伏笔超期 {red}</Tag>}
+        {yellow > 0 && <Tag tone="warning">活跃伏笔 {yellow}</Tag>}
+        {gray > 0 && <Tag tone="neutral">未种植 {gray}</Tag>}
+        {o.staleChapters.length > 0 && <Tag tone="warning">待维护 {o.staleChapters.length} 章</Tag>}
+      </div>
+
+      {/* 部分失败与增量订阅降级提示（如实呈现，不静默） */}
+      {o.failedFiles.length > 0 && (
+        <div style={{ ...dim, fontSize: 11, color: 'var(--dsw-alias-state-warn-label)', padding: '0 2px 6px' }}>
+          ⚠ {o.failedFiles.length} 个文件读取失败（{o.failedFiles.slice(0, 3).join('、')}{o.failedFiles.length > 3 ? ' 等' : ''}）
+        </div>
+      )}
+      {watched === false && (
+        <div style={{ ...dim, fontSize: 11, padding: '0 2px 6px' }}>
+          目录增量订阅不可用或已断开——文件变更后请用「刷新」手动更新。
+        </div>
+      )}
 
       <div style={statGrid}>
         <div style={statCell}><div style={statValue}>{o.chapters}</div><div style={statLabel}>章节</div></div>
@@ -318,7 +422,7 @@ function OverviewTab({ o, live }: { o: NovelOverview; live: WriterPanelState | u
         </>
       )}
 
-      {live !== undefined && live.writes.length > 0 && (
+      {live.writes.length > 0 && (
         <>
           <div style={sectionTitle}>本会话写作</div>
           <div style={{ ...card, padding: '6px 12px' }}>
@@ -338,7 +442,7 @@ function OverviewTab({ o, live }: { o: NovelOverview; live: WriterPanelState | u
         </>
       )}
 
-      {live !== undefined && live.activities.length > 0 && (
+      {live.activities.length > 0 && (
         <>
           <div style={sectionTitle}>写作动态</div>
           <div style={{ ...card, padding: '6px 12px' }}>
@@ -391,7 +495,7 @@ function ChaptersTab({ o }: { o: NovelOverview }): React.ReactElement {
   if (o.chapterRows.length === 0) {
     return <EmptyState icon={<IconInfoOutlineRegular />}>还没有章节。在「写作模式」会话里让助手写第一章（write_chapter）后，这里会出现章节列表。</EmptyState>
   }
-  // 按卷分组（保持章序），卷头小标题 + 可折叠章行（展开看预览）
+  // 按卷分组（保持章序），卷头小标题 + 可折叠章行（展开看预览；智能默认：最新一章展开）
   const groups = new Map<string, typeof o.chapterRows>()
   for (const ch of o.chapterRows) {
     const volume = ch.volume.length > 0 ? ch.volume : '未分卷'
@@ -404,9 +508,10 @@ function ChaptersTab({ o }: { o: NovelOverview }): React.ReactElement {
       {[...groups.entries()].map(([volume, chapters]) => (
         <div key={volume}>
           {groups.size > 1 && <div style={sectionTitle}>{volume}</div>}
-          {chapters.slice().reverse().map(ch => (
+          {chapters.slice().reverse().map((ch, i) => (
             <CollapsibleRow key={ch.id}
               title={`${ch.id}　${ch.title}`}
+              defaultOpen={i === 0}
               aside={
                 <span style={{ ...tagRowStyle, justifyContent: 'flex-end' }}>
                   <span style={rowAside}>≈{ch.chars} 字</span>
@@ -423,15 +528,25 @@ function ChaptersTab({ o }: { o: NovelOverview }): React.ReactElement {
   )
 }
 
+/** 伏笔页签（M1b 决策面）：三色汇总 + 风险排序（超期>活跃>未种植>已收束，近的先看）+ 逾期 Tag。 */
 function PlotsTab({ o }: { o: NovelOverview }): React.ReactElement {
   if (o.plotRows.length === 0) return <EmptyState icon={<IconDataOutlineRegular />}>还没有伏笔/情节文件（plots/）。写作后维护 pass 会从正文提取伏笔建议，确认后写入 plots/；也可直接让助手创建伏笔档案。</EmptyState>
+  const { red, yellow, gray } = o.riskSummary
   return (
     <>
-      {o.plotRows.map(p => (
+      <div style={{ ...tagRowStyle, marginBottom: 6, padding: '0 2px' }}>
+        {red > 0 && <Tag tone="danger">超期未回收 {red}</Tag>}
+        {yellow > 0 && <Tag tone="warning">停滞/活跃 {yellow}</Tag>}
+        {gray > 0 && <Tag tone="neutral">未种植 {gray}</Tag>}
+        {red + yellow + gray === 0 && <Tag tone="success">全部伏笔已收束</Tag>}
+      </div>
+      {o.plotRows.map((p, i) => (
         <CollapsibleRow key={p.id}
           title={p.hint}
+          defaultOpen={i < 3 && p.risk !== 'none'}
           aside={
             <span style={{ ...tagRowStyle, justifyContent: 'flex-end' }}>
+              {p.overdue && p.dueDelta !== null && <Tag tone="danger">逾期 {Math.abs(p.dueDelta)} 章</Tag>}
               {p.plannedChapter.length > 0 && <Tag tone="neutral">计划 {p.plannedChapter}</Tag>}
               <Tag tone={statusTone(p.status)}>{p.status}</Tag>
             </span>
@@ -457,6 +572,7 @@ function CharactersTab({ o, mode, onModeChange }: { o: NovelOverview; mode: 'lis
       {mode === 'list' && o.characterRows.map(c => (
         <CollapsibleRow key={c.id}
           title={c.name}
+          defaultOpen={c.role.includes('主角')}
           aside={
             <span style={{ ...tagRowStyle, justifyContent: 'flex-end' }}>
               {c.role.length > 0 && <Tag tone={c.role.includes('主角') ? 'solid' : 'outline'}>{c.role}</Tag>}
@@ -515,59 +631,83 @@ const PENDING_MAX_SECTIONS = 6
 const PENDING_MAX_LINES_PER_SECTION = 15
 
 function PendingTab({ o }: { o: NovelOverview }): React.ReactElement {
-  if (o.pendingSections.length === 0) return <EmptyState icon={<IconChecklistOutlineRegular />}>没有待办（pending.md 为空或不存在）。写完一章后维护 pass 会把待确认的摘要/事实/伏笔建议写进这里。</EmptyState>
+  if (o.pendingSections.length === 0 && o.pendingArchive.length === 0) return <EmptyState icon={<IconChecklistOutlineRegular />}>没有待办（pending.md 为空或不存在）。写完一章后维护 pass 会把待确认的摘要/事实/伏笔建议写进这里。</EmptyState>
   const sections = o.pendingSections.slice(0, PENDING_MAX_SECTIONS)
   const hiddenSections = o.pendingSections.length - sections.length
+  const archiveLines = o.pendingArchive.reduce((sum, s) => sum + s.lines.length, 0)
   return (
     <>
-      <div style={{ ...dim, fontSize: 11, margin: '2px 2px 8px' }}>
-        共 {o.pendingLineTotal} 条待办（最新一次维护 pass 在最前；重复建议已合并，已完成项已过滤）
-      </div>
-      {sections.map((section, i) => {
-        const lines = section.lines.slice(0, PENDING_MAX_LINES_PER_SECTION)
-        const hidden = section.lines.length - lines.length
-        return (
-          <CollapsibleRow key={`${section.heading}-${i}`}
-            title={section.heading}
-            defaultOpen={i === 0}
-            aside={<span style={rowAside}>{section.lines.length} 条</span>}>
-            {lines.map((line, j) => (
-              <div key={j} style={{ display: 'flex', gap: 8, padding: '3px 0', lineHeight: 1.7 }}>
-                <span style={{ color: 'var(--dsw-alias-label-tertiary)', flexShrink: 0 }}>·</span>
-                <span style={{ minWidth: 0 }}>{line}</span>
-              </div>
-            ))}
-            {hidden > 0 && <div style={{ ...dim, fontSize: 11, paddingTop: 4 }}>还有 {hidden} 条未展开显示</div>}
-          </CollapsibleRow>
-        )
-      })}
-      {hiddenSections > 0 && <div style={{ ...dim, fontSize: 11, padding: '4px 2px' }}>还有 {hiddenSections} 次更早的维护 pass 未显示</div>}
+      {o.pendingSections.length > 0 && (
+        <>
+          <div style={{ ...dim, fontSize: 11, margin: '2px 2px 8px' }}>
+            共 {o.pendingLineTotal} 条待办（最新一次维护 pass 在最前；重复建议已合并，已完成项已过滤）
+          </div>
+          {sections.map((section, i) => {
+            const lines = section.lines.slice(0, PENDING_MAX_LINES_PER_SECTION)
+            const hidden = section.lines.length - lines.length
+            return (
+              <CollapsibleRow key={`${section.heading}-${i}`}
+                title={section.heading}
+                defaultOpen={i === 0}
+                aside={<span style={rowAside}>{section.lines.length} 条</span>}>
+                {lines.map((line, j) => (
+                  <div key={j} style={{ display: 'flex', gap: 8, padding: '3px 0', lineHeight: 1.7 }}>
+                    <span style={{ color: 'var(--dsw-alias-label-tertiary)', flexShrink: 0 }}>·</span>
+                    <span style={{ minWidth: 0 }}>{line}</span>
+                  </div>
+                ))}
+                {hidden > 0 && <div style={{ ...dim, fontSize: 11, paddingTop: 4 }}>还有 {hidden} 条未展开显示</div>}
+              </CollapsibleRow>
+            )
+          })}
+          {hiddenSections > 0 && <div style={{ ...dim, fontSize: 11, padding: '4px 2px' }}>还有 {hiddenSections} 次更早的维护 pass 未显示</div>}
+        </>
+      )}
+      {/* 归档区（pending_cleanup 移档后的追溯入口；默认折叠） */}
+      {o.pendingArchive.length > 0 && (
+        <CollapsibleRow title={`已归档（${o.pendingArchive.length} 次）`} aside={<span style={rowAside}>{archiveLines} 条</span>}>
+          {o.pendingArchive.slice(0, PENDING_MAX_SECTIONS).map((section, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, padding: '2px 0', lineHeight: 1.7 }}>
+              <span style={{ color: 'var(--dsw-alias-label-tertiary)', flexShrink: 0 }}>·</span>
+              <span style={rowMain}>{section.heading}</span>
+              <span style={rowAside}>{section.lines.length} 条</span>
+            </div>
+          ))}
+          {o.pendingArchive.length > PENDING_MAX_SECTIONS && (
+            <div style={{ ...dim, fontSize: 11, paddingTop: 4 }}>还有 {o.pendingArchive.length - PENDING_MAX_SECTIONS} 次更早的归档未显示</div>
+          )}
+        </CollapsibleRow>
+      )}
     </>
   )
 }
 
 /** 写作面板：38px 头部 + 六页签（概况/大纲/章节/伏笔/人物/待办）。 */
 export function WriterPanel(_props: WriterPanelProps) {
-  const cold = useColdOverview()
-  const live = usePanelState()
+  const { loading, error, progress, refresh, bus } = useProjectScan()
   const [tab, setTab] = useState<Tab>('overview')
   // 人物页 list/graph 模式提升到面板层（组件内 state 会随页签切换丢失）
   const [charactersMode, setCharactersMode] = useState<'list' | 'graph'>('list')
-  const o = cold.overview
+  const o = bus.scan?.overview ?? null
+  const watched = bus.scan?.watched ?? null
+
+  // 页签风险角标（红伏笔数 / 待办行数；零值不占位）
+  const plotsLabel = o !== null && o.riskSummary.red > 0 ? `伏笔 ·${o.riskSummary.red}` : '伏笔'
+  const pendingLabel = o !== null && o.pendingLineTotal > 0 ? `待办 ·${o.pendingLineTotal}` : '待办'
 
   return (
     <div style={root}>
       <div style={header}>
         <span style={headerTitle}>写作面板</span>
-        {/* 加载中按钮 disabled 不派发 hover/focus，Tooltip 恰不可达——加载期不包 Tooltip（文案自明） */}
-        {cold.loading ? (
-          <Button variant="toolbar" size="sm" onClick={cold.refresh} disabled
+        {/* 加载中按钮 disabled 不派发 hover/focus，Tooltip 恰不可达——加载期不包 Tooltip（文案自明）；扫描进度随按钮呈现 */}
+        {loading ? (
+          <Button variant="toolbar" size="sm" onClick={refresh} disabled
             icon={<IconRefreshOutlineRegular />} aria-label="正在扫描小说项目">
-            <TextShimmer active>扫描中</TextShimmer>
+            <TextShimmer active>{progress !== null ? `扫描 ${progress.done}/${progress.total}` : '扫描中'}</TextShimmer>
           </Button>
         ) : (
           <Tooltip label="重新扫描小说项目">
-            <Button variant="toolbar" size="sm" onClick={cold.refresh}
+            <Button variant="toolbar" size="sm" onClick={refresh}
               icon={<IconRefreshOutlineRegular />} aria-label="重新扫描小说项目">
               刷新
             </Button>
@@ -583,27 +723,28 @@ export function WriterPanel(_props: WriterPanelProps) {
             { value: 'overview', label: '概况', id: 'writer-tab-overview', panelId: 'writer-panel-overview' },
             { value: 'outline', label: '大纲', id: 'writer-tab-outline', panelId: 'writer-panel-outline' },
             { value: 'chapters', label: '章节', id: 'writer-tab-chapters', panelId: 'writer-panel-chapters' },
-            { value: 'plots', label: '伏笔', id: 'writer-tab-plots', panelId: 'writer-panel-plots' },
+            { value: 'plots', label: plotsLabel, id: 'writer-tab-plots', panelId: 'writer-panel-plots' },
             { value: 'characters', label: '人物', id: 'writer-tab-characters', panelId: 'writer-panel-characters' },
-            { value: 'pending', label: '待办', id: 'writer-tab-pending', panelId: 'writer-panel-pending' },
+            { value: 'pending', label: pendingLabel, id: 'writer-tab-pending', panelId: 'writer-panel-pending' },
           ]}
         />
       </div>
       <div style={body}>
-        {cold.loading && o === null && (
+        {loading && o === null && (
           <div style={{ padding: '8px 2px' }}>
-            <TextShimmer active>正在扫描小说项目…</TextShimmer>
+            <TextShimmer active>{progress !== null ? `正在扫描小说项目… ${progress.done}/${progress.total}` : '正在扫描小说项目…'}</TextShimmer>
           </div>
         )}
         {o !== null && (
           <div role="tabpanel" id={`writer-panel-${tab}`} aria-labelledby={`writer-tab-${tab}`}>
             {/* 刷新失败但保留旧数据时：错误降级为顶部提示条，不清空面板 */}
-            {cold.error !== null && !cold.loading && (
-              <div style={{ ...dim, fontSize: 11, color: 'var(--dsw-alias-state-warn-label)', padding: '2px 2px 8px' }}>
-                上次刷新失败：{cold.error}（以下为最近一次成功扫描的数据）
+            {error !== null && !loading && (
+              <div style={{ ...dim, fontSize: 11, color: 'var(--dsw-alias-state-warn-label)', padding: '2px 2px 8px', display: 'flex', gap: 6 }}>
+                <IconWarningTriangleOutlineMedium />
+                <span>上次刷新失败：{error}（以下为最近一次成功扫描的数据）</span>
               </div>
             )}
-            {tab === 'overview' && <OverviewTab o={o} live={live} />}
+            {tab === 'overview' && <OverviewTab o={o} live={bus.live} watched={watched} />}
             {tab === 'outline' && <OutlineTab o={o} />}
             {tab === 'chapters' && <ChaptersTab o={o} />}
             {tab === 'plots' && <PlotsTab o={o} />}
@@ -611,13 +752,13 @@ export function WriterPanel(_props: WriterPanelProps) {
             {tab === 'pending' && <PendingTab o={o} />}
           </div>
         )}
-        {o === null && !cold.loading && cold.error !== null && (
+        {o === null && !loading && error !== null && (
           <EmptyState icon={<IconInfoOutlineRegular />}>
-            项目扫描失败：{cold.error}
+            项目扫描失败：{error}
             <br />请确认当前会话工作区含 novel/（或直接位于小说项目目录）。
           </EmptyState>
         )}
-        {o === null && !cold.loading && cold.error === null && (
+        {o === null && !loading && error === null && (
           <EmptyState icon={<IconInfoOutlineRegular />}>正在定位小说项目…</EmptyState>
         )}
       </div>
