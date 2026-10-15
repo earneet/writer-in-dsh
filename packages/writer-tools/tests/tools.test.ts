@@ -116,7 +116,7 @@ test('foreshadow_update：plant/resolve/abandon/milestone 状态机与校验', a
   await assert.rejects(fo.execute({ id: 'gf', action: 'explode', expectHash: 'h' }, exec), /未知 action/)
   await assert.rejects(fo.execute({ id: 'gf', action: 'milestone', chapter: '001', milestone_type: 'boom', expectHash: 'h' }, exec), /milestone_type 非法/)
   assert.match(await fo.execute({ id: 'gf', action: 'plant', chapter: '001', expectHash: 'h' }, exec), /已更新伏笔 gf（status=planted/)
-  assert.match(await fo.execute({ id: 'gf', action: 'milestone', chapter: '002', milestone_type: 'partial_reveal', milestone_note: '半揭', expectHash: 'h' }, exec), /已更新伏笔 gf/)
+  assert.match(await fo.execute({ id: 'gf', action: 'milestone', chapter: '002', milestone_type: 'partial_reveal', milestone_note: '半揭', expectHash: 'h' }, exec), /已更新伏笔 gf（milestone partial_reveal @ chapter\/002/)
   // planned→resolved 非法迁移响亮失败（须先 planted——此处已 planted 可 resolve）
   assert.match(await fo.execute({ id: 'gf', action: 'resolve', chapter: '003', expectHash: 'h' }, exec), /status=resolved/)
   // resolved 终态再迁移拒绝

@@ -200,11 +200,14 @@ export function apply(ctx: Context): void {
       } else if (args.action === 'abandon') {
         frontmatter['status'] = transitionForeshadow(currentStatus, 'abandoned')
       } else if (args.action === 'milestone') {
+        // milestone 不改 status；回执须带事件信息（type+chapter），否则 UI 卡片只能显示旧状态
         const type = assertMilestoneType(args.milestone_type)
         if (args.chapter === undefined) throw new Error('milestone 需要提供 chapter（事件发生章节）')
         const milestones = parseMilestones(plot.frontmatter['milestones'])
         milestones.push({ type, chapter: args.chapter, ...(args.milestone_note !== undefined ? { note: args.milestone_note } : {}) })
         frontmatter['milestones'] = JSON.stringify(milestones)
+        const savedMilestone = await ctx.writer.save('plot', args.id, { frontmatter }, args.expectHash)
+        return `已更新伏笔 ${savedMilestone.id}（milestone ${type} @ chapter/${args.chapter}，hash=${savedMilestone.hash}）`
       } else {
         throw new Error(`未知 action：${args.action}（可选 plant / resolve / abandon / milestone）`)
       }
