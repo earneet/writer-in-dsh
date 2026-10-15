@@ -26,6 +26,38 @@ const moduleTable = {
   'react/jsx-runtime': jsxRuntime,
   'react-dom': harnessRequire('react-dom'),
   'react-dom/client': harnessRequire('react-dom/client'),
+  // primitives 桩：其 lib 为 ESM + CSS imports（Node 侧无法 require），harness 只验证
+  // 结构化渲染不抛错；真实观感（token/亮暗主题）由 scripts/browser-test.mjs 在宿主里验证。
+  '@deepseek-ai/dsh-client-ui-primitives': makePrimitivesStub(jsxRuntime.jsx),
+}
+
+function makePrimitivesStub(jsx) {
+  const icon = (name) => (props) => jsx('svg', { 'data-icon': name, ...props })
+  return {
+    DisclosureRow: ({ icon: ic, title, open, expandable, collapsedContent, children }) =>
+      jsx('div', { 'data-disclosure': String(open), children: [ic, title, collapsedContent, open ? children : null] }),
+    Tag: ({ children }) => jsx('span', { children }),
+    TextShimmer: ({ children }) => jsx('span', { children }),
+    Button: ({ children }) => jsx('button', { children }),
+    SegmentedTabs: () => jsx('div', {}),
+    Tooltip: ({ children }) => children,
+    StateDot: () => jsx('span', {}),
+    IconEditOutlineRegular: icon('edit'),
+    IconEditOutlineMedium: icon('edit-m'),
+    IconInspectOutlineRegular: icon('inspect'),
+    IconDataOutlineRegular: icon('data'),
+    IconBranchOutlineRegular: icon('branch'),
+    IconClockOutlineRegular: icon('clock'),
+    IconSearchOutlineRegular: icon('search'),
+    IconShieldOutlineRegular: icon('shield'),
+    IconDownloadOutlineRegular: icon('download'),
+    IconWarningTriangleOutlineMedium: icon('warn'),
+    IconRefreshOutlineRegular: icon('refresh'),
+    IconChecklistOutlineRegular: icon('checklist'),
+    IconListPenOutlineRegular: icon('listpen'),
+    IconUsersOutlineRegular: icon('users'),
+    IconInfoOutlineRegular: icon('info'),
+  }
 }
 const browserRequire = (name) => {
   if (moduleTable[name] !== undefined) return moduleTable[name]
@@ -43,12 +75,13 @@ const slots = {
 }
 const fileSystem = {
   // 与 example-project/novel 布局一致的最小项目
-  'novel': [{ name: 'project.md', type: 'file' }, { name: 'pending.md', type: 'file' }, { name: 'chapters', type: 'directory' }, { name: 'characters', type: 'directory' }, { name: 'plots', type: 'directory' }],
+  'novel': [{ name: 'project.md', type: 'file' }, { name: 'outline.md', type: 'file' }, { name: 'pending.md', type: 'file' }, { name: 'chapters', type: 'directory' }, { name: 'characters', type: 'directory' }, { name: 'plots', type: 'directory' }],
   '': [{ name: 'novel', type: 'directory' }],
   'novel/chapters': [{ name: '001.md', type: 'file' }, { name: '002.md', type: 'file' }],
   'novel/characters': [{ name: 'a.md', type: 'file' }, { name: 'hero.md', type: 'file' }],
-  'novel/characters/a.md': `---\nname: "甲"\n---\n人物\n`,
-  'novel/characters/hero.md': `---\nname: "主角"\nrole: "主角"\ntimeline: [{}, {}]\n---\n人物\n`,
+  'novel/characters/a.md': `---\nname: "甲"\n---\n# 甲\n\n## 关系\n\n- **主角**：老友\n`,
+  'novel/characters/hero.md': `---\nname: "主角"\nrole: "主角"\ntimeline: "[{\\"chapter\\":\\"001\\",\\"state\\":\\"登场\\"}]"\n---\n# 主角\n\n## 背景\n\n从北地来。\n\n## 关系\n\n- **甲**：老友\n`,
+  'novel/outline.md': `---\nvolumes: 2\nchapters: 10\nsynopsis: "两卷十章的最小大纲"\n---\n# 大纲\n\n## 一览\n\n- 主线\n\n## 第二卷\n\n收束\n`,
   'novel/worldbuilding': [{ name: 'w.md', type: 'file' }],
   'novel/plots': [{ name: 'p1.md', type: 'file' }],
   'novel/project.md': `---\ntitle: "测试书"\ngenre: "测试"\ntarget_words: 1000\nchapters: 10\n---\n简介\n`,
@@ -104,10 +137,13 @@ if (Panel === undefined) {
   setBrowserContext({ remote, sessions })
   const scan = await scanNovel('s1', new AbortController().signal)
   const overview = buildOverview(scan)
-  console.log('--- scan:', JSON.stringify({ root: scan.root, chapters: scan.chapters.length, characters: scan.characterCount, pending: scan.pendingLines }))
+  console.log('--- scan:', JSON.stringify({ root: scan.root, chapters: scan.chapters.length, characters: scan.characters.length, pending: scan.pending }))
   console.log('--- overview:', JSON.stringify({ title: overview.title, chapters: overview.chapters, totalChars: overview.totalChars, foreshadow: overview.foreshadow }))
   const scanOk = overview.title === '测试书' && overview.chapters === 2 && overview.totalChars === 10
-    && overview.foreshadow.length === 1 && overview.characterRows.length === 2 && overview.pendingLines.length === 2
+    && overview.foreshadow.length === 1 && overview.characterRows.length === 2 && overview.pendingSections.length === 1 && overview.pendingLineTotal === 2
+    // v5：大纲小节 + timeline JSON 字符串解析 + 正文关系解析
+    && overview.outline !== null && overview.outline.sections.length === 2
+    && overview.characterRows.some(c => c.name === '主角' && c.timelineCount === 1 && c.relationCount === 1)
   console.log('--- scan verdict:', scanOk ? 'PASS（冷启动总览聚合成功）' : 'FAIL')
 
   // ③ 旧布局回退：工作区根直铺（无 novel/、无 chapters/，仅 outline+characters+plots）

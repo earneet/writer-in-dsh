@@ -1,10 +1,12 @@
 /**
  * 写作面板的会话级状态：从工具结果文本派生的视图模型（模块级存储）。
  *
- * 数据流：富卡片（toolview）在 result 阶段解析工具输出并 record()；侧边栏面板按
- * sessionId 读取快照。v1 取舍（README 留痕）：不依赖宿主 remote（第三方不能加端点）、
- * 不读全量会话事件窗口——面板反映「本会话内已发生的写作工具动态」，跨会话不共享。
- * 变更通知用版本号 + 轮询（面板 useEffect 每 800ms 对账一次），自包含零依赖。
+ * 数据流：富卡片（toolview）在 result 阶段解析工具输出并 record()；侧边栏面板读取快照。
+ * v1 取舍（README 留痕）：不依赖宿主 remote（第三方不能加端点）、不读全量会话事件
+ * 窗口——面板反映「本会话内已发生的写作工具动态」。**现状**：toolview props 无
+ * sessionId，recordToolResult 恒落 '_anonymous' 单桶（全客户端共享）——会话隔离
+ * 归宿 M1b 数据总线（roadmap §7.1 #5）。
+ * 变更通知 = subscribePanel 事件通知 + 面板 800ms 轮询对账兜底（订阅挂载期生效）。
  */
 import type { ReviewReport, WriteChapterResult, WriterStats } from './parse.ts'
 

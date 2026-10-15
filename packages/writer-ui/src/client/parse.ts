@@ -130,10 +130,22 @@ export function parseReview(text: string): ReviewReport | null {
   return { count: Number(head[1]), summary: head[2], suggestions }
 }
 
-/** 解析 foreshadow_update 输出（状态推进回执）。 */
-export function parseForeshadow(text: string): { id: string; status: string } | null {
+/** foreshadow_update 输出（状态推进或 milestone 事件追加；两者回执形态不同）。 */
+export interface ForeshadowResult {
+  id: string
+  status: string
+  milestone: { type: string; chapter: string } | null
+}
+
+/** 解析 foreshadow_update 输出（status= 推进回执 / milestone 追加回执）。 */
+export function parseForeshadow(text: string): ForeshadowResult | null {
+  // chapter 用 \S+（工具端未强制数字序号，正则过窄会静默退回 RawBody）
+  const milestone = /^已更新伏笔 (\S+)（milestone (\S+) @ chapter\/(\S+?)，/m.exec(text)
+  if (milestone !== null) {
+    return { id: milestone[1], status: '', milestone: { type: milestone[2], chapter: milestone[3] } }
+  }
   const m = /^已更新伏笔 (\S+)（status=(\w+)，/m.exec(text)
-  return m === null ? null : { id: m[1], status: m[2] }
+  return m === null ? null : { id: m[1], status: m[2], milestone: null }
 }
 
 /** 解析 consistency_check 输出（批次数与矛盾数）。 */

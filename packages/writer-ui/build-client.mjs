@@ -8,13 +8,15 @@
  * 基线模块（PLATFORM_MODULES）外部化为 require()，由浏览器模块表供给。
  */
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 
 /** 把 `node:crypto` 重定向到浏览器桩（domain 包顶部 import createHash；面板路径不调用）。 */
 const nodeCryptoStub = {
   name: 'node-crypto-stub',
   setup(build) {
     build.onResolve({ filter: /^node:crypto$/ }, () => ({
-      path: new URL('./src/client/crypto-stub.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+      // fileURLToPath 正确还原 percent-encoding（路径含空格/中文时 URL.pathname 手工剥盘符会解析到不存在路径）
+      path: fileURLToPath(new URL('./src/client/crypto-stub.js', import.meta.url)),
     }))
   },
 }

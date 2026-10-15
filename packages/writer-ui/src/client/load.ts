@@ -4,7 +4,7 @@
  * 消费现成服务，不新增 remote 端点）。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { extractPendingLines, splitSource, type NovelScan } from './overview.ts'
+import { extractPendingSections, splitSource, type NovelScan, type PendingSection } from './overview.ts'
 
 /** workspaceFiles remote 的本地最小契约（第一方同款调用面）。 */
 interface WorkspaceFilesApi {
@@ -24,9 +24,9 @@ type BrowserContext = Context & {
 
 let browserCtx: BrowserContext | null = null
 
-/** apply 期注入浏览器半 Context（模块级单例，Panel/hooks 经此访问宿主服务）。 */
-export function setBrowserContext(ctx: BrowserContext): void {
-  browserCtx = ctx
+/** apply 期注入浏览器半 Context（模块级单例，Panel/hooks 经此访问宿主服务；effect 清理时置 null 防悬空引用）。 */
+export function setBrowserContext(ctx: { remote?: BrowserContext['remote']; sessions?: BrowserContext['sessions'] } | null): void {
+  browserCtx = ctx as BrowserContext | null
 }
 
 /** 当前活跃会话 id（main 视图持有的会话；无活跃会话返回 null；服务缺席/形状异常宽容返回 null）。 */
@@ -47,13 +47,14 @@ function remote(): WorkspaceFilesApi | null {
   return browserCtx?.remote?.workspaceFiles ?? null
 }
 
-/** 读一个文本文件全文（按 eof 分页循环；读失败抛错）。 */
+/** 读一个文本文件全文（按 eof 分页循环；读失败抛错；每页检查取消，取消语义不外包给宿主 read 传播）。 */
 async function readText(sessionId: string, path: string, signal: AbortSignal): Promise<string> {
   const api = remote()
   if (api === null) throw new Error('workspaceFiles remote 不可用')
   let offset = 1
   let text = ''
   for (;;) {
+    if (signal.aborted) throw new DOMException('aborted', 'AbortError')
     const result = await api.read(sessionId, path, { offset }, signal)
     if (!result.ok) throw new Error(`read ${path} 失败: ${JSON.stringify(result.error ?? null)}`)
     const page = result.value as { text: string; lines: number; eof: boolean }
@@ -75,21 +76,32 @@ async function listDir(sessionId: string, path: string, signal: AbortSignal): Pr
 
 const mdFiles = (entries: any[]): any[] => entries.filter(e => e.type === 'file' && /\.md$/i.test(e.name))
 
-/** 小说项目根的标记物：任一命中即认定（兼容 novel/ 子目录布局与项目根直铺布局，无章节也能识别）。 */
-const ROOT_MARKERS = ['project.md', 'principles.md', 'outline.md', 'chapters', 'characters', 'plots', 'worldbuilding']
+/** 小说项目根的标记物：任一命中即认定（兼容 novel/ 子目录布局与项目根直铺布局；含 ideas.md——纯灵感起步项目也要能识别）。 */
+const ROOT_MARKERS = ['project.md', 'principles.md', 'outline.md', 'ideas.md', 'events.md', 'chapters', 'characters', 'plots', 'worldbuilding']
 
-const hasMarker = (entries: any[]): boolean => entries.some(e => ROOT_MARKERS.includes(e.name))
+/** 强标记（单命中即可判定项目根；目录名泛化，弱标记需两个以上防普通工作区误判）。 */
+const STRONG_MARKERS = new Set(['project.md', 'principles.md', 'outline.md', 'ideas.md', 'events.md'])
+
+/** 候选根是否判定为小说项目：强标记单命中，或弱标记（目录名）≥2 命中。 */
+function looksLikeProject(entries: any[], lenient: boolean): boolean {
+  const names = new Set(entries.map(e => e.name))
+  const hits = ROOT_MARKERS.filter(marker => names.has(marker))
+  if (lenient) return hits.length > 0
+  const strong = hits.some(marker => STRONG_MARKERS.has(marker))
+  return strong || hits.length >= 2
+}
 
 /** 扫描 novel/ 项目：定位根目录（<cwd>/novel 或工作区根本身），收集章/情节/人物数/待办。 */
 export async function scanNovel(sessionId: string, signal: AbortSignal): Promise<NovelScan> {
-  // 根目录探测：优先 novel/ 子目录（轮次 18 布局）；'.'/' 为工作区根本身（旧布局，大纲阶段
-  // 无 chapters/ 也要能识别——两个根路径写法都试）；最后兜底本仓库 dev overlay 的示例项目。
-  const rootCandidates = ['novel', '.', '', 'example-project/novel', 'example-project/novel/_demo-green-flame']
+  // 根目录探测：优先 novel/ 子目录（轮次 18 布局；子目录名即强语境，宽松判定）；
+  // '.'/' 为工作区根本身（旧布局直铺——目录名泛化，从严判定防误认普通工作区）。
+  const rootCandidates = ['novel', '.', '']
   let root = ''
   let rootEntries: any[] | null = null
   for (const candidate of rootCandidates) {
+    if (signal.aborted) throw new DOMException('aborted', 'AbortError')
     const entries = await listDir(sessionId, candidate, signal)
-    if (entries === null || !hasMarker(entries)) continue
+    if (entries === null || !looksLikeProject(entries, candidate === 'novel')) continue
     // '.' 与 '' 等价（工作区根本身）；后续 join 用 '' 前缀
     root = candidate === '.' ? '' : candidate
     rootEntries = entries
@@ -115,7 +127,8 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
   if (plotEntries !== null) {
     for (const entry of mdFiles(plotEntries)) {
       const raw = await readText(sessionId, join(join(root, 'plots'), entry.name), signal)
-      plots.push({ name: entry.name, frontmatter: splitSource(raw).frontmatter })
+      const { frontmatter, content } = splitSource(raw)
+      plots.push({ name: entry.name, frontmatter, content })
     }
   }
 
@@ -124,7 +137,8 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
   if (characterEntries !== null) {
     for (const entry of mdFiles(characterEntries)) {
       const raw = await readText(sessionId, join(join(root, 'characters'), entry.name), signal)
-      characters.push({ name: entry.name, frontmatter: splitSource(raw).frontmatter })
+      const { frontmatter, content } = splitSource(raw)
+      characters.push({ name: entry.name, frontmatter, content })
     }
   }
 
@@ -133,20 +147,26 @@ export async function scanNovel(sessionId: string, signal: AbortSignal): Promise
   if (worldbuildingEntries !== null) worldbuildingCount = mdFiles(worldbuildingEntries).length
 
   const projectEntries = rootEntries ?? []
+  // 大纲：novel/outline.md（旧布局为根 outline.md），frontmatter + 正文分节均保留
+  let outline: any = null
+  const outlineName = projectEntries.some(e => e.type === 'file' && e.name === 'outline.md') ? 'outline.md' : null
+  if (outlineName !== null) {
+    outline = splitSource(await readText(sessionId, join(root, outlineName), signal))
+  }
+
   let project: any = null
   if (projectEntries.some(e => e.type === 'file' && e.name === 'project.md')) {
     project = splitSource(await readText(sessionId, join(root, 'project.md'), signal)).frontmatter
-  } else if (projectEntries.some(e => e.type === 'file' && e.name === 'outline.md')) {
+  } else if (outline !== null) {
     // 无 project.md（旧布局）：书名回退取大纲首个一级标题（通用标题不算书名）
-    const outline = await readText(sessionId, join(root, 'outline.md'), signal)
-    const heading = outline.split('\n').find(line => /^#\s+\S/.test(line))?.replace(/^#\s+/, '').trim() ?? ''
+    const heading = outline.content.split('\n').find((line: string) => /^#\s+\S/.test(line))?.replace(/^#\s+/, '').trim() ?? ''
     project = /^(大纲|outline|目录|toc)$/i.test(heading) || heading.length === 0 ? null : { title: heading }
   }
 
-  let pendingLines: string[] = []
+  let pending: PendingSection[] = []
   if (projectEntries.some(e => e.type === 'file' && e.name === 'pending.md')) {
-    pendingLines = extractPendingLines(await readText(sessionId, join(root, 'pending.md'), signal))
+    pending = extractPendingSections(await readText(sessionId, join(root, 'pending.md'), signal))
   }
 
-  return { root: root === '' ? '.' : root, project, chapters, plots, characters, worldbuildingCount, pendingLines }
+  return { root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount, pending }
 }

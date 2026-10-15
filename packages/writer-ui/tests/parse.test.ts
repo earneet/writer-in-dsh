@@ -91,7 +91,9 @@ test('parseReview：建议条数/severity/维度解析与无建议分支', () =>
 })
 
 test('parseForeshadow / parseConsistency', () => {
-  assert.deepEqual(parseForeshadow('已更新伏笔 green-flame（status=planted，hash=abc）'), { id: 'green-flame', status: 'planted' })
+  assert.deepEqual(parseForeshadow('已更新伏笔 green-flame（status=planted，hash=abc）'), { id: 'green-flame', status: 'planted', milestone: null })
+  // milestone 回执（不改 status，带 type+chapter；writer-tools 侧同格式契约）
+  assert.deepEqual(parseForeshadow('已更新伏笔 mirror（milestone partial_reveal @ chapter/003，hash=abc）'), { id: 'mirror', status: '', milestone: { type: 'partial_reveal', chapter: '003' } })
   assert.equal(parseForeshadow('伏笔实体不存在：plot/x'), null)
   assert.deepEqual(parseConsistency('一致性检查完成（2 批：001-002、003-003），发现 3 条矛盾。'), { batches: '2 批：001-002、003-003', issues: 3 })
   assert.equal(parseConsistency('别的'), null)
