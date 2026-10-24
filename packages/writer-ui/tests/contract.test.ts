@@ -71,6 +71,24 @@ test('契约：write_chapter 回执 ↔ parseWriteChapter（含补丁与丢句�
   assert.equal(parsed!.patchesApplied, 3)
   assert.equal(parsed!.patchesSkipped, 1)
   assert.equal(parsed!.droppedSentences, 2)
+  assert.equal(parsed!.repetitionStripped, 0, 'full 模式无复述守卫行')
+})
+
+test('契约：write_chapter 回执 ↔ parseWriteChapter（assist 复述守卫行）', async () => {
+  const engine = {
+    writeChapter: async () => ({
+      chapter: { kind: 'chapter', id: '003', path: 'chapters/003.md', frontmatter: {}, content: 'z'.repeat(1800), hash: 'b'.repeat(64) },
+      mode: 'assist',
+      repetitionStripped: 5,
+    }),
+  }
+  const tools = makeCtx({ list: async () => [], get: async () => undefined, root: '.' }, engine)
+  const out = await tools.get('write_chapter')!.execute({ chapter: '003', mode: 'assist' }, exec)
+  const parsed = parseWriteChapter(out)
+  assert.notEqual(parsed, null)
+  assert.equal(parsed!.mode, 'assist')
+  assert.equal(parsed!.repetitionStripped, 5, '复述守卫行被解析（文案漂移即红）')
+  assert.equal(parsed!.droppedSentences, 0)
 })
 
 test('契约：review_chapter 回执 ↔ parseReview（quote/建议/改写方案缩进续行）', async () => {

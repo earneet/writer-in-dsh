@@ -451,13 +451,13 @@ function OverviewTab({ o, live, watched }: { o: NovelOverview; live: WriterBusSn
           <div style={sectionTitle}>本会话写作</div>
           <div style={{ ...card, padding: '6px 12px' }}>
             {live.writes.slice(0, 6).map((write, i) => {
-              const warn = write.droppedSentences > 0 || write.patchesSkipped > 0
+              const warn = write.droppedSentences > 0 || write.patchesSkipped > 0 || write.repetitionStripped > 0
               return (
                 <div key={i} style={{ ...row, lineHeight: 2, color: warn ? 'var(--dsw-alias-state-warn-label)' : undefined }}>
                   <span style={rowMain}>chapter/{write.chapterId} · {write.mode}</span>
-                  {/* 告警行内 aside 覆盖为告警色（丢句计数必须在告警色里） */}
+                  {/* 告警行内 aside 覆盖为告警色（丢句/复述计数必须在告警色里） */}
                   <span style={warn ? { ...rowAside, color: 'var(--dsw-alias-state-warn-label)' } : rowAside}>
-                    ≈{write.chars} 字{write.droppedSentences > 0 ? ` · ⚠丢句 ${write.droppedSentences}` : ''}
+                    ≈{write.chars} 字{write.droppedSentences > 0 ? ` · ⚠丢句 ${write.droppedSentences}` : ''}{write.repetitionStripped > 0 ? ` · ⚠剔复述 ${write.repetitionStripped}` : ''}
                   </span>
                 </div>
               )

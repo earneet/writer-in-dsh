@@ -25,6 +25,8 @@ export interface WriteChapterResult {
   patchesApplied: number
   patchesSkipped: number
   droppedSentences: number
+  /** assist 复述守卫剔除的复述句数（>0 表示有连续复述段被剔除后才落盘）。 */
+  repetitionStripped: number
   /** 「rewrite 判定无需修改」等非保存路径的原文首行。 */
   note: string | null
 }
@@ -106,17 +108,19 @@ export function parseWriteChapter(text: string): WriteChapterResult | null {
   if (saved !== null) {
     const applied = /补丁协议：命中 (\d+) 条，跳过 (\d+) 条/.exec(text)
     const dropped = /丢句守卫告警（共 (\d+) 条原句未保留/.exec(text)
+    const repeated = /复述守卫：续写输出有 (\d+) 句与正文重复的连续句段被剔除/.exec(text)
     return {
       mode: saved[1], chapterId: saved[2], chars: Number(saved[3]),
       patchesApplied: applied !== null ? Number(applied[1]) : 0,
       patchesSkipped: applied !== null ? Number(applied[2]) : 0,
       droppedSentences: dropped !== null ? Number(dropped[1]) : 0,
+      repetitionStripped: repeated !== null ? Number(repeated[1]) : 0,
       note: null,
     }
   }
   const noop = /^rewrite 判定无需修改，未落盘（chapter\/(\d{3,})/m.exec(text)
   if (noop !== null) {
-    return { mode: 'rewrite-patch', chapterId: noop[1], chars: 0, patchesApplied: 0, patchesSkipped: 0, droppedSentences: 0, note: text.split('\n')[0] ?? null }
+    return { mode: 'rewrite-patch', chapterId: noop[1], chars: 0, patchesApplied: 0, patchesSkipped: 0, droppedSentences: 0, repetitionStripped: 0, note: text.split('\n')[0] ?? null }
   }
   return null
 }

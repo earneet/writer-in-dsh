@@ -250,6 +250,7 @@ export function WriteChapterCard(props: ToolViewPropsBase) {
           {parsed.chars > 0 && <Tag tone="outline">≈{parsed.chars} 字</Tag>}
           {parsed.patchesSkipped > 0 && <Tag tone="warning">跳过补丁 {parsed.patchesSkipped}</Tag>}
           {parsed.droppedSentences > 0 && <Tag tone="danger">丢句 {parsed.droppedSentences}</Tag>}
+          {parsed.repetitionStripped > 0 && <Tag tone="warning">剔复述 {parsed.repetitionStripped}</Tag>}
           {parsed.patchesSkipped === 0 && parsed.droppedSentences === 0 && parsed.patchesApplied > 0 && <Tag tone="success">补丁 {parsed.patchesApplied}</Tag>}
         </span>
       }
@@ -266,6 +267,12 @@ export function WriteChapterCard(props: ToolViewPropsBase) {
           <div style={warnRowStyle}>
             <IconWarningTriangleOutlineMedium />
             <span>丢句守卫：{parsed.droppedSentences} 条原句未保留，请复核</span>
+          </div>
+        )}
+        {parsed.repetitionStripped > 0 && (
+          <div style={warnRowStyle}>
+            <IconWarningTriangleOutlineMedium />
+            <span>复述守卫：{parsed.repetitionStripped} 句与正文重复的连续句段被剔除后才落盘，其余为新增</span>
           </div>
         )}
       </div>
