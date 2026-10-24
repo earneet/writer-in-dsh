@@ -83,8 +83,11 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 13（全量审计）：三线对抗审查（实现偏离/工具工作流/代码横切）后修复 12 项——maintenancePass force 竞态、一致性检查 scope 越界引用误弃、chapter_limit 校验、rag 超时 Config 化、乐观锁错误文案（截断 hash 检测）、focus 无效维度响亮报错、维护 pass 链路提示；补齐 review-guide / reverse-reference 两技能；onboarding/chapter-writing 过期文案与章后维护闭环；5 处设计文档正文对齐实现 + 4 项裁定留痕（详见 implementation-plan §8 轮次 13）。
 - 轮次 16（挂账清偿 + 上架）：实现审查报告挂账项（chunkChapterText NaN 防护、readDerived IO 错区分、export 剥离重复章标题 + XHTML 1.1 doctype）+ 测试盲区补强（净增 7 例，共 202/202）；创建 GitHub 仓库 earneet/writer-in-dsh 并推送；11 个 package.json 补 repository 字段（详见 implementation-plan §8 轮次 16）。
 - 轮次 17（写作模式 preset）：新包 dsh-writer-preset（第 11 包）——「写作模式」agent preset，Web 新建会话的模式选择器与标准/PTC 模式并列出现；会话级挂载写作人设 + 基础工具 + 全部 writer 插件（与 writer-bundle 全局挂载二选一）。profile writer-preset（dump-config 组合树 + web 启动 401 门）实测通过（详见 implementation-plan §8 轮次 17）。
-- 轮次 18（存储重规划 + Web UI）：①废除 writer.yaml → project.md 可写实体；②novel/ 子目录布局（全部创作与工作文件收进 novel/，根目录干净）；③新包 dsh-writer-ui（第 12 包，客户端插件）——侧边栏「写作面板」+ 五张工具富卡片（factory-form CJS 经 /plugins 动态加载，boot 图发现 + 组合路由 200 实测）。typecheck 零错、26/26 测试文件全过（详见 implementation-plan §8 轮次 18）。
-- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；P5 四轮 / P6 两轮 / P7 两轮审查均收敛（详见 §8 轮次 10/11/12）；轮次 13 审计修复后复验全过；轮次 16 后单测 202/202；轮次 18 后 26/26 测试文件全过（约 209 例，含 writer-ui 解析器 7 例）。
-- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18。
+- 轮次 18（存储重规划 + Web UI）：①废除 writer.yaml → project.md 可写实体；②novel/ 子目录布局（全部创作与工作文件收进 novel/，根目录干净）；③新包 dsh-writer-ui（第 12 包，客户端插件）——侧边栏「写作面板」+ 工具富卡片（factory-form CJS 经 /plugins 动态加载，boot 图发现 + 组合路由 200 实测）（详见 implementation-plan §8 轮次 18）。
+- 轮次 19-26（UI 持续演进）：writer-ui v4/v5（六页签 + 大纲页 + 人物关系 SVG 环形图 + token 体系/契约测试）→ 多轮对抗审查（轮次 21/22/23）→ 小修清单全量实施（轮次 24）→ M1a 实体接口冻结 + 纯函数构建器（轮次 25）→ M1b 数据总线 + 面板换源 + workspaceFiles.changes 增量订阅 + 决策面（情境卡/伏笔三色/健康度徽章/归档区）+ 14 工具卡片全覆盖（轮次 26）。设计文档 `docs/ui-capabilities-and-roadmap.md`。
+- 轮次 27（四线全仓对抗审查）：①实现偏离/②工具与技能/③代码横切/④preset+ui 四路子代理并行审查后修复 10 项（dev overlay 过期文案、review-guide timeline 归属、focus 部分非法静默丢弃、writer_stats 技能引导、id 字符集描述、readRaw IO 错区分、writeDerived 唯一 tmp、parseFrontmatter EOF 定界、截断码点安全、dev-diag dispose）+ 2 项裁定留痕（recoverySnapshot 不暴露工具；卷子目录布局服务端暂不支持、README 已知限制明示）（详见 implementation-plan §8 轮次 27）。
+- 轮次 28（上游同步 + 复审）：子模块更新至 novel-writer b23e01d0 / dsh 0.2.1-rc.2 后两线复审。结论：dsh 七个消费面零破坏，唯一实质风险是版本矩阵（宿主升 0.2.1 需机械替换 12 包钉版本，维持 0.2.0-rc.2 则零动作）；novel-writer 写作域差距 2 高（尾部复述剔除纯函数、RAG 语义相关度阈值）4 中 4 低，autopilot/审稿结构化/分段抽取等确认等价无需动作（详见 implementation-plan §8 轮次 28）。
+- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 27 后单测 261/261。
+- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/27。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。
