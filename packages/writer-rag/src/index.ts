@@ -38,6 +38,7 @@ export interface Config {
   maxResults: number
   /** external 档单次 embeddings 请求兜底超时（毫秒）。 */
   embeddingTimeoutMs: number
+  semanticMinScore: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -48,6 +49,7 @@ export const Config: Schema<Config> = Schema.object({
   externalModel: Schema.string().description('backend=external 时的 embedding 模型 id（该档必填）'),
   externalApiKeyEnv: Schema.string().default('WRITER_RAG_API_KEY').description('backend=external 时读 API key 的环境变量名'),
   semanticCandidates: Schema.number().default(15).min(3).max(50).description('语义档参与打分的候选块数'),
+  semanticMinScore: Schema.number().default(0.28).min(0).max(1).description('语义腿相关度阈值（轮次 29，吸收上游 R-2）：external 档为余弦相似度下限、llm 档换算为 0-10 分下限（×10）；低于阈值的候选不进 RRF 融合，防无关块挤占增强注入预算；0 关闭'),
   chunkChars: Schema.number().default(600).min(100).description('章节切片字符数'),
   chunkOverlap: Schema.number().default(80).min(0).description('章节切片重叠字符数'),
   snippetChars: Schema.number().default(280).min(50).description('命中 snippet 截断字符数'),
@@ -79,6 +81,7 @@ export default class WriterRagService extends RagService {
   private readonly snippetChars: number
   private readonly defaultMax: number
   private readonly embeddingTimeoutMs: number
+  private readonly semanticMinScore: number
   /** external 档向量缓存：sha256(text) → 向量（带上限的简单淘汰：超限整体清空重建，防无界增长）。 */
   private readonly vectorCache = new Map<string, number[]>()
   private static readonly VECTOR_CACHE_MAX = 2000
@@ -101,6 +104,7 @@ export default class WriterRagService extends RagService {
     this.snippetChars = config.snippetChars
     this.defaultMax = config.maxResults
     this.embeddingTimeoutMs = config.embeddingTimeoutMs
+    this.semanticMinScore = config.semanticMinScore
     // 配置错误响亮失败：所选后端的必填字段缺席（undefined）或空串即刻报，不等到首次检索
     if (this.backend === 'llm' && (!config.llmProvider || !config.llmModel)) {
       throw new Error('writer-rag：embeddingBackend=llm 需要配置 llmProvider 与 llmModel')
@@ -220,6 +224,9 @@ export default class WriterRagService extends RagService {
         if (typeof parsed.scores === 'object' && parsed.scores !== null) {
           return Object.entries(parsed.scores)
             .filter(([, score]) => typeof score === 'number' && Number.isFinite(score))
+            // 相关度阈值（llm 档 0-10 分 × 阈值换算）：低分候选不进融合排名（上游 R-2：
+            // 无关块恒占满 top-k 会挤占 engine 增强注入预算；RRF 分无相关度语义，阈值须在打分层）
+            .filter(([, score]) => (score as number) >= this.semanticMinScore * 10)
             .sort((a, b) => (b[1] as number) - (a[1] as number))
             .map(([id]) => id)
             .filter((id) => candidates.some((c) => c.id === id))
@@ -243,6 +250,9 @@ export default class WriterRagService extends RagService {
     const queryVec = vectors[0]
     return candidates
       .map((c, i) => ({ id: c.id, similarity: cosine(queryVec, vectors[i + 1]) }))
+      // 相关度阈值（上游 R-2）：余弦低于阈值的候选不进融合排名（阈值在向量层而非 RRF 层——
+      // RRF 只看名次无相关度语义，无关块会恒占满 top-k 挤占 engine 组装的增强注入预算）
+      .filter((entry) => entry.similarity >= this.semanticMinScore)
       .sort((a, b) => b.similarity - a.similarity)
       .map((entry) => entry.id)
   }

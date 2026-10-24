@@ -32,7 +32,7 @@ async function makeFixture(): Promise<{ rag: WriterRagService; store: WriterStor
   const rag = new WriterRagService(ctx, {
     embeddingBackend: 'none', llmProvider: '', llmModel: '', externalBaseUrl: '', externalModel: '',
     externalApiKeyEnv: 'WRITER_RAG_API_KEY', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
-    snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000,
+    snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
   })
   return { rag, store, root }
 }
@@ -96,7 +96,7 @@ test('external 档代码路径（P7）：本地 OpenAI 兼容 stub——检索�
     const externalRag = new WriterRagService(ctx, {
       embeddingBackend: 'external', llmProvider: '', llmModel: '',
       externalBaseUrl: baseUrl, externalModel: 'stub-embed', externalApiKeyEnv: 'WRITER_RAG_TEST_KEY',
-      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000,
+      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
     })
     process.env['WRITER_RAG_TEST_KEY'] = 'test-key'
     // ① 检索走 embeddings：查询与候选都过端点，语义路参与 RRF 融合
@@ -144,12 +144,69 @@ test('external 档代码路径（P7）：本地 OpenAI 兼容 stub——检索�
       embeddingBackend: 'external', llmProvider: '', llmModel: '',
       externalBaseUrl: `http://127.0.0.1:${(errorServer.address() as { port: number }).port}`,
       externalModel: 'stub-embed', externalApiKeyEnv: 'WRITER_RAG_TEST_KEY',
-      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000,
+      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
     })
     // 「绿焰」在 fixture 有关键词命中（语义阶段必触发）→ 查询本身先撞 500；
     // 「港城」同样命中但端点返回缺 embedding 的形状 → 响应形状错误路径
     await assert.rejects(badRag.search('绿焰'), /embeddings 端点返回 500/)
     await assert.rejects(badRag.search('港城'), /缺少 data\[0\]\.embedding/)
+  } finally {
+    delete process.env['WRITER_RAG_TEST_KEY']
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('semanticMinScore 相关度阈值（轮次 29）：余弦低于阈值的候选不进语义排名（向量层过滤，上游 R-2）', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'writer-rag-thr-'))
+  // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+  const ctx = new Context()
+  new WriterStoreService(ctx, { projectRoot: root })
+  // 确定性 stub：含「绿焰」→ [1,0]，含「港城」→ [0,1]，其余 → [1,1]
+  const server: Server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (chunk: Buffer) => { body += chunk })
+    req.on('end', () => {
+      const input = (JSON.parse(body) as { input: string }).input
+      const embedding = input.includes('绿焰') ? [1, 0] : input.includes('港城') ? [0, 1] : [1, 1]
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ data: [{ embedding }] }))
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  server.unref()
+  try {
+    process.env['WRITER_RAG_TEST_KEY'] = 'test-key'
+    const rag = new WriterRagService(ctx, {
+      embeddingBackend: 'external', llmProvider: '', llmModel: '',
+      externalBaseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+      externalModel: 'stub-embed', externalApiKeyEnv: 'WRITER_RAG_TEST_KEY',
+      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5,
+      embeddingTimeoutMs: 30_000, semanticMinScore: 0.9,
+    })
+    const candidates = [
+      { id: 'chapter/001#0', refKind: 'chapter' as const, refId: '001', text: '雨夜里绿焰浮现。', chapterNumber: 1 },
+      { id: 'chapter/002#0', refKind: 'chapter' as const, refId: '002', text: '南方港城的贸易风波。', chapterNumber: 2 },
+    ]
+    const ranking = await (rag as unknown as {
+      rankByEmbeddings: (query: string, chunks: typeof candidates, signal?: AbortSignal) => Promise<string[]>
+    }).rankByEmbeddings('绿焰', candidates)
+    // 查询 [1,0]：001 块 [1,0] 余弦 1 ≥ 0.9 通过；002 块 [0,1] 余弦 0 被滤——不进融合排名
+    assert.deepEqual(ranking, ['chapter/001#0'], '低相关度候选在向量层被过滤')
+    // 服务注册在 ctx 上（复用 ctx 会撞「已注册」）：关闭阈值的服务用独立 ctx
+    // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+    const zeroCtx = new Context()
+    new WriterStoreService(zeroCtx, { projectRoot: root })
+    const zeroThreshold = new WriterRagService(zeroCtx, {
+      embeddingBackend: 'external', llmProvider: '', llmModel: '',
+      externalBaseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+      externalModel: 'stub-embed', externalApiKeyEnv: 'WRITER_RAG_TEST_KEY',
+      semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80, snippetChars: 280, maxResults: 5,
+      embeddingTimeoutMs: 30_000, semanticMinScore: 0,
+    })
+    const all = await (zeroThreshold as unknown as {
+      rankByEmbeddings: (query: string, chunks: typeof candidates, signal?: AbortSignal) => Promise<string[]>
+    }).rankByEmbeddings('绿焰', candidates)
+    assert.equal(all.length, 2, '阈值 0 关闭过滤')
   } finally {
     delete process.env['WRITER_RAG_TEST_KEY']
     await rm(root, { recursive: true, force: true })
