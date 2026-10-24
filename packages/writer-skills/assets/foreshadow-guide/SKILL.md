@@ -14,7 +14,7 @@ planned ──plant──→ planted ──resolve──→ resolved
    └──────abandon──────┴──→ abandoned（明确放弃，留档）
 ```
 
-- 状态落在伏笔实体 frontmatter：`status` / `planned_chapter` / `planted_chapter` / `resolved_chapter` / `hint` / `milestones`（JSON 数组）。
+- 状态落在伏笔实体 frontmatter：`status` / `planned_chapter`（种植计划锚）/ `resolve_chapter`（可选，计划回收锚——镜像 planned_chapter 的到期/逾期语义，作用于回收侧）/ `planted_chapter` / `resolved_chapter` / `hint` / `milestones`（JSON 数组）。
 - 迁移只能沿箭头方向（`foreshadow_update` 会拒绝非法迁移并报错）；`resolved`/`abandoned` 是终态。
 - 已 planted 的伏笔不可删除，只能 abandon（保留叙事痕迹）。
 
@@ -44,7 +44,7 @@ foreshadow_update(id, action="milestone", chapter="005", milestone_type="partial
 
 ## 写作时的伏笔纪律
 
-1. **写前**：`writer_read(entity="plot")` 盘点——`planned_chapter` 等于本章的是 🔴 必须设置项；`planned` 且 `planned_chapter` 已过的是 🔴 已逾期项（同样必须**设置**——状态机禁止 planned 直接 resolve，只能先 planted）；planted 的是 🟡 活跃项（只可强化不可矛盾）。把结论写进 `write_chapter` 的 `instruction`（格式见 chapter-writing 技能）。
+1. **写前**：`writer_read(entity="plot")` 盘点——`planned_chapter` 等于本章的是 🔴 必须设置项；`planned` 且 `planned_chapter` 已过的是 🔴 已逾期项（同样必须**设置**——状态机禁止 planned 直接 resolve，只能先 planted）；`planted` 且 `resolve_chapter` 等于本章的是 🔴 必须回收项、已过的是 🔴 逾期回收项；其余 planted 是 🟡 活跃项（只可强化不可矛盾，有 `resolve_chapter` 的引擎会附「计划第 N 章回收」提示）。把结论写进 `write_chapter` 的 `instruction`（格式见 chapter-writing 技能）。
 2. **写后**：按正文实际发生的内容用 `foreshadow_update` 推进状态、补 milestone——正文没写到的不要凭大纲「预支」推进。
-3. **完整性自查**：被问「伏笔还有哪些没收」时——列出所有 `planted`（悬置中）与 `planned`（未设）项及其 `planned_chapter`；`planned_chapter` 已过的项标记「逾期」（逾期指未设置，不是未回收）。resolved/abandoned 只在核对历史时提及。
-4. 新伏笔来自灵感消化（ideas → plots 单向流）：创建用 `writer_update(entity="plot", expectHash="new")`，frontmatter 至少含 `status: planned` 与 `planned_chapter`。
+3. **完整性自查**：被问「伏笔还有哪些没收」时——列出所有 `planted`（悬置中）与 `planned`（未设）项及其 `planned_chapter`；`planned_chapter` 已过的项标记「逾期」（逾期指未设置，不是未回收）；`planted` 且 `resolve_chapter` 已过的标记「逾期回收」。resolved/abandoned 只在核对历史时提及。
+4. 新伏笔来自灵感消化（ideas → plots 单向流）：创建用 `writer_update(entity="plot", expectHash="new")`，frontmatter 至少含 `status: planned` 与 `planned_chapter`（已知回收节奏的可一并写 `resolve_chapter`）。
