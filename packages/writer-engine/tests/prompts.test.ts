@@ -6,7 +6,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildWriteSystemPrompt, buildRewriteSystemPrompt, buildWriteUserPrompt,
-  buildRewriteUserPrompt, buildReviewSystemPrompt, buildReviewUserPrompt,
+  buildRewriteUserPrompt, buildReviewSystemPrompt, buildReviewUserPrompt, buildExtractionUserPrompt,
 } from '../src/prompts.ts'
 import { assembleWritingContext, type WriterEntity } from 'dsh-writer-domain'
 
@@ -37,6 +37,23 @@ test('rewrite system 提示词：声明补丁协议与全文两种输出形态',
   assert.ok(s.includes('"patches"'))
   assert.ok(s.includes('find'))
   assert.ok(s.includes('整章正文全文'))
+})
+
+test('抽取用户提示词：既有记录防重段（轮次 31）——注入/缺席两分支', () => {
+  const ch = entity('chapter', '003', { number: 3 }, '正文。')
+  const refs = { characters: ['elin'], plots: ['green-flame'] }
+  const withExisting = buildExtractionUserPrompt(ch, refs, undefined, undefined, {
+    facts: ['绿焰只在雨夜显现'],
+    foreshadowEvents: ['green-flame planted：雨夜初现'],
+  })
+  assert.ok(withExisting.includes('既有抽取记录'), '防重段存在')
+  assert.ok(withExisting.includes('- fact：绿焰只在雨夜显现'))
+  assert.ok(withExisting.includes('- foreshadow：green-flame planted：雨夜初现'))
+  assert.ok(withExisting.includes('不要重复输出'))
+  const without = buildExtractionUserPrompt(ch, refs, undefined, undefined, { facts: [], foreshadowEvents: [] })
+  assert.ok(!without.includes('既有抽取记录'), '空记录不注入防重段')
+  const legacy = buildExtractionUserPrompt(ch, refs)
+  assert.ok(!legacy.includes('既有抽取记录'), '不传 existing 兼容旧签名')
 })
 
 test('rewrite 用户提示词：正文 + 选区锚 + 指令', () => {

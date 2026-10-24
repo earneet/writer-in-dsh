@@ -340,6 +340,8 @@ export interface WritingContextInput {
   plots: readonly WriterEntity[]
   events?: WriterEntity
   styleRefs?: readonly WriterEntity[]
+  /** 更早章的新鲜维护摘要（key=章节 id；新鲜度由调用方锚定 sourceHash；缺失/空摘要退标题行）。 */
+  chapterSummaries?: Readonly<Record<string, string>>
   /** 预注入字符预算；超出按优先级降级（本章大纲与 principles 永不截断）。 */
   budgetChars: number
   /** 用户特别要求（最高优先，永不截断）。 */
@@ -453,12 +455,22 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
     // planned 且 planned_chapter 已过 = 逾期未设置：本章必须设置（状态机 planned→planted；planned 不能直接 resolved）
     const overdue = status === 'planned' && anchor !== undefined && anchor < input.chapterNumber
     const dueHere = anchor === input.chapterNumber
-    const marker = dueHere || overdue ? '🔴' : '🟡'
-    const directive = dueHere
-      ? '🔴 本章必须设置此伏笔'
-      : overdue
-        ? '🔴 此伏笔已逾期未设置，本章必须设置（plant）'
-        : '活跃伏笔，注意一致性与可强化点'
+    // 回收侧锚（轮次 31，吸收上游 S-1）：planted 伏笔的 resolve_chapter 到期/逾期 → 本章必须回收
+    const resolveAnchor = status === 'planted' ? chapterAnchorOf(plot.frontmatter['resolve_chapter']) : undefined
+    const resolveDue = resolveAnchor === input.chapterNumber
+    const resolveOverdue = resolveAnchor !== undefined && resolveAnchor < input.chapterNumber
+    const marker = dueHere || overdue || resolveDue || resolveOverdue ? '🔴' : '🟡'
+    const directive = overdue
+      ? '此伏笔已逾期未设置，本章必须设置（plant）'
+      : resolveOverdue
+        ? '此伏笔已逾期未回收，本章必须回收（resolve）'
+        : resolveDue
+          ? '本章必须回收此伏笔（resolve）'
+          : dueHere
+            ? '本章必须设置此伏笔'
+            : resolveAnchor !== undefined
+              ? `活跃伏笔，注意一致性与可强化点（计划第 ${resolveAnchor} 章回收）`
+              : '活跃伏笔，注意一致性与可强化点'
     foreshadowLines.push(`${marker} ${plot.id}（${status}）：${directive}——${briefOf(plot, 120)}`)
   }
   if (foreshadowLines.length > 0) {
@@ -483,10 +495,16 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
     remaining = optional('出场人物（精简摘要）', input.characters.map((c) => `- ${c.id}：${briefOf(c, 100)}`).join('\n'), remaining)
   }
 
-  // —— 更早章（标题行提示连续性）——
+  // —— 更早章（新鲜摘要优先，缺失退标题行；长程召回第一层，RAG 检索为第二层）——
   if (remaining > 0 && previous.length > 1) {
-    const earlier = previous.slice(1).map((c) => `- 第 ${chapterNumberOf(c)} 章 ${c.id}${typeof c.frontmatter['title'] === 'string' ? ` ${c.frontmatter['title']}` : ''}`)
-    remaining = optional('更早章节（标题）', earlier.join('\n'), remaining)
+    const earlier = previous.slice(1).map((c) => {
+      const title = typeof c.frontmatter['title'] === 'string' ? ` ${c.frontmatter['title']}` : ''
+      const summary = input.chapterSummaries?.[c.id]
+      return summary !== undefined && summary.trim().length > 0
+        ? `- 第 ${chapterNumberOf(c)} 章 ${c.id}${title}：${summary.replace(/\s+/g, ' ').trim().slice(0, 160)}`
+        : `- 第 ${chapterNumberOf(c)} 章 ${c.id}${title}`
+    })
+    remaining = optional('更早章节（摘要/标题）', earlier.join('\n'), remaining)
   }
 
   // —— 事件（防剧透提示：events.md 为全书事件，仅注首部）——

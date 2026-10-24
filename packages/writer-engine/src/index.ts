@@ -50,7 +50,7 @@ export interface Config {
 export const Config: Schema<Config> = Schema.object({
   provider: Schema.string().required().description('宿主 llm 缝的 provider 路由名'),
   model: Schema.string().required().description('模型 id'),
-  maxOutputTokens: Schema.number().default(16384).min(1024).description('单次生成 maxTokens'),
+  maxOutputTokens: Schema.number().default(65_536).min(1024).description('单次生成 maxTokens（轮次 31 提额：reasoning 模型思考 token 计入输出预算，16384 量级重思考 turn 会撞顶挤占正文；天花板零成本，按实际生成计费）'),
   temperature: Schema.number().default(0.7).min(0).max(2).description('生成温度'),
   contextBudgetChars: Schema.number().default(24000).min(2000).description('上下文组装字符预算（principles 与本章大纲不裁剪）'),
   autoMaintenance: Schema.boolean().default(true).description('章节保存后异步自动触发维护 pass（同章 inflight 去重 + 完成 hash 锚定）'),
@@ -181,6 +181,12 @@ export default class WriterEngineServiceImpl extends EngineService {
       this.ctx.writer.list('plot'),
     ])
     const refs = { chapters: [chapterId], characters: characters.map((c) => c.id), plots: plots.map((p) => p.id) }
+    // 既有抽取记录（防重参考）：derived 即使 sourceHash 过期（改稿链）仍是改稿前的有效基线
+    const existingForDedup = derived === undefined ? undefined : {
+      facts: derived.extraction.facts.slice(0, 12).map((f) => truncateCodePoints(f.description.replace(/\s+/g, ' ').trim(), 80)),
+      foreshadowEvents: derived.extraction.foreshadowEvents.slice(0, 12)
+        .map((e) => truncateCodePoints(`${e.plot} ${e.action}${e.note !== undefined ? `：${e.note}` : ''}`.replace(/\s+/g, ' ').trim(), 80)),
+    }
 
     // 调用①：章节摘要（流畅文本）
     const summary = (await this.generate(
@@ -196,7 +202,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     let retrySections: readonly ExtractionSectionName[] = ['facts', 'foreshadowEvents', 'characterStates']
     for (let attempt = 0; attempt <= this.extractionRetries; attempt++) {
       const raw = await this.generate(
-        buildExtractionSystemPrompt(), buildExtractionUserPrompt(chapter, refs, feedback, retrySections), opts?.signal,
+        buildExtractionSystemPrompt(), buildExtractionUserPrompt(chapter, refs, feedback, retrySections, existingForDedup), opts?.signal,
       )
       const parsed = parseMaintenanceExtraction(raw)
       if (parsed === undefined) {
@@ -570,6 +576,14 @@ export default class WriterEngineServiceImpl extends EngineService {
       this.ctx.writer.get('event', 'event'),
       this.ctx.writer.list('style'),
     ])
+    // 更早章新鲜摘要（sourceHash 锚定；与 rag buildCorpus 同口径）——喂给组装器「更早章节」档
+    const chapterSummaries: Record<string, string> = {}
+    await Promise.all(chapters.map(async (c) => {
+      const derived = await this.ctx.writer.readDerived('maintenance', c.id) as MaintenanceDerived | undefined
+      if (derived !== undefined && derived.sourceHash === c.hash && derived.summary.trim().length > 0) {
+        chapterSummaries[c.id] = derived.summary
+      }
+    }))
     const assembled = assembleWritingContext({
       chapterNumber: Number(request.chapterId),
       principles,
@@ -579,6 +593,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       plots,
       events,
       styleRefs,
+      chapterSummaries,
       budgetChars: request.mode === 'assist' ? Math.floor(this.genParams.contextBudgetChars / 2) : this.genParams.contextBudgetChars,
       instruction: request.instruction,
     })

@@ -121,20 +121,32 @@ export function buildExtractionSystemPrompt(): string {
   ].join('\n')
 }
 
-/** 维护 pass 调用②的 user 提示词：可用实体清单 + 章节正文 + 可选的重试反馈（只重做被拒收的节）。 */
+/** 维护 pass 调用②的 user 提示词：可用实体清单 + 该章既有抽取记录（防重）+ 章节正文 + 可选的重试反馈（只重做被拒收的节）。 */
 export function buildExtractionUserPrompt(
   chapter: WriterEntity,
   refs: { characters: readonly string[]; plots: readonly string[] },
   retryFeedback?: readonly string[],
   retrySections?: readonly ('facts' | 'foreshadowEvents' | 'characterStates')[],
+  existing?: { facts: readonly string[]; foreshadowEvents: readonly string[] },
 ): string {
   const parts = [
     '## 可用实体清单',
     `人物 id：${refs.characters.length > 0 ? refs.characters.join('、') : '（无）'}`,
     `伏笔 id：${refs.plots.length > 0 ? refs.plots.join('、') : '（无）'}`,
+  ]
+  // 轮次 31（吸收上游 T2）：改稿链（full→rewrite 内容已变）重抽时注入改稿前的既有记录，
+  // 防同内容建议重复产出（此前仅靠 UI 端跨 pass 去重兜底）
+  if (existing !== undefined && (existing.facts.length > 0 || existing.foreshadowEvents.length > 0)) {
+    const lines = [
+      ...existing.facts.map((f) => `- fact：${f}`),
+      ...existing.foreshadowEvents.map((e) => `- foreshadow：${e}`),
+    ]
+    parts.push(`## 该章改稿前的既有抽取记录（防重参考：仍成立的不要重复输出；已不成立的可直接忽略，不要输出「已失效」条目）\n${lines.join('\n')}`)
+  }
+  parts.push(
     `## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）`,
     chapter.content,
-  ]
+  )
   if (retryFeedback !== undefined && retryFeedback.length > 0) {
     const sectionNote = retrySections !== undefined && retryFeedback.length > 0
       ? `本次只需重新输出以下节（JSON 对象可只含这些节，已通过的节无需重发）：${retrySections.join('、')}。`

@@ -211,6 +211,51 @@ test('assembleWritingContext：planned_chapter 脏值按缺失处理（不误触
   assert.ok(foreshadow.body.includes('dirty'))
 })
 
+test('assembleWritingContext：resolve_chapter 回收锚（轮次 31）——到期/逾期红线、未来锚黄档提示', () => {
+  const due = entity('plot', 'r-due', { status: 'planted', planted_chapter: '001', planned_chapter: '001', resolve_chapter: '003' }, '到期回收伏笔。')
+  const overdueR = entity('plot', 'r-overdue', { status: 'planted', planted_chapter: '001', planned_chapter: '001', resolve_chapter: '002' }, '逾期回收伏笔。')
+  const future = entity('plot', 'r-future', { status: 'planted', planted_chapter: '001', planned_chapter: '001', resolve_chapter: '006' }, '未来回收伏笔。')
+  const r = assembleWritingContext({
+    chapterNumber: 3,
+    principles, outline,
+    chapters: [ch1, ch2],
+    characters: [],
+    plots: [due, overdueR, future],
+    budgetChars: 8000,
+  })
+  const body = r.sections.find((s) => s.title === '伏笔指令')!.body
+  assert.ok(body.includes('r-due') && body.includes('本章必须回收'), 'resolve_chapter=本章 → 红线必须回收')
+  assert.ok(body.includes('r-overdue') && body.includes('已逾期未回收'), 'resolve_chapter 已过 → 红线逾期回收')
+  assert.ok(body.includes('r-future') && body.includes('计划第 6 章回收'), '未来回收锚 → 黄档附计划提示')
+  assert.ok(!body.slice(body.indexOf('r-future')).includes('🔴'), '未来回收锚不触发红线')
+  // 脏值与缺失同语义：不误触红线
+  const dirtyR = entity('plot', 'r-dirty', { status: 'planned', resolve_chapter: '终章' }, '脏回收锚。')
+  const rd = assembleWritingContext({
+    chapterNumber: 3, principles, outline, chapters: [], characters: [], plots: [dirtyR], budgetChars: 8000,
+  })
+  assert.ok(!rd.sections.find((s) => s.title === '伏笔指令')!.body.includes('回收（resolve）'), 'planned + 脏 resolve 锚不触回收红线')
+})
+
+test('assembleWritingContext：更早章节档新鲜摘要优先、缺失退标题行（轮次 31）', () => {
+  const ch3 = entity('chapter', '003', { number: 3 }, '第三章正文。')
+  const ch4 = entity('chapter', '004', { number: 4 }, '第四章正文。')
+  const r = assembleWritingContext({
+    chapterNumber: 4,
+    principles, outline,
+    chapters: [ch1, ch2, ch3, ch4],
+    characters: [],
+    plots: [],
+    chapterSummaries: { '001': '绿焰初现的雨夜。' },
+    budgetChars: 10000,
+  })
+  const earlier = r.sections.find((s) => s.title.includes('更早章节'))
+  assert.ok(earlier !== undefined)
+  // 前一章 = ch3（全文注入）；更早档 = ch2、ch1：001 有新鲜摘要、002 无（标题行）
+  assert.ok(earlier.body.includes('绿焰初现的雨夜'), '有新鲜摘要的章注入摘要')
+  assert.ok(!earlier.body.includes('第二章正文'), '无摘要的章退标题行（不注入正文）')
+  assert.ok(/- 第 2 章 002\n/.test(earlier.body + '\n'), '标题行形态保留')
+})
+
 test('extractChapterOutline：小节到任意级别标题行终止（不吞入后续卷/附录）', () => {
   const content = '# 大纲\n### 第 2 章 残页\n- 要点\n## 第二卷 新篇\n- 卷级内容'
   assert.equal(extractChapterOutline(content, 2), '### 第 2 章 残页\n- 要点')
