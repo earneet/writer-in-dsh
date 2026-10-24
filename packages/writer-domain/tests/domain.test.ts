@@ -62,10 +62,20 @@ test('stripContinuationRepetition：连续 ≥3 句复述段剔除、离散呼�
   const light = stripContinuationRepetition(existing, '全新一句。屋里静。又一新句。')
   assert.equal(light.removedCount, 0)
   assert.equal(light.kept, '全新一句。屋里静。又一新句。')
-  // 剔除段末尾的段落分隔空白保留，防剔除后段落粘连（'新句一。'的尾随 \n\n + 被剔段末尾空白）
+  // 剔除段两侧的段落分隔恰一份（轮次 30 修复：kept piece 已带空白时 tail 不再补，防翻倍落盘）
   const spaced = stripContinuationRepetition(existing, '新句一。\n\n夜里落雨。屋里静。她收了伞。\n\n新句二。')
   assert.equal(spaced.removedCount, 3)
-  assert.match(spaced.kept, /^新句一。\n+新句二。$/, `段落分隔保留（got: ${JSON.stringify(spaced.kept)}`)
+  assert.equal(spaced.kept, '新句一。\n\n新句二。')
+  // 反例：被剔 run 前的 kept piece 无尾随空白（同段连写）→ tail 必须补，防段落粘连
+  const glued = stripContinuationRepetition(existing, '新句。夜里落雨。屋里静。她收了伞。\n\n新句二。')
+  assert.equal(glued.kept, '新句。\n\n新句二。')
+  // CRLF 输入同口径（parseFrontmatter 之外的正文级 CRLF 容错）：空白归一后同样不翻倍
+  const crlf = stripContinuationRepetition(existing, '新句一。\r\n\r\n夜里落雨。屋里静。她收了伞。\r\n\r\n新句二。')
+  assert.equal(crlf.kept.replace(/\r/g, ''), '新句一。\n\n新句二。')
+  // 两个独立 ≥3 句复述 run：removedCount 累计
+  const twice = stripContinuationRepetition('甲一。甲二。甲三。乙一。乙二。乙三。', '甲一。甲二。甲三。新句。乙一。乙二。乙三。')
+  assert.equal(twice.removedCount, 6)
+  assert.equal(twice.kept, '新句。')
 })
 
 test('guardContinuation：全重复/剩余过短整轮拒绝（宁短勿重），正常续写原样放行', () => {

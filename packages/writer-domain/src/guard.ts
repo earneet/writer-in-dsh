@@ -13,6 +13,7 @@ export type BusinessErrorCategory =
   | 'illegal-transition'
   | 'not-found'
   | 'validation'
+  | 'repeat-reject'
 
 /**
  * 抛错失败（isError）的分类模式表：**行首锚定**与本仓 tools/engine/store/domain 的实际错误措辞
@@ -20,12 +21,15 @@ export type BusinessErrorCategory =
  */
 const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> = [
   ['optimistic-lock', /^乐观锁失败|^实体已存在：/],
-  ['parse', /^(审稿输出|维护 pass 抽取输出|一致性检查某批次输出|frontmatter 行)无法解析|^milestones JSON 解析失败|^(milestones|timeline) (必须是 JSON|JSON 解析失败)|^(milestones|timeline)\[|rewrite 全文输出疑似补丁 JSON|^assist 续写输出为正文复述/],
+  ['parse', /^(审稿输出|维护 pass 抽取输出|一致性检查某批次输出|frontmatter 行)无法解析|^milestones JSON 解析失败|^(milestones|timeline) (必须是 JSON|JSON 解析失败)|^(milestones|timeline)\[|rewrite 全文输出疑似补丁 JSON/],
   ['reference-reject', /^引用不存在|^fact「.*」引用不存在的实体|^foreshadowEvent 引用不存在的伏笔|^characterState 引用不存在的人物/],
   ['illegal-transition', /^伏笔状态非法迁移/],
   ['not-found', /^(实体不存在|章节不存在|伏笔实体不存在|人物实体不存在)/],
   // 「未知X」家族含无空格变体（未知导出格式：/未知实体种类：）——\s? 兼容两种措辞
   ['validation', /^未知\s?(action|mode|实体种类|写作模式|导出格式)|^focus (无有效维度|含无效维度)|milestone_type 非法|章节 id 必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|(max_results|chapter_limit) 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON|实体 .* 是单文件实体|^timeline (章节锚非法|state 不能为空)|^现有 timeline 非法，拒绝追加|^character\/.+ 的 timeline 字段非法/],
+  // 续写复述拒绝：模型输出质量问题（非 schema 解析失败）——独立预算与纠偏提示（轮次 30：
+  // 归 parse 会挤占解析失败预算且触发「按 JSON schema 输出」的错向指引）
+  ['repeat-reject', /^assist 续写输出为正文复述/],
 ]
 
 /**
@@ -44,6 +48,7 @@ const CATEGORY_HINTS: Readonly<Record<BusinessErrorCategory, string>> = {
   'illegal-transition': '状态机非法迁移频发：先 writer_read 确认当前状态，按 plant/resolve/abandon 合法迁移路径操作。',
   'not-found': '实体不存在频发：先用 writer_read 不带 id 列清单，再按清单中的实际 id 读取。',
   validation: '参数校验失败频发：逐项核对工具参数（mode/action/entity 的合法值、必填项）。',
+  'repeat-reject': '续写复述频发：续写必须从现有结尾的下一个叙事节拍展开全新内容，禁止重写/复述已有段落（尤其收束、动作清单类内容）。',
 }
 
 /**

@@ -49,7 +49,7 @@ export const Config: Schema<Config> = Schema.object({
   externalModel: Schema.string().description('backend=external 时的 embedding 模型 id（该档必填）'),
   externalApiKeyEnv: Schema.string().default('WRITER_RAG_API_KEY').description('backend=external 时读 API key 的环境变量名'),
   semanticCandidates: Schema.number().default(15).min(3).max(50).description('语义档参与打分的候选块数'),
-  semanticMinScore: Schema.number().default(0.28).min(0).max(1).description('语义腿相关度阈值（轮次 29，吸收上游 R-2）：external 档为余弦相似度下限、llm 档换算为 0-10 分下限（×10）；低于阈值的候选不进 RRF 融合，防无关块挤占增强注入预算；0 关闭'),
+  semanticMinScore: Schema.number().default(0.28).min(0).max(1).description('语义腿相关度阈值（轮次 29，吸收上游 R-2）：external 档为余弦相似度下限、llm 档换算为 0-10 分下限（×10）；低于阈值的候选不进 RRF 融合，防无关块挤占增强注入预算；0 视为关闭（external 档负余弦候选仍会被滤除——负相关块本就不该进语义排名）'),
   chunkChars: Schema.number().default(600).min(100).description('章节切片字符数'),
   chunkOverlap: Schema.number().default(80).min(0).description('章节切片重叠字符数'),
   snippetChars: Schema.number().default(280).min(50).description('命中 snippet 截断字符数'),

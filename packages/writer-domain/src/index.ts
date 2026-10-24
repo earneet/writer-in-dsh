@@ -665,9 +665,12 @@ export function stripContinuationRepetition(existing: string, continued: string)
   const flushRun = (endExclusive: number): void => {
     if (runLen >= CONTINUATION_REPEAT_MIN_SENTENCES) {
       removedCount += runLen
-      // 保留被剔段末尾的段落分隔空白，防剔除后段落粘连
+      // 保留被剔段末尾的段落分隔空白，防剔除后段落粘连——但上一 kept piece 已以空白结尾时
+      // （句切分 \s* 把段落空白挂在 piece 尾部）不再补，防分隔空白翻倍落盘累积（上游同款缺陷，
+      // 轮次 30 修复）
       const tail = pieces[endExclusive - 1]?.match(/\s*$/)?.[0] ?? ''
-      if (tail.length > 0) keptPieces.push(tail)
+      const lastKept = keptPieces.length > 0 ? keptPieces[keptPieces.length - 1] : ''
+      if (tail.length > 0 && !/\s$/.test(lastKept)) keptPieces.push(tail)
     } else if (runStart >= 0) {
       keptPieces.push(...pieces.slice(runStart, endExclusive))
     }
