@@ -89,7 +89,8 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 28（上游同步 + 复审）：子模块更新至 novel-writer b23e01d0 / dsh 0.2.1-rc.2 后两线复审。结论：dsh 七个消费面零破坏，唯一实质风险是版本矩阵（宿主升 0.2.1 需机械替换 12 包钉版本，维持 0.2.0-rc.2 则零动作）；novel-writer 写作域差距 2 高（尾部复述剔除纯函数、RAG 语义相关度阈值）4 中 4 低，autopilot/审稿结构化/分段抽取等确认等价无需动作（详见 implementation-plan §8 轮次 28）。
 - 轮次 29（两高价值差距实施）：①assist 续写复述守卫（domain stripContinuationRepetition/guardContinuation + engine 接线 + 工具回执告警，上游 T5）；②writer-rag 语义相关度阈值 semanticMinScore（默认 0.28，向量/打分层过滤不进 RRF，上游 R-2）。264/264 全过（详见 implementation-plan §8 轮次 29）。
 - 轮次 30（修改后审查）：两线复审轮次 29 改动后修复 4 项——段落空白翻倍（上游同款缺陷，tail 补推前查 kept 末尾空白）、guard 新增 repeat-reject 独立类别（硬抛错为有意偏离上游软结果，留痕）、UI 复述告警链路补齐（parse/卡片/面板/契约）、semanticMinScore 文案精度。265/265 全过（详见 implementation-plan §8 轮次 30）。
-- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 30 后单测 265/265。
+- 轮次 31（中价值差距 4 项）：①maxOutputTokens 默认 65536（reasoning token 计入输出预算）；②维护 pass 抽取注入既有记录防重（上游 T2）；③resolve_chapter 回收锚（planted 伏笔到期/逾期红线 + 未来锚黄档提示，上游 S-1；UI 投影留 backlog）；④更早章节档新鲜摘要优先（上游 W-5 裁量版，RAG 仍为第二层）。268/268 全过（详见 implementation-plan §8 轮次 31）。
+- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 31 后单测 268/268。
 - 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/27。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。
