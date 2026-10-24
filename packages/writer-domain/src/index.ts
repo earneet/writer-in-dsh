@@ -613,6 +613,8 @@ export interface ChapterWriteResult {
   mode: ChapterWriteMode
   patchStats?: { applied: number; skipped: number; skippedReasons: string[] }
   droppedSentences?: string[]
+  /** assist 模式复述剔除句数（>0 表示续写输出有连续复述段被剔除后落盘）。 */
+  repetitionStripped?: number
 }
 
 // P3 治理：维护 pass 分节 schema/校验（maintenance.ts）与一致性检查纯函数（consistency.ts）
@@ -630,4 +632,75 @@ export * from './pending.ts'
 /** 码点安全截断（避免 UTF-16 slice 切开代理对产生孤立代理项；emoji/扩展区汉字场景）。 */
 export function truncateCodePoints(text: string, max: number): string {
   return Array.from(text).slice(0, max).join('')
+}
+
+// —— 续写尾部复述剔除（轮次 29，吸收上游 novel-writer T5 fc383829）——
+
+/** 剔除连续复述句段的最小句数阈值（低于此为离散呼应，不剔防误杀）。 */
+export const CONTINUATION_REPEAT_MIN_SENTENCES = 3
+/** 剔除后剩余有效长度低于此值（且原输出不短于它）视为全重复，整轮拒绝（宁短勿重）。 */
+export const MIN_EFFECTIVE_CONTINUATION_CHARS = 200
+
+/**
+ * 续写产物复述剔除：续写内容中连续 ≥3 句均已存在于原正文的句段判定为复述并剔除，
+ * 返回剩余内容与剔除句数。全量交叉（复述可来自正文任意位置）；句切分保留标点与
+ * 尾随空白，剔除后段落结构不丢。
+ *
+ * 动机（上游生产实证，references/novel-writer fc383829）：续写指令「不重复已有内容」
+ * 对 LLM 面对尾部上下文的复述倾向无效——代码层剔除是主防线，提示词只是辅防线。
+ */
+export function stripContinuationRepetition(existing: string, continued: string): { kept: string; removedCount: number } {
+  const splitKeep = (text: string): string[] => text.match(/[^。！？!?]*[。！？!?]\s*|[^。！？!?]+$/g) ?? []
+  const normalize = (sentence: string): string => sentence.replace(/\s+/g, '')
+  // 原文句集合（空白归一；门槛 ≥2 = 任意非空句——复述段中的短句同样是证据，
+  // 滤掉会把连续 run 拆散漏检）
+  const existingSentences = new Set(
+    splitKeep(existing).map((s) => normalize(s)).filter((s) => s.length >= 2),
+  )
+  const pieces = splitKeep(continued)
+  const keptPieces: string[] = []
+  let removedCount = 0
+  let runStart = -1
+  let runLen = 0
+  const flushRun = (endExclusive: number): void => {
+    if (runLen >= CONTINUATION_REPEAT_MIN_SENTENCES) {
+      removedCount += runLen
+      // 保留被剔段末尾的段落分隔空白，防剔除后段落粘连
+      const tail = pieces[endExclusive - 1]?.match(/\s*$/)?.[0] ?? ''
+      if (tail.length > 0) keptPieces.push(tail)
+    } else if (runStart >= 0) {
+      keptPieces.push(...pieces.slice(runStart, endExclusive))
+    }
+    runStart = -1
+    runLen = 0
+  }
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i] ?? ''
+    const norm = normalize(piece)
+    const isRepeat = norm.length >= 2 && existingSentences.has(norm)
+    if (isRepeat) {
+      if (runStart < 0) runStart = i
+      runLen += 1
+    } else {
+      if (runStart >= 0) flushRun(i)
+      keptPieces.push(piece)
+    }
+  }
+  if (runStart >= 0) flushRun(pieces.length)
+  return { kept: keptPieces.join(''), removedCount }
+}
+
+/**
+ * 续写守卫决策：先剔复述，再判「宁短勿重」——剔除后无有效新内容（空，或原输出
+ * 达到最小有效长度而剩余低于它）时拒绝整轮，返回 undefined 并由调用方响亮失败；
+ * 正常时返回应落盘的续写内容（未检出复述时原样返回）。
+ */
+export function guardContinuation(existing: string, continuation: string): { content: string; removedCount: number } | undefined {
+  const { kept, removedCount } = stripContinuationRepetition(existing, continuation)
+  const effective = kept.trim()
+  if (removedCount > 0 && (effective.length === 0
+    || (effective.length < MIN_EFFECTIVE_CONTINUATION_CHARS && continuation.trim().length >= MIN_EFFECTIVE_CONTINUATION_CHARS))) {
+    return undefined
+  }
+  return { content: removedCount > 0 ? effective : continuation.trim(), removedCount }
 }

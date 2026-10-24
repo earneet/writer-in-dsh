@@ -581,6 +581,9 @@ function renderWriteResult(result: import('dsh-writer-domain').ChapterWriteResul
     if (result.patchStats.skipped > 0) lines.push('  ⚠ 有补丁未命中（锚点不在原文或歧义命中），对应位置未被改动——请核对后决定是否重试')
     for (const reason of result.patchStats.skippedReasons) lines.push(`  - 跳过：${reason}`)
   }
+  if (result.repetitionStripped !== undefined && result.repetitionStripped > 0) {
+    lines.push(`⚠ 复述守卫：续写输出有 ${result.repetitionStripped} 句与正文重复的连续句段被剔除后才落盘（其余内容为新增）`)
+  }
   if (result.droppedSentences !== undefined && result.droppedSentences.length > 0) {
     lines.push(`⚠ 丢句守卫告警（共 ${result.droppedSentences.length} 条原句未保留${result.droppedSentences.length > 10 ? '，仅列前 10 条' : ''}，请人工复核是否为有意删除）：`)
     for (const sentence of result.droppedSentences.slice(0, 10)) lines.push(`  - ${sentence}`)

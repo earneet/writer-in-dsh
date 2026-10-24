@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  parseFrontmatter, serializeEntity, contentHash, transitionForeshadow,
+  parseFrontmatter, serializeEntity, contentHash, transitionForeshadow, stripContinuationRepetition, guardContinuation,
 } from '../src/index.ts'
 
 test('parseFrontmatter：CRLF + BOM 归一', () => {
@@ -49,6 +49,39 @@ test('parseFrontmatter：闭合 --- 无尾换行（EOF 手编文件）', () => {
   const p = parseFrontmatter('---\na: 1\n---')
   assert.deepEqual(p.frontmatter, { a: 1 })
   assert.equal(p.content, '')
+})
+
+test('stripContinuationRepetition：连续 ≥3 句复述段剔除、离散呼应保留、段落空白不丢（轮次 29）', () => {
+  const existing = '夜里落雨。屋里静。她收了伞。灯芯忽地一跳。'
+  // 续写中部连续复述 3 句（可来自正文任意位置——全量交叉），前后是新增句
+  const continued = '新的开场句。夜里落雨。屋里静。她收了伞。后续新内容句。'
+  const r = stripContinuationRepetition(existing, continued)
+  assert.equal(r.removedCount, 3)
+  assert.equal(r.kept, '新的开场句。后续新内容句。')
+  // 单句/双句离散呼应低于阈值不剔（防误杀）
+  const light = stripContinuationRepetition(existing, '全新一句。屋里静。又一新句。')
+  assert.equal(light.removedCount, 0)
+  assert.equal(light.kept, '全新一句。屋里静。又一新句。')
+  // 剔除段末尾的段落分隔空白保留，防剔除后段落粘连（'新句一。'的尾随 \n\n + 被剔段末尾空白）
+  const spaced = stripContinuationRepetition(existing, '新句一。\n\n夜里落雨。屋里静。她收了伞。\n\n新句二。')
+  assert.equal(spaced.removedCount, 3)
+  assert.match(spaced.kept, /^新句一。\n+新句二。$/, `段落分隔保留（got: ${JSON.stringify(spaced.kept)}`)
+})
+
+test('guardContinuation：全重复/剩余过短整轮拒绝（宁短勿重），正常续写原样放行', () => {
+  const existing = '夜里落雨。屋里静。她收了伞。灯芯忽地一跳。'
+  // 整段回声：剔除后无有效新内容 → 拒绝（undefined）
+  assert.equal(guardContinuation(existing, '夜里落雨。屋里静。她收了伞。'), undefined)
+  // 剩余过短且原输出达到最小有效长度（总长 203 ≥ 200，剔除复述后仅 188 < 200）→ 拒绝（宁短勿重）
+  const mostly = `夜里落雨。屋里静。她收了伞。${'新内容。'.repeat(47)}`
+  assert.equal(guardContinuation(existing, mostly), undefined)
+  // 无复述：原样返回（trim 后），removedCount 0
+  const fresh = guardContinuation(existing, '  她推门而出，走进雨幕深处。  ')
+  assert.deepEqual(fresh, { content: '她推门而出，走进雨幕深处。', removedCount: 0 })
+  // 部分剔除后仍有足量新内容：返回剔除后内容
+  const partial = guardContinuation(existing, `新的开场。夜里落雨。屋里静。她收了伞。${'后续推进。'.repeat(50)}`)
+  assert.ok(partial !== undefined && partial.removedCount === 3)
+  assert.ok(partial!.content.startsWith('新的开场。') && !partial!.content.includes('屋里静'))
 })
 
 test('serializeEntity 往返与键排序（字符串值引号化）', () => {

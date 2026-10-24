@@ -15,7 +15,7 @@ import { promisify } from 'node:util'
 import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import {
   applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions, inspectTimelines,
-  extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, parseConsistencyBatchOutput,
+  extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, guardContinuation, parseConsistencyBatchOutput,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
   renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
   type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport, type ExtractionSectionName,
@@ -486,11 +486,18 @@ export default class WriterEngineServiceImpl extends EngineService {
     const system = buildWriteSystemPrompt('assist')
     const user = buildWriteUserPrompt(assembled, 'assist')
     const continuation = await this.generate(system, user, request.signal)
-    const merged = mergeAssistContent(chapter.content, continuation.trim())
+    // 尾部复述守卫（轮次 29，吸收上游 T5 生产实证）：「不重复已有内容」指令防不住 LLM
+    // 面对尾部上下文的复述倾向——代码层剔除为主防线；剔除后无有效新内容则整轮拒绝（宁短勿重）
+    const guarded = guardContinuation(chapter.content, continuation.trim())
+    if (guarded === undefined) {
+      throw new Error('assist 续写输出为正文复述（剔除复述句段后无有效新内容），拒绝落盘；请调整续写指令（从现有结尾的下一个叙事节拍展开，禁止重写已有段落）后重试')
+    }
+    const merged = mergeAssistContent(chapter.content, guarded.content)
     const saved = await this.ctx.writer.save(
       'chapter', request.chapterId, { content: merged }, chapter.hash,
     )
     const result: ChapterWriteResult = { chapter: saved, mode: 'assist' }
+    if (guarded.removedCount > 0) result.repetitionStripped = guarded.removedCount
     this.ctx.emit('writer/chapter-written', result)
     return result
   }
