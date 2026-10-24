@@ -140,6 +140,19 @@ test('引擎缺席降级：write/review/consistency/recompute/maintenance_flush 
   }
 })
 
+test('review_chapter：focus 混入非法维度响亮报错（部分非法不静默丢弃）', async () => {
+  const engine = { reviewChapter: async () => ({ suggestions: [], summary: '干净' }) }
+  const { tools } = makeCtx({
+    list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应到达') }, root: '.',
+  }, engine)
+  const review = tools.get('review_chapter')!
+  await assert.rejects(
+    review.execute({ chapter: '001', focus: '情节一致性,文笔' }, exec),
+    /focus 含无效维度：文笔/,
+  )
+  assert.match(await review.execute({ chapter: '001', focus: '情节一致性' }, exec), /审稿完成/)
+})
+
 test('export/rag 缺席降级：export_book / writer_search 返回未启用', async () => {
   const { tools } = makeCtx({
     list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应到达') }, root: '.',

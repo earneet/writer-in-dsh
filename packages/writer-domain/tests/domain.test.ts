@@ -45,6 +45,12 @@ test('parseFrontmatter：坏行抛错', () => {
   assert.throws(() => parseFrontmatter('---\n没有冒号的行\n---\nx'))
 })
 
+test('parseFrontmatter：闭合 --- 无尾换行（EOF 手编文件）', () => {
+  const p = parseFrontmatter('---\na: 1\n---')
+  assert.deepEqual(p.frontmatter, { a: 1 })
+  assert.equal(p.content, '')
+})
+
 test('serializeEntity 往返与键排序（字符串值引号化）', () => {
   const s = serializeEntity({ b: 2, a: 'x' }, '正文\n')
   assert.ok(s.startsWith('---\na: "x"\nb: 2\n---\n'))

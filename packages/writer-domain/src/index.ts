@@ -49,10 +49,16 @@ export function parseFrontmatter(raw: string): { frontmatter: Frontmatter; conte
   // CRLF 归一：外部编辑器（Windows）保存的文件统一按 \n 语义解析
   const text = raw.startsWith('\uFEFF') ? raw.slice(1).replaceAll('\r\n', '\n') : raw.replaceAll('\r\n', '\n')
   if (!text.startsWith('---\n')) return { frontmatter: {}, content: text }
-  const end = text.indexOf('\n---\n', 4)
+  // 闭合定界符两种形态：标准 `\n---\n`，以及手编文件以 `\n---` 结尾（EOF 无尾换行）
+  let end = text.indexOf('\n---\n', 4)
+  let closeLen = 5
+  if (end < 0 && text.endsWith('\n---')) {
+    end = text.length - 4
+    closeLen = 4
+  }
   if (end < 0) return { frontmatter: {}, content: text }
   const block = text.slice(4, end)
-  const content = text.slice(end + 5)
+  const content = text.slice(end + closeLen)
   const frontmatter: Frontmatter = {}
   for (const line of block.split('\n')) {
     const trimmed = line.trim()

@@ -152,9 +152,10 @@ export function apply(ctx: Context): void {
       const engine = getEngine(ctx)
       if ('unavailable' in engine) return engine.unavailable
       const focus = args.focus?.split(/[,，、]/).map((s) => s.trim()).filter((s) => s.length > 0)
-      // 无效维度名会静默滤空全部建议（模型误判「章节无问题」）——空交集响亮报错并列出合法值
-      if (focus !== undefined && focus.length > 0 && !focus.some((f) => (REVIEW_DIMENSIONS as readonly string[]).includes(f))) {
-        throw new Error(`focus 无有效维度：${focus.join('、')}（合法维度：${REVIEW_DIMENSIONS.join(' / ')}）`)
+      // 无效维度名会被引擎静默滤掉（部分非法时模型可能误判「该维度已审且无问题」）——任何非法项都响亮报错并列出合法值
+      const invalid = focus?.filter((f) => !(REVIEW_DIMENSIONS as readonly string[]).includes(f)) ?? []
+      if (invalid.length > 0) {
+        throw new Error(`focus 含无效维度：${invalid.join('、')}（合法维度：${REVIEW_DIMENSIONS.join(' / ')}）`)
       }
       const report = await engine.reviewChapter(args.chapter, focus, exec.signal)
       if (report.suggestions.length === 0) {

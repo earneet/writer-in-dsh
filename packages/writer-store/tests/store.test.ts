@@ -56,6 +56,18 @@ test('H1 回归：无锁 save 已存在实体被拒（防 "new" 静默覆盖）'
   }
 })
 
+test('IO 错区分：非 ENOENT 读失败响亮报错（不误判「实体不存在」）', async () => {
+  const { store, root } = await makeStore()
+  try {
+    // 用同名目录占据实体路径：readFile 得到 EPERM/EISDIR（非 ENOENT），
+    // 旧实现会吞错返回 undefined → get 软失败「实体不存在」+ 无锁 create 可覆盖
+    await mkdir(join(root, 'chapters/001.md'), { recursive: true })
+    await assert.rejects(() => store.get('chapter', '001'), /实体文件读取失败/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('乐观锁指向不存在的实体被拒', async () => {
   const { store, root } = await makeStore()
   try {

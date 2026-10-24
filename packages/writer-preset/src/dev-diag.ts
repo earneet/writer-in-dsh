@@ -30,4 +30,6 @@ export function apply(ctx: any): void {
       await writeFile(join(process.cwd(), 'dev-diag.json'), JSON.stringify({ at: new Date().toISOString(), error: String(error?.stack ?? error) }, null, 2)).catch(() => {})
     }
   }, 2000)
+  // 插件卸载时停表，避免计时器在 dispose 后继续轮询/写 dev-diag.json
+  ctx.on('dispose', () => clearInterval(timer))
 }

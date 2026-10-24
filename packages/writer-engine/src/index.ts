@@ -283,9 +283,9 @@ export default class WriterEngineServiceImpl extends EngineService {
     const baselineChars = Math.floor(this.genParams.contextBudgetChars / 2)
     const baseline = {
       principles: principles?.content,
-      outline: outline?.content.slice(0, baselineChars),
+      outline: outline !== undefined ? truncateCodePoints(outline.content, baselineChars) : undefined,
       plotsBrief: plots.length > 0 ? brief(plots, 120) : undefined,
-      eventsBrief: events?.content.slice(0, Math.floor(baselineChars / 2)),
+      eventsBrief: events !== undefined ? truncateCodePoints(events.content, Math.floor(baselineChars / 2)) : undefined,
     }
     const baselineUsed = Object.values(baseline).reduce((sum, s) => sum + (s?.length ?? 0), 0)
     const batchBudget = Math.max(1000, this.genParams.contextBudgetChars - baselineUsed)

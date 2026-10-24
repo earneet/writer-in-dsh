@@ -6,8 +6,9 @@
 
 ## 机制
 
-本包是一个 bundle（`dsh.bundle.patch` → `cordis.patch.yml`），patch 只插入一条
-`@deepseek-ai/dsh-agent-preset` 声明行。声明机制见宿主文档
+本包是一个 bundle（`dsh.bundle.patch` → `cordis.patch.yml`），patch 插入两行：全局层的
+`dsh-writer-ui`（写作面板客户端插件——clientModules 扫描要求全局挂载，不能放进会话级 plugins）
+与一条 `@deepseek-ai/dsh-agent-preset` 声明行。声明机制见宿主文档
 `packages/preset/agent-preset/README.zh.md`；内置预设（standard/ptc/cordis/minimal）
 来自 `dsh-web-app` bundle，本包按同一方言追加自定义预设。
 
@@ -15,6 +16,7 @@
 
 | 层 | 行 | 说明 |
 |---|---|---|
+| 全局 | `dsh-writer-ui` | 写作面板客户端插件（侧边栏 + 工具富卡片），所有会话可见 |
 | 人设 | `dsh-persona` | 长篇小说协作写作助手身份 + 开场加载 writer-onboarding 技能 |
 | 基础 | `dsh-agent-instructions` / `tool-fs` / `tool-skill` / `tool-todo` / `tool-ask-user` / 平台 shell | 读稿件与 pending.md、加载写作技能、向作者提问 |
 | 写作 | `dsh-writer-store→engine→skills→export→rag→guard→tools` | 全部 dsh-writer 插件，挂载序与 dsh-writer-bundle 一致 |

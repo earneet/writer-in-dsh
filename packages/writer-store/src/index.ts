@@ -198,7 +198,8 @@ export default class WriterStoreService extends WriterService {
   async writeDerived(kind: string, id: string, value: unknown): Promise<void> {
     const abs = this.derivedPath(kind, id)
     await mkdir(dirname(abs), { recursive: true })
-    const tmpPath = `${abs}.tmp`
+    // 唯一 tmp 名（与 engine recoverySnapshot 同范式）：无串行化链时并发写者不共用 tmp 互踩
+    const tmpPath = `${abs}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`
     await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf8')
     try {
       await rename(tmpPath, abs)
@@ -412,7 +413,10 @@ export default class WriterStoreService extends WriterService {
     try {
       const info = await stat(absPath)
       anchor = { mtimeMs: info.mtimeMs, size: info.size, ctimeMs: info.ctimeMs, ino: Number(info.ino) }
-    } catch {
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'ENOENT') {
+        throw new Error(`实体文件状态读取失败：${relPath}：${String(err)}`)
+      }
       this.parseCache.set(absPath, { mtimeMs: -1, size: -1, ctimeMs: -1, ino: -1, entity: undefined })
       return undefined
     }
@@ -439,8 +443,11 @@ export default class WriterStoreService extends WriterService {
     let raw: string
     try {
       raw = await readFile(absPath, 'utf8')
-    } catch {
-      return undefined
+    } catch (err) {
+      // 与 readDerived 同口径：ENOENT = 实体缺席（create 路径合法）；
+      // 其他 IO 错（EACCES/EBUSY 等）静默当缺席会让 get 误报「实体不存在」、create 覆盖暂时不可读的文件——响亮失败
+      if ((err as { code?: string }).code === 'ENOENT') return undefined
+      throw new Error(`实体文件读取失败：${relPath}：${String(err)}`)
     }
     const { frontmatter, content } = parseFrontmatter(raw)
     const id = this.idOf(kind, relPath)
