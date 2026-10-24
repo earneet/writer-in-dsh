@@ -88,7 +88,8 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 27（四线全仓对抗审查）：①实现偏离/②工具与技能/③代码横切/④preset+ui 四路子代理并行审查后修复 10 项（dev overlay 过期文案、review-guide timeline 归属、focus 部分非法静默丢弃、writer_stats 技能引导、id 字符集描述、readRaw IO 错区分、writeDerived 唯一 tmp、parseFrontmatter EOF 定界、截断码点安全、dev-diag dispose）+ 2 项裁定留痕（recoverySnapshot 不暴露工具；卷子目录布局服务端暂不支持、README 已知限制明示）（详见 implementation-plan §8 轮次 27）。
 - 轮次 28（上游同步 + 复审）：子模块更新至 novel-writer b23e01d0 / dsh 0.2.1-rc.2 后两线复审。结论：dsh 七个消费面零破坏，唯一实质风险是版本矩阵（宿主升 0.2.1 需机械替换 12 包钉版本，维持 0.2.0-rc.2 则零动作）；novel-writer 写作域差距 2 高（尾部复述剔除纯函数、RAG 语义相关度阈值）4 中 4 低，autopilot/审稿结构化/分段抽取等确认等价无需动作（详见 implementation-plan §8 轮次 28）。
 - 轮次 29（两高价值差距实施）：①assist 续写复述守卫（domain stripContinuationRepetition/guardContinuation + engine 接线 + 工具回执告警，上游 T5）；②writer-rag 语义相关度阈值 semanticMinScore（默认 0.28，向量/打分层过滤不进 RRF，上游 R-2）。264/264 全过（详见 implementation-plan §8 轮次 29）。
-- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 29 后单测 264/264。
+- 轮次 30（修改后审查）：两线复审轮次 29 改动后修复 4 项——段落空白翻倍（上游同款缺陷，tail 补推前查 kept 末尾空白）、guard 新增 repeat-reject 独立类别（硬抛错为有意偏离上游软结果，留痕）、UI 复述告警链路补齐（parse/卡片/面板/契约）、semanticMinScore 文案精度。265/265 全过（详见 implementation-plan §8 轮次 30）。
+- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 30 后单测 265/265。
 - 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/27。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。
