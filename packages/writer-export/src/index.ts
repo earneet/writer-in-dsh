@@ -12,8 +12,8 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { ExportService, type ExportRequest, type ExportResult } from 'dsh-writer-core'
 import type { WriterEntity } from 'dsh-writer-domain'
 import {
-  chapterLabel, escapeHtml, renderChapterXhtml, renderContainerXml, renderContentOpf, renderHtml,
-  renderTxt, renderTocNcx, renderVolumeXhtml, type EpubManifestItem, type ExportBook, type ExportChapter, type ExportVolume,
+  chapterLabel, escapeXmlText, renderChapterXhtml, renderContainerXml, renderContentOpf, renderHtml,
+  renderTxt, renderTocNcx, renderVolumeXhtml, renderPlainXhtml, type EpubManifestItem, type ExportBook, type ExportChapter, type ExportVolume,
 } from './render.ts'
 import { buildZip } from './zip.ts'
 
@@ -165,23 +165,4 @@ function buildEpub(book: ExportBook): Uint8Array {
 /** 卷 id 计数辅助（卷首文档已入 tocItems 的数量即当前卷序号）。 */
 function volumeHrefCount(tocItems: readonly { href: string }[]): number {
   return tocItems.filter((t) => t.href.startsWith('vol')).length
-}
-
-/** 附录类 XHTML（预格式文本）。 */
-function renderPlainXhtml(title: string, text: string): string {
-  return [
-    '<?xml version="1.0" encoding="utf-8"?>',
-    '<!DOCTYPE html>',
-    '<html xmlns="http://www.w3.org/1999/xhtml">',
-    '  <head>',
-    `    <title>${escapeHtml(title)}</title>`,
-    '    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>',
-    '  </head>',
-    '  <body>',
-    `    <h2>${escapeHtml(title)}</h2>`,
-    `    <pre>${escapeHtml(text)}</pre>`,
-    '  </body>',
-    '</html>',
-    '',
-  ].join('\n')
 }

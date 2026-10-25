@@ -170,9 +170,31 @@ test('consistencyCheck：分批 + 批内真正截断 + 时间锚倒序并入', a
       assert.ok(req.user.length < 2600, `批次提示词长度 ${req.user.length} 在预算量级内`)
     }
     assert.equal(report.issues.filter((i) => i.dimension === '情节一致性').length, 2, '两批 issues 合并')
+    // 截断如实披露（上游 BIZ-02 对齐）：章头标注 + summary 覆盖后缀
+    assert.ok(setup.llm.requests.some((r) => r.user.includes('超出部分未提供——结论仅覆盖前段')), '截断章在提示词章头如实标注')
+    assert.match(report.summary, /仅审前段/, 'summary 披露截断覆盖口径')
     const inversion = report.issues.find((i) => i.dimension === '时间线一致性')
     assert.notEqual(inversion, undefined, '时间锚倒序确定性检测并入')
     assert.match(inversion!.description, /001.*晚于.*002/s)
+  } finally {
+    await rm(setup.root, { recursive: true, force: true })
+  }
+})
+
+test('consistencyCheck：单批输出无法解析降级占位，不丢弃已成功批次（上游 BIZ-04 对齐）', async () => {
+  const setup = await makeSetup({ contextBudgetChars: 2000 })
+  try {
+    await seedChapter(setup, '001', '一'.repeat(2500))
+    await seedChapter(setup, '002', '二'.repeat(200))
+    const goodJson = JSON.stringify({ summary: '批内一致', issues: [{ dimension: '情节一致性', severity: 'low', refs: ['chapter/001'], description: 'x' }] })
+    setup.llm.reply(goodJson, '这不是 JSON') // 批 1 正常，批 2 输出无法解析
+    const report = await setup.engine.consistencyCheck()
+    assert.equal(report.issues.filter((i) => i.dimension === '情节一致性').length, 1, '成功批次的 issues 不被丢弃')
+    const degraded = report.issues.find((i) => i.dimension === '检查覆盖')
+    assert.notEqual(degraded, undefined, '失败批次以检查覆盖 issue 显式标注')
+    assert.match(degraded!.description, /无法解析.*可重新执行/s)
+    assert.ok(degraded!.refs.includes('chapter/002'), '失败批次 refs 指向其章节')
+    assert.match(report.summary, /无法解析已跳过/, 'summary 披露失败批次口径')
   } finally {
     await rm(setup.root, { recursive: true, force: true })
   }

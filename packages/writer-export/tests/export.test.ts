@@ -6,7 +6,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { crc32, buildZip } from '../src/zip.ts'
 import {
-  escapeHtml, renderChapterXhtml, renderContainerXml, renderContentOpf, renderHtml, renderTxt, renderTocNcx,
+  escapeHtml, renderChapterXhtml, renderContainerXml, renderContentOpf, renderHtml, renderTxt, renderTocNcx, renderPlainXhtml, stripIllegalXmlChars,
 } from '../src/render.ts'
 const BOOK = {
   title: '测试书',
@@ -111,6 +111,31 @@ test('renderChapterXhtml：合法 XML 骨架 + 转义正文 + XHTML 1.1 DTD（EP
   assert.ok(!xhtml.includes('<script>'))
 })
 
+test('stripIllegalXmlChars：XML 1.0 非法控制字符替换 U+FFFD，合法空白保留（上游 BIZ-07 对齐）', () => {
+  const dirty = 'a\u0007b\u0007c\nd'
+  const clean = stripIllegalXmlChars(dirty)
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(clean.replace(/\uFFFD/g, '')), '非法控制字符全部剥离')
+  assert.ok(clean.includes('a'), '正常字符保留')
+  assert.ok(clean.includes('\n'), '合法换行保留')
+  assert.equal(Array.from(clean).length, Array.from(dirty).length, '逐字符替换不改变长度')
+  const xhtml = renderChapterXhtml({ number: 1, title: 't\u0007t', content: 'p1\u0007p' })
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(xhtml), '章节 XHTML 输出无非法控制字符')
+  const opf = renderContentOpf(
+    { title: "书\u0007名", author: '', volumes: [], outlineAppendix: undefined, charactersAppendix: undefined }, [], [], 'u',
+  )
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(opf), 'OPF 元数据剥离非法字符')
+  const ncx = renderTocNcx(
+    { title: '书', author: '', volumes: [], outlineAppendix: undefined, charactersAppendix: undefined },
+    [{ label: "第 1 章\u0007x", href: 'chap001.xhtml' }], 'u',
+  )
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(ncx), 'NCX 目录标签剥离非法字符')
+  const html = renderHtml({ title: '书', author: '', volumes: [{ name: '卷', chapters: [{ number: 1, title: '', content: 'p\u0007q' }] }] })
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(html), 'HTML 段落同款剥离（无害防御）')
+  const txt = renderTxt({ title: '书', author: '', volumes: [{ name: '卷', chapters: [{ number: 1, title: '', content: 'p\u0007q' }] }] })
+  assert.ok(txt.includes('p\u0007q'), 'TXT 保留原文（既定语义）')
+})
+
+
 test('stripDuplicateHeading：HTML/ePub 渲染剥离与生成标题重复的首行 markdown 标题；TXT 语义不变', () => {
   const chapter = { number: 2, title: '残页', content: '## 第二章 残页\n\n约纳斯的手一直在抖。\n\n第二段。' }
   const html = renderHtml({ title: '书', author: '', volumes: [{ name: '第一卷', chapters: [chapter] }] })
@@ -157,4 +182,10 @@ test('EPUB 结构文档：container/opf/ncx 均含必需元素且转义', () => 
   assert.match(ncx, /<content src="chap001\.xhtml"\/>/)
   assert.ok(!ncx.includes('OEBPS/'), 'NCX src 不带 OEBPS/ 前缀')
   assert.match(ncx, /<meta name="dtb:uid" content="urn:uuid:x"\/>/, 'meta 值在 content 属性（DTD 合规）')
+})
+
+test('renderPlainXhtml：附录 XHTML 同样剥离非法控制字符（审查 P1——附录是模型产物，第五个注入点）', () => {
+  const xhtml = renderPlainXhtml('附录\u0007：大纲', '大纲\u0007正文')
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(xhtml), '附录 XHTML 输出无非法控制字符')
+  assert.match(xhtml, /<pre>/, '预格式正文结构保持')
 })

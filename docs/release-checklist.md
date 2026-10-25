@@ -8,6 +8,7 @@
 - [ ] 十二包版本一致提升（包间互相依赖为精确版本 `0.1.0`，改版本须同步全部引用处）。流程：逐包 `npm version <v> -w <pkg>` 后 grep 复核旧版本字符串清零（防 bundle 拉到新旧混合依赖图）。
 - [ ] 核对十二包 `engines.node` 与 dsh 宿主包（`@deepseek-ai/dsh@0.2.0-rc.2`）的 engines 要求一致（宿主当前未声明 engines，本仓 `>=20` 为保守约束——Node 版本要求实际由宿主运行时决定）。
 - [ ] `@deepseek-ai/*` 运行时依赖与 dsh 宿主**严格同版本**（当前 `0.2.0-rc.2`；cordis `4.0.4`、schemastery `3.18.4`）——版本漂移会实例分裂致调度器崩（§8 轮次 2）。writer-preset 额外依赖的 dsh-agent-preset / dsh-persona / tool-* 等宿主包同样钉 `0.2.0-rc.2`（轮次 17 已 npm 核实可装）。
+- [ ] **升级宿主版本时（轮次 32 复审留痕）**：dsh 0.2.1-rc.3 起 ①宿主 engines 收紧至 **Node ≥24.9.0**（Node 22 支持取消），升级前先核验环境；②宿主会在配置项目根生成 `.cordis/` 目录（含 .gitignore 与 resolve.mjs），README/已知限制提一句；③12 包机械替换钉版本（含 cordis 4.0.5、schemastery 对齐宿主）+ 借机改 `engines.dsh` 范围声明，无代码适配点（七消费面零破坏；defineTool 的 output 必填自 0.2.1-rc.2 起生效，本仓 14 处已核实齐备）；④可选顺路采纳：只读工具声明 `isConcurrencySafe: true` 获并行执行、rag 自实现超时改工具级 `timeoutMs`（非法值会响亮抛错，须为正有限数）。
 - [ ] 全部包已去 `private: true`（仓库根 `writer-in-dsh` 保持 private 不发布）。
 - [ ] **lib/ 预构建形态**（P6 起）：9 个代码包 main=`lib/index.js`、types=`lib/index.d.ts`、files=`["lib"]`（skills 加 `assets`）。构建 = 根 `npm run build`（逐包 `tsc -p tsconfig.build.json`，TS 5.7+ `rewriteRelativeImportExtensions` 把 `.ts` 相对导入重写为 `.js`，零新增构建依赖）。**发布前必须先 build**（`lib/` 在 .gitignore；每包已加 `prepublishOnly: npm run build` 兜底，新 clone 直接 publish 不会产出无 lib 坏包）。
 - [ ] **构建先行是开发期新约定**：`npm test` / `npm run typecheck` 已串 build（工作区裸导入经 main 解析到 lib）；**overlay/profile 下改 domain/core 等被裸导入包的源码须先 `npm run build` 才生效**（overlay 入口指 src，但 src 内的包间裸导入走 lib）。

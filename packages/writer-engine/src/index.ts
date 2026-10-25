@@ -313,6 +313,8 @@ export default class WriterEngineServiceImpl extends EngineService {
     for (const s of styleRefs) { validRefs.add(s.id); validRefs.add(`style/${s.id}`) }
     const issues: ConsistencyReport['issues'] = []
     const summaries: string[] = []
+    const failedBatches: string[] = []
+    let truncatedChapterCount = 0
     for (const batch of batches) {
       signal?.throwIfAborted()
       const batchChapters = batch.chapters.map((id) => {
@@ -322,17 +324,42 @@ export default class WriterEngineServiceImpl extends EngineService {
         const body = input.summary !== undefined && input.summary.length > 0 ? input.summary : chapter.content
         return { id, number: typeof chapter.frontmatter['number'] === 'number' ? chapter.frontmatter['number'] : Number(id), title, body }
       })
-      // 分批截断落地：批次正文总量超预算时水fill 截断（truncated 标记与实际截断一致，不超发）
+      // 分批截断落地：批次正文总量超预算时水fill 截断（truncated 标记与实际截断一致，不超发）；
+      // 截断口径如实透传给模型（章头标注）与报告（summary 覆盖后缀），不制造「已审全文」错觉
       const truncatedBodies: TruncatedBody[] = truncateBatchBodies(batchChapters.map((c) => c.body), batchBudget)
-      const promptChapters = batchChapters.map((c, i) => ({ ...c, body: truncatedBodies[i].body }))
+      const promptChapters = batchChapters.map((c, i) => ({
+        ...c,
+        body: truncatedBodies[i].body,
+        // kept 扣除 waterfill 补推的省略号、kept/total 均码点口径（与 truncateCodePoints 一致）
+        ...(truncatedBodies[i].truncated
+          ? { bodyTruncated: { kept: Array.from(truncatedBodies[i].body).length - 1, total: Array.from(c.body).length } }
+          : {}),
+      }))
+      truncatedChapterCount += truncatedBodies.filter((t) => t.truncated).length
       const raw = await this.generate(
         buildConsistencySystemPrompt(), buildConsistencyUserPrompt(baseline, promptChapters), signal,
       )
       const parsed = parseConsistencyBatchOutput(raw, validRefs)
-      if (parsed === undefined) throw new Error(`一致性检查某批次输出无法解析（章节 ${batch.chapters.join('、')}；输出前 200 字：${raw.slice(0, 200)}）`)
+      // 单批输出无法解析：降级占位而非整次丢弃——已成功批次的报告照常产出，
+      // 失败批次以「检查覆盖」issue 显式标注可重试（对齐上游 BIZ-04 partialFailed 口径）
+      if (parsed === undefined) {
+        failedBatches.push(batch.chapters.join('、'))
+        issues.push({
+          dimension: '检查覆盖',
+          severity: 'medium',
+          refs: batch.chapters.map((id) => `chapter/${id}`),
+          description: `本批次（章节 ${batch.chapters.join('、')}）输出无法解析，结论缺失——可重新执行一致性检查重试；原始输出前 200 字：${raw.slice(0, 200)}`,
+        })
+        continue
+      }
       issues.push(...parsed.issues)
       if (parsed.summary.length > 0) summaries.push(`【${batch.chapters[0]}-${batch.chapters[batch.chapters.length - 1]}】${parsed.summary}`)
     }
+    // 覆盖口径如实披露：截断/失败批次在 summary 后缀标注（全量覆盖时不加噪音）
+    const coverageParts: string[] = []
+    if (failedBatches.length > 0) coverageParts.push(`${failedBatches.length} 个批次输出无法解析已跳过（章节：${failedBatches.join('；')}），报告未覆盖这些批次`)
+    if (truncatedChapterCount > 0) coverageParts.push(`${truncatedChapterCount} 章因批次预算截断仅审前段`)
+    if (coverageParts.length > 0) summaries.push(`（注：${coverageParts.join('；')}）`)
     // 确定性时间锚倒序检测（不调 LLM）
     for (const inversion of detectTimeInversions(inScope)) {
       issues.push({

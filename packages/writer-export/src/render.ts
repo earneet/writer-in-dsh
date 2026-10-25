@@ -42,6 +42,28 @@ export function escapeXmlAttr(text: string): string {
   return escapeHtml(text)
 }
 
+/**
+ * 剥离 XML 1.0 非法控制字符（U+0000–U+0008、U+000B、U+000C、U+000E–U+001F，
+ * 字符引用形式亦不允许），替换为 U+FFFD（可见、可定位）。
+ * 正文从 PDF/Word 粘贴易混入此类字符：界面显示正常，但导出的 XHTML 非法，
+ * epubcheck 校验失败、严格阅读器（Apple Books 等）拒载整本且用户无法定位原因。
+ * 合法 \t \n \r 不在剥离集。对齐上游 novel-writer BIZ-07（commit 84660a4e）。
+ */
+export function stripIllegalXmlChars(text: string): string {
+  let out = ''
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!
+    const illegal = code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f)
+    out += illegal ? '\uFFFD' : ch
+  }
+  return out
+}
+
+/** XML 文本节点安全转义：HTML 实体转义 + 非法控制字符剥离（XHTML 输出统一走这里）。 */
+export function escapeXmlText(text: string): string {
+  return escapeHtml(stripIllegalXmlChars(text))
+}
+
 /** 章节显示标题（无标题时退化为「第 N 章」）。 */
 export function chapterLabel(chapter: ExportChapter): string {
   return `第 ${chapter.number} 章${chapter.title.length > 0 ? ` ${chapter.title}` : ''}`
@@ -115,7 +137,7 @@ export function renderHtml(book: ExportBook): string {
     for (const chapter of volume.chapters) {
       parts.push(`<section class="chapter"><h3>${escapeHtml(chapterLabel(chapter))}</h3>`)
       for (const paragraph of stripDuplicateHeading(chapter).split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 0)) {
-        parts.push(`<p>${escapeHtml(paragraph).replaceAll('\n', '<br>')}</p>`)
+        parts.push(`<p>${escapeHtml(stripIllegalXmlChars(paragraph)).replaceAll('\n', '<br>')}</p>`)
       }
       parts.push('</section>')
     }
@@ -133,17 +155,17 @@ export function renderHtml(book: ExportBook): string {
 /** 单个 XHTML 章节文档（转义正文，段落化；EPUB 2 严格规范要求 XHTML 1.1 DTD 声明）。 */
 export function renderChapterXhtml(chapter: ExportChapter): string {
   const paragraphs = stripDuplicateHeading(chapter).split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 0)
-  const body = paragraphs.map((p) => `    <p>${escapeHtml(p).replaceAll('\n', '<br/>')}</p>`).join('\n')
+  const body = paragraphs.map((p) => `    <p>${escapeXmlText(p).replaceAll('\n', '<br/>')}</p>`).join('\n')
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">',
     '<html xmlns="http://www.w3.org/1999/xhtml">',
     '  <head>',
-    `    <title>${escapeHtml(chapterLabel(chapter))}</title>`,
+    `    <title>${escapeXmlText(chapterLabel(chapter))}</title>`,
     '    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>',
     '  </head>',
     '  <body>',
-    `    <h2>${escapeHtml(chapterLabel(chapter))}</h2>`,
+    `    <h2>${escapeXmlText(chapterLabel(chapter))}</h2>`,
     body,
     '  </body>',
     '</html>',
@@ -158,11 +180,11 @@ export function renderVolumeXhtml(volume: ExportVolume): string {
     '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">',
     '<html xmlns="http://www.w3.org/1999/xhtml">',
     '  <head>',
-    `    <title>${escapeHtml(volume.name)}</title>`,
+    `    <title>${escapeXmlText(volume.name)}</title>`,
     '    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>',
     '  </head>',
     '  <body>',
-    `    <h1>${escapeHtml(volume.name)}</h1>`,
+    `    <h1>${escapeXmlText(volume.name)}</h1>`,
     '  </body>',
     '</html>',
     '',
@@ -195,8 +217,8 @@ export function renderContentOpf(book: ExportBook, items: readonly EpubManifestI
     '<?xml version="1.0" encoding="utf-8"?>',
     '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0">',
     '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">',
-    `    <dc:title>${escapeHtml(book.title)}</dc:title>`,
-    `    <dc:creator opf:role="aut">${escapeHtml(book.author)}</dc:creator>`,
+    `    <dc:title>${escapeXmlText(book.title)}</dc:title>`,
+    `    <dc:creator opf:role="aut">${escapeXmlText(book.author)}</dc:creator>`,
     '    <dc:language>zh-CN</dc:language>',
     `    <dc:identifier id="bookid">${escapeHtml(uuid)}</dc:identifier>`,
     '  </metadata>',
@@ -216,7 +238,7 @@ export function renderContentOpf(book: ExportBook, items: readonly EpubManifestI
 export function renderTocNcx(book: ExportBook, tocItems: readonly { label: string; href: string }[], uuid: string): string {
   const navPoints = tocItems.map((item, i) => {
     const order = i + 1
-    return `    <navPoint id="nav${order}" playOrder="${order}"><navLabel><text>${escapeHtml(item.label)}</text></navLabel><content src="${escapeXmlAttr(item.href)}"/></navPoint>`
+    return `    <navPoint id="nav${order}" playOrder="${order}"><navLabel><text>${escapeXmlText(item.label)}</text></navLabel><content src="${escapeXmlAttr(item.href)}"/></navPoint>`
   })
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -227,11 +249,31 @@ export function renderTocNcx(book: ExportBook, tocItems: readonly { label: strin
     `    <meta name="dtb:uid" content="${escapeXmlAttr(uuid)}"/>`,
     '    <meta name="dtb:depth" content="1"/>',
     '  </head>',
-    `  <docTitle><text>${escapeHtml(book.title)}</text></docTitle>`,
+    `  <docTitle><text>${escapeXmlText(book.title)}</text></docTitle>`,
     '  <navMap>',
     ...navPoints,
     '  </navMap>',
     '</ncx>',
+    '',
+  ].join('\n')
+}
+
+/** 附录类 XHTML 渲染（预格式文本；同走 escapeXmlText 剥离非法 XML 控制字符——附录是模型产物，
+ * 与正文同为控制字符高危内容，BIZ-07 失败模式经附录路径同样成立）。 */
+export function renderPlainXhtml(title: string, text: string): string {
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<!DOCTYPE html>',
+    '<html xmlns="http://www.w3.org/1999/xhtml">',
+    '  <head>',
+    `    <title>${escapeXmlText(title)}</title>`,
+    '    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>',
+    '  </head>',
+    '  <body>',
+    `    <h2>${escapeXmlText(title)}</h2>`,
+    `    <pre>${escapeXmlText(text)}</pre>`,
+    '  </body>',
+    '</html>',
     '',
   ].join('\n')
 }

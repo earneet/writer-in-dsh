@@ -171,17 +171,24 @@ export function buildConsistencySystemPrompt(): string {
   ].join('\n')
 }
 
-/** 一致性检查 user 提示词：基准材料 + 本批章节（摘要优先，无摘要用正文）。 */
+/** 一致性检查 user 提示词：基准材料 + 本批章节（摘要优先，无摘要用正文）。
+ * `bodyTruncated` 提供时在章头如实标注截断口径（防「已审全文」错觉，对齐上游 BIZ-02）。 */
 export function buildConsistencyUserPrompt(
   baseline: { principles?: string; outline?: string; plotsBrief?: string; eventsBrief?: string },
-  chapters: readonly { id: string; number: number; title?: string; body: string }[],
+  chapters: readonly { id: string; number: number; title?: string; body: string; bodyTruncated?: { kept: number; total: number } }[],
 ): string {
   const parts: string[] = []
   if (baseline.principles !== undefined) parts.push(`## 创作准则（基准）\n${baseline.principles}`)
   if (baseline.outline !== undefined) parts.push(`## 大纲（基准）\n${baseline.outline}`)
   if (baseline.plotsBrief !== undefined) parts.push(`## 伏笔档案（基准）\n${baseline.plotsBrief}`)
   if (baseline.eventsBrief !== undefined) parts.push(`## 关键事件（基准）\n${baseline.eventsBrief}`)
-  const chapterBlocks = chapters.map((c) => `### 第 ${c.number} 章（chapter/${c.id}）${c.title !== undefined ? ` ${c.title}` : ''}\n${c.body}`)
+  const chapterBlocks = chapters.map((c) => {
+    const head = `### 第 ${c.number} 章（chapter/${c.id}）${c.title !== undefined ? ` ${c.title}` : ''}`
+    const note = c.bodyTruncated !== undefined
+      ? `\n（注：本章仅截取前 ${c.bodyTruncated.kept} 字符，全章共 ${c.bodyTruncated.total} 字符，超出部分未提供——结论仅覆盖前段）`
+      : ''
+    return `${head}${note}\n${c.body}`
+  })
   parts.push(`## 本批章节\n${chapterBlocks.join('\n\n')}`)
   parts.push('## 任务\n对照基准材料逐章审读，输出矛盾报告 JSON。')
   return parts.join('\n\n')
