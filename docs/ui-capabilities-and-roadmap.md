@@ -71,7 +71,7 @@
 |---|---|---|
 | `main`（keyed） | keyed | ✅ 写作面板体（key=writer-panel；**保留 key 'conversation' 不可碰**，slot-catalog.ts:1841） |
 | `sidebar.panellist` | list | ✅ 面板入口（order=20） |
-| `tool.call.toolview` | keyed | ✅ 8 张工具卡片 |
+| `tool.call.toolview` | keyed | ✅ 14 张工具卡片全覆盖（8 语义富卡片 + 6 治理工具通用卡，M1b） |
 | 右栏工作台 tab | 服务+keyed | ⬜ **两阶段注册**：① `ctx.sidebarRightTabs.register(definition)`（静态定义：id/kind/patterns/priority/title/guide/`keepMounted`/`multiple`）；② keyed seat `sidebar.right.pane.tab`（+可选 `.title`）注册 body/title，**key=definition.id，仅 key 无 label/order**（slot-catalog.ts:3262-3269）。范例：ui-sidebar-files/src/client/index.ts:81-96。需 inject `'sidebarRightTabs'`/`'sidebarRight'`。会话级持久（storage `dsh.sidebar-right.v1`）✅ |
 | 右栏程序化打开 | 服务 | ⬜ `ctx.sidebarRight.openTab(kind,{paneId,replaceTab,revealIfOpened,params})` / `openResource(address,{params})`——「点击左栏摘要→右栏展开」联动的实现路径（ui-sidebar-right/src/client/contract/slots.ts:148-158） |
 | 文件打开（面板侧） | 服务 | ⬜ 面板槽 props **无 openFile**；现实路径 = `ctx.sidebarRight.openResource('dsh-resource://file/session/<sessionId>/<path>', {params:{line}})`（第一方同款，ui-chat/src/client/apply.ts:246-258）；fallback text tab 已内建预览。sessionId：右栏 tab 槽是 standardProps，main 面板经 sessions 取活跃会话 |
@@ -90,7 +90,7 @@
 ### 1.6 数据通道
 
 - `remote.workspaceFiles.{list,read}`：✅ 已用（冷启动扫描）。
-- **`remote.workspaceFiles.changes(sessionId, target, signal)`**：⬜ **现已可用**（api/workspace-files/src/changes.ts:79，第一方 files 侧栏 watch 同款）；按文件/目录粒度，目录须在 workspaceRoot 内；fs provider 不支持 watch 时报 `workspace-file/watch-unsupported`（需降级回轮询）。
+- **`remote.workspaceFiles.changes(sessionId, target, signal)`**：✅ 已接入（M1b 数据总线增量订阅，load.ts；api/workspace-files/src/changes.ts:79，第一方 files 侧栏 watch 同款）；按文件/目录粒度，目录须在 workspaceRoot 内；fs provider 不支持 watch 时报 `workspace-file/watch-unsupported`（面板已实现降级回轮询 + 断流退避重连）。
 - `sessions`：活跃会话探测（✅ 已用）。
 
 ### 1.7 布局几何

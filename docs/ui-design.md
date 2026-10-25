@@ -26,8 +26,10 @@
 
 ## 卡片（tool.call.toolview）
 
-- 每工具一枚语义图标（write=编辑、review=审阅、stats=数据、foreshadow=分支、consistency=盾、
-  search=放大镜、timeline=时钟、export=下载）。
+- 八张语义富卡片各一枚语义图标（write=编辑、review=审阅、stats=数据、foreshadow=分支、
+  consistency=盾、search=放大镜、timeline=时钟、export=下载）；六张治理工具
+  （writer_read/writer_update/recompute_derived/archive_point/pending_cleanup/maintenance_flush）
+  复用通用 SummaryCard（M1b，无专属图标）。
 - preparing/start：`running` 微光；start 阶段解析 argsRaw 给出意图摘要。
 - result：折叠摘要 = 结论性短语 + Tag 结论色（severity/status→TagTone 映射）；展开 = 结构化
   详情（统计格/建议列表/告警行），解析失败回退原文 `<pre>`（token 着色）。

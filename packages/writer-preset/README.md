@@ -24,7 +24,8 @@
 ## 安装（需含 Web 应用的 profile）
 
 ```sh
-# 在小说项目目录启动 dsh web（projectRoot 取会话工作目录）
+# 在小说项目目录（含 novel/ 子目录）启动 dsh web（projectRoot 默认取宿主启动目录的 novel/，
+# 与 dsh-writer-bundle 同口径；Web 多工作区部署须从含 novel/ 的目录启动宿主或显式覆盖 projectRoot）
 dsh plugin add dsh-writer-preset        # 或本地路径 link: 安装
 dsh web
 # 新建会话 → 模式选择「写作模式」

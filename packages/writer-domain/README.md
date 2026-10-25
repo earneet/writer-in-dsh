@@ -4,16 +4,13 @@ novel-writer 领域纯函数库：frontmatter 解析/序列化、content_hash、
 
 ## 安装
 
-本组包面向 DeepSeek Harness（dsh）宿主，推荐经组合包安装（其余包由其拉入）：
+纯函数库，无插件行，直接按 npm 依赖引用：
 
 ```bash
-dsh plugin --profile <name> add dsh-writer-bundle
-dsh plugin --profile <name> add "@deepseek-ai/dsh-headless@0.2.0-rc.2"   # 或 dsh-web-app，app 入口必装
+npm install dsh-writer-domain
 ```
 
-## 启动
-
-从小说项目目录（含 `principles.md` / `outline.md` / `chapters/` 等）启动 dsh——projectRoot 默认取当前工作目录。
+（在 dsh 宿主内使用完整写作功能请安装组合包 `dsh-writer-bundle`——本库无宿主语义，不涉及 projectRoot/启动方式。）
 
 ## 许可
 

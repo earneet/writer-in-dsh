@@ -91,7 +91,9 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 30（修改后审查）：两线复审轮次 29 改动后修复 4 项——段落空白翻倍（上游同款缺陷，tail 补推前查 kept 末尾空白）、guard 新增 repeat-reject 独立类别（硬抛错为有意偏离上游软结果，留痕）、UI 复述告警链路补齐（parse/卡片/面板/契约）、semanticMinScore 文案精度。265/265 全过（详见 implementation-plan §8 轮次 30）。
 - 轮次 31（中价值差距 4 项）：①maxOutputTokens 默认 65536（reasoning token 计入输出预算）；②维护 pass 抽取注入既有记录防重（上游 T2）；③resolve_chapter 回收锚（planted 伏笔到期/逾期红线 + 未来锚黄档提示，上游 S-1；UI 投影留 backlog）；④更早章节档新鲜摘要优先（上游 W-5 裁量版，RAG 仍为第二层）。268/268 全过（详见 implementation-plan §8 轮次 31）。
 - 轮次 32（上游同步 + 复审 + 跟进）：子模块更新至 novel-writer c784f251 / dsh 22ddee379（0.2.1-rc.3 tag 后 1533 提交）。dsh 双路复审：七消费面零破坏、维持 0.2.0-rc.2 零动作；升级新增前置 Node ≥24.9 + .cordis/ 目录留痕（release-checklist §1）。novel-writer 跟进 3 项：writer-export 剥离 XML 非法控制字符（五类注入点，上游 BIZ-07）、一致性检查单批失败降级 + partialFailed 口径（BIZ-04）、批次截断如实披露（BIZ-02）；对抗审查后修 P1 附录路径漏剥 + P3 三项。271/271 全过（详见 implementation-plan §8 轮次 32）。
-- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 32 后单测 271/271。
-- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/27。
+- 轮次 33（全仓含文档四线审查）：①文档/②实现横切/③工具技能/④preset+ui 四路子代理审查 + 逐条复核（27 项均属实）后修复 16 项（rag 余弦维度不齐响亮失败、store chapter 三位序号守卫、domain 截断码点安全统一、maintenance force 重入深度上限、dev-diag .catch、export 卷交错 warnings 披露、rag llm 档阈值测试、UI 未分卷名统一「正文」、9 包 README projectRoot 文案、plan §0/§1.1/§1.5/§1.12、roadmap/ui-design 现状回写、preset projectRoot 口径等）+ 6 项裁定留痕（日更统计不做、章节状态机不复刻、按线注入 backlog、字数双口径、mark 竞态沿既有留痕、preset 默认路由）。（详见 implementation-plan §8 轮次 33）。
+- 轮次 34（收敛验证轮）：两路子代理复审轮次 33 全部改动——代码线无新问题（八项修复逐项核对正确）；文档线仅 2 项 P3 同文件注释漏改（preset patch 内联注释、ui apply() doc），当场修复后复测 272/272。审计循环收敛收口；收尾将两条留档观察升级实施（告警行有界摘要 + 重复章号告警，computeSpineWarnings 纯函数 + 测试），273/273（详见 implementation-plan §8 轮次 34）。
+- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 34 后单测 273/273。
+- 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/21/27/28/29/30/31/32/33 及 roadmap §7 留痕项。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。

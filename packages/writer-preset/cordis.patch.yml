@@ -5,7 +5,8 @@
 #
 # 组合 = 写作人设 + 写作所需的基础工具（fs/skill/todo/ask-user/平台 shell）+ 全部 writer 插件。
 # 与 dsh-writer-bundle 的区别：bundle 是 profile 级全局挂载（所有会话）；preset 是会话级按需挂载。
-# projectRoot 默认取会话工作目录（!!js 由 preset 的 group 标记延迟到子插件加载时求值）。
+# projectRoot 默认取宿主进程启动目录的 novel/ 子目录（process.cwd()/novel；与 dsh-writer-bundle
+# 同口径——非「会话工作目录」，Web 多工作区部署时须从含 novel/ 的目录启动宿主或显式覆盖 projectRoot）。
 - insert:
     # 写作面板 UI（客户端插件）：全局层挂载——clientModules 扫描宿主 Loader 活动
     # 条目发现 dsh.client 包；不能放进上面 preset 的会话级 plugins（同包多 source
@@ -73,7 +74,7 @@
               - id: writer-store
                 name: dsh-writer-store
                 config:
-                  # novel/ 子目录布局（轮次 18）：projectRoot 取会话 cwd 下的 novel/
+                  # novel/ 子目录布局（轮次 18）：projectRoot 取宿主启动目录下的 novel/
                   projectRoot: !!js process.getBuiltinModule('node:path').join(process.cwd(), 'novel')
               # 引擎默认路由可被更高层（profile patch / Web 编辑器）覆盖
               - id: writer-engine
