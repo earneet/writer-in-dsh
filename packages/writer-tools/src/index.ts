@@ -519,6 +519,7 @@ export function apply(ctx: Context): void {
         ...(args.output_path !== undefined ? { outputPath: args.output_path } : {}),
       })
       return `已导出 ${result.chapters} 章到 ${result.path}（${result.bytes} 字节）。`
+        + (result.warnings !== undefined && result.warnings.length > 0 ? `\n⚠ ${result.warnings.join('\n⚠ ')}` : '')
     },
   }))
 }

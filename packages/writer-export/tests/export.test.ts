@@ -8,6 +8,7 @@ import { crc32, buildZip } from '../src/zip.ts'
 import {
   escapeHtml, renderChapterXhtml, renderContainerXml, renderContentOpf, renderHtml, renderTxt, renderTocNcx, renderPlainXhtml, stripIllegalXmlChars,
 } from '../src/render.ts'
+import { computeSpineWarnings } from '../src/index.ts'
 const BOOK = {
   title: '测试书',
   author: '某人',
@@ -62,6 +63,27 @@ test('buildZip：中央目录往返——EOCD → 中央目录 → 本地头 →
 test('crc32：标准测试向量', () => {
   assert.equal(crc32(new TextEncoder().encode('123456789')), 0xCBF43926)
   assert.equal(crc32(new Uint8Array(0)), 0)
+})
+
+test('computeSpineWarnings：卷交错/重复章号/有界摘要/正常布局零告警', () => {
+  const vol = (name: string, numbers: number[]) => ({ name, chapters: numbers.map((n) => ({ number: n, title: '', content: 'x' })) })
+  // 正常单调布局：零告警
+  assert.deepEqual(computeSpineWarnings([vol('第一卷', [1, 2]), vol('第二卷', [3, 4])]), [])
+  // 卷交错（A:1,5 / B:3 → spine 1,5,3 非单调）
+  const interleave = computeSpineWarnings([vol('A', [1, 5]), vol('B', [3])])
+  assert.equal(interleave.length, 1)
+  assert.match(interleave[0]!, /卷在章序上交错/)
+  assert.match(interleave[0]!, /spine 顺序 1→5→3/)
+  // 单卷导出卷内必单调：不误报
+  assert.deepEqual(computeSpineWarnings([vol('B', [3])]), [])
+  // 重复章号（跨卷同号）单独披露（spine 单调时只有重复告警）
+  const dup = computeSpineWarnings([vol('A', [1, 2]), vol('B', [2, 3])])
+  assert.equal(dup.length, 1)
+  assert.match(dup[0]!, /存在重复章号（number：2）/)
+  // 长书 spine 摘要有界（>20 章不全量 join）
+  const long = computeSpineWarnings([vol('A', Array.from({ length: 30 }, (_, i) => i + 1).concat([5]))])
+  assert.match(long[0]!, /…（共 31 章）/)
+  assert.ok(long[0]!.length < 200, '告警行有界，不内嵌全量序列')
 })
 
 test('buildZip：mimetype 首个且 stored；条目可按本地头定位', () => {

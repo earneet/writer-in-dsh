@@ -216,11 +216,13 @@ export interface ExportRequest {
   outputPath?: string
 }
 
-/** 导出结果：落盘路径 + 章节数 + 字节数。 */
+/** 导出结果：落盘路径 + 章节数 + 字节数；warnings 为非阻断提示（如卷在章序上交错）。 */
 export interface ExportResult {
   path: string
   chapters: number
   bytes: number
+  /** 非阻断告警（不拒绝导出，但如实披露阅读顺序异常等布局问题）。 */
+  warnings?: readonly string[]
 }
 
 /**

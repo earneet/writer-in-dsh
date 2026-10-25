@@ -113,8 +113,46 @@ export default class WriterExportServiceImpl extends ExportService {
       bytes = Buffer.byteLength(text, 'utf8')
     }
     const chapterCount = volumes.reduce((sum, v) => sum + v.chapters.length, 0)
-    return { path: relative(this.ctx.writer.root, absPath).split(sep).join('/'), chapters: chapterCount, bytes }
+    // 卷在章序上交错/重复章号告警（轮次 33 引入、轮次 34 补全）：不拒绝导出，但如实披露
+    const warnings = computeSpineWarnings(volumes)
+    return {
+      path: relative(this.ctx.writer.root, absPath).split(sep).join('/'),
+      chapters: chapterCount,
+      bytes,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    }
   }
+}
+
+/**
+ * 卷/章号布局告警（纯函数，供导出结果 warnings 字段）：
+ * ① 卷在章序上交错——spine 按卷首见序组织，卷内章序若与全书序号不单调
+ *   （如 A 卷含第 1、5 章而 B 卷含第 3 章），阅读顺序会跳章；
+ * ② 重复章号——两章 frontmatter number 相同，阅读器跳转/目录可能指向错误章节。
+ * 告警里的 spine 序列做有界摘要（长书全量 join 会生成数 KB 单行回执）。
+ */
+export function computeSpineWarnings(volumes: readonly ExportVolume[]): string[] {
+  const warnings: string[] = []
+  const spineOrder = volumes.flatMap((v) => v.chapters.map((c) => c.number))
+  const briefSpine = spineOrder.length > 20
+    ? `${spineOrder.slice(0, 10).join('→')}→…（共 ${spineOrder.length} 章）→${spineOrder.slice(-5).join('→')}`
+    : spineOrder.join('→')
+  for (let i = 1; i < spineOrder.length; i++) {
+    if (spineOrder[i] < spineOrder[i - 1]) {
+      warnings.push(`卷在章序上交错（spine 顺序 ${briefSpine}）：阅读顺序将不按章号单调，请核对各章 volume 归属`)
+      break
+    }
+  }
+  const seenNumbers = new Set<number>()
+  const duplicates = new Set<number>()
+  for (const n of spineOrder) {
+    if (seenNumbers.has(n)) duplicates.add(n)
+    seenNumbers.add(n)
+  }
+  if (duplicates.size > 0) {
+    warnings.push(`存在重复章号（number：${[...duplicates].sort((a, b) => a - b).join('、')}）：导出物中两章同号，阅读器跳转/目录可能指向错误章节`)
+  }
+  return warnings
 }
 
 /** 组装 EPUB zip 字节：mimetype 首个且不压缩（OPF/OCF 规范要求）。 */
