@@ -41,7 +41,7 @@ test('buildOverview：全字段聚合（卷/伏笔/进度/最近章节倒序/人
   assert.equal(overview.chapters, 3)
   assert.equal(overview.totalChars, 10)
   assert.equal(overview.progress, 10 / 1000)
-  assert.deepEqual(overview.volumes, [{ name: '第一卷', count: 2 }, { name: '未分卷', count: 1 }])
+  assert.deepEqual(overview.volumes, [{ name: '第一卷', count: 2 }, { name: '正文', count: 1 }])
   assert.deepEqual(overview.foreshadow, [{ status: 'planned', count: 1 }, { status: 'planted', count: 2 }])
   assert.deepEqual(overview.recentChapters.map(c => c.id), ['003', '002', '001'])
   // 排序键锁定：timelineCount 降序优先（wu 1 条 > zhou-ning 0 条，尽管 id 靠后）

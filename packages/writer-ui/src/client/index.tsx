@@ -7,9 +7,10 @@
  * 扩展位（第三方约定）：`ctx.slots.inject(槽名, () => ctx.slots.register(...))`——
  * 声明感知注入，宿主槽声明出现前后激活均可。
  *
- * 注册面：侧边栏「写作面板」+ 八张工具富卡片（write_chapter/review_chapter/
- * writer_stats/foreshadow_update/consistency_check/writer_search/timeline_update/
- * export_book）。视觉基元经基线模块 @deepseek-ai/dsh-client-ui-primitives 取用。
+ * 注册面：侧边栏「写作面板」+ 14 张工具卡片全覆盖（八张语义富卡片：write_chapter/
+ * review_chapter/writer_stats/foreshadow_update/consistency_check/writer_search/
+ * timeline_update/export_book；六张治理工具通用 SummaryCard：writer_read/writer_update/
+ * recompute_derived/archive_point/pending_cleanup/maintenance_flush）。视觉基元经基线模块 @deepseek-ai/dsh-client-ui-primitives 取用。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { WriterPanel, WriterPanelIcon } from './Panel.tsx'
@@ -35,7 +36,7 @@ export const name = 'dsh-writer-ui'
 // sessions 用于活跃会话探测（workspaceFiles 的 scope 是会话工作区根）。
 export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'sessions']
 
-/** 注册全部 UI 面：侧边栏面板 + 八个工具结果卡片。 */
+/** 注册全部 UI 面：侧边栏面板 + 14 张工具卡片（8 语义富卡片 + 6 治理通用卡）。 */
 export function apply(context: Context): void {
   const ctx = context as BrowserContext
   ctx.effect(() => {

@@ -522,7 +522,7 @@ function ChaptersTab({ o }: { o: NovelOverview }): React.ReactElement {
   // 按卷分组（保持章序），卷头小标题 + 可折叠章行（展开看预览；智能默认：最新一章展开）
   const groups = new Map<string, typeof o.chapterRows>()
   for (const ch of o.chapterRows) {
-    const volume = ch.volume.length > 0 ? ch.volume : '未分卷'
+    const volume = ch.volume.length > 0 ? ch.volume : '正文'
     const list = groups.get(volume) ?? []
     list.push(ch)
     groups.set(volume, list)

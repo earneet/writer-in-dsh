@@ -151,7 +151,8 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
 
   const volumeMap = new Map<string, number>()
   for (const ch of graph.chapters) {
-    const volume = ch.volume.length > 0 ? ch.volume : '未分卷'
+    // 未标 volume 的章归「正文」桶——与 writer_stats 服务端口径一致（轮次 33 统一）
+    const volume = ch.volume.length > 0 ? ch.volume : '正文'
     volumeMap.set(volume, (volumeMap.get(volume) ?? 0) + 1)
   }
 
