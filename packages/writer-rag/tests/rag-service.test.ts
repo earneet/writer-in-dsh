@@ -213,6 +213,72 @@ test('semanticMinScore 相关度阈值（轮次 29）：余弦低于阈值的候
   }
 })
 
+test('llm 档 semanticMinScore 阈值（轮次 33）：0-10 分 × 阈值换算过滤 + 打分不可解析退化空排名', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'writer-rag-llmthr-'))
+  // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+  const ctx = new Context()
+  new WriterStoreService(ctx, { projectRoot: root })
+  // 脚本化 llm 桩：按调用序返回预设打分 JSON（与 engine 测试同款块流形状）
+  const queue: string[] = []
+  const llm = {
+    stream(options: { messages: { content: { text: string }[] }[] }): AsyncGenerator<{ type: string } & Record<string, unknown>> {
+      const text = queue.shift() ?? ''
+      return (async function* () {
+        yield { type: 'text-delta', index: 0, text }
+        yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  }
+  // ctx.get('llm') 走 Context 原型方法而非属性读取：在实例上遮蔽 get，llm 路由返回桩
+  const originalGet = ctx.get.bind(ctx)
+  Object.defineProperty(ctx, 'get', {
+    value: (name: string) => (name === 'llm' ? llm : originalGet(name)),
+    configurable: true,
+  })
+  try {
+    const rag = new WriterRagService(ctx, {
+      embeddingBackend: 'llm', llmProvider: 'stub', llmModel: 'stub', externalBaseUrl: '', externalModel: '',
+      externalApiKeyEnv: 'K', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
+      snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
+    })
+    const candidates = [
+      { id: 'chapter/001#0', refKind: 'chapter' as const, refId: '001', text: '雨夜里绿焰浮现。', chapterNumber: 1 },
+      { id: 'chapter/002#0', refKind: 'chapter' as const, refId: '002', text: '南方港城的贸易风波。', chapterNumber: 2 },
+    ]
+    const score = (rag: unknown) => (rag as unknown as {
+      scoreByLlm: (query: string, chunks: typeof candidates, signal?: AbortSignal) => Promise<string[]>
+    }).scoreByLlm('绿焰', candidates)
+    // 阈值 0.28 → llm 0-10 分须 ≥ 2.8：001 得 9 分通过、002 得 1 分被滤（打分层过滤，不进 RRF）
+    queue.push('{"scores":{"chapter/001#0":9,"chapter/002#0":1}}')
+    assert.deepEqual(await score(rag), ['chapter/001#0'], '低分候选在打分层被过滤（×10 阈值换算）')
+    // 候选集之外的 id（003）被滤；候选内高分降序排列
+    queue.push('{"scores":{"chapter/002#0":5,"chapter/001#0":8,"chapter/003#0":7}}')
+    assert.deepEqual(await score(rag), ['chapter/001#0', 'chapter/002#0'], '候选集之外的 id（003）被滤，候选内按分降序')
+    // 打分输出不可解析：语义档退化为空排名（不响亮失败——语义是增强不是依赖）
+    queue.push('完全不是 JSON 的输出')
+    assert.deepEqual(await score(rag), [], '打分不可解析时语义路空排名（降级不抛错）')
+    // 阈值 0 时低分候选不被过滤（过滤旋钮关闭）
+    // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+    const zeroCtx = new Context()
+    const zeroOriginalGet = zeroCtx.get.bind(zeroCtx)
+    Object.defineProperty(zeroCtx, 'get', {
+      value: (name: string) => (name === 'llm' ? llm : zeroOriginalGet(name)),
+      configurable: true,
+    })
+    new WriterStoreService(zeroCtx, { projectRoot: root })
+    const zeroRag = new WriterRagService(zeroCtx, {
+      embeddingBackend: 'llm', llmProvider: 'stub', llmModel: 'stub', externalBaseUrl: '', externalModel: '',
+      externalApiKeyEnv: 'K', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
+      snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0,
+    })
+    queue.push('{"scores":{"chapter/001#0":1,"chapter/002#0":2}}')
+    assert.deepEqual(await score(zeroRag), ['chapter/002#0', 'chapter/001#0'], '阈值 0 关闭过滤，按分降序')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('配置响亮失败：字段整体缺席（undefined）/ 大重叠 / 非法后端值', () => {
   // 每次新 Context：service 注册在 ctx 上，复用会先撞「已注册」错误
   const freshCtx = (): unknown => new Context()

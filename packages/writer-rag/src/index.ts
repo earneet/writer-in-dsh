@@ -298,10 +298,15 @@ export default class WriterRagService extends RagService {
 
 /** 余弦相似（零向量返回 0，防御端点返回零向量）。 */
 function cosine(a: readonly number[], b: readonly number[]): number {
+  // 维度不齐不静默截断（轮次 33）：外部端点换模型/版本返回异维向量时，截断算出的
+  // 相似度无意义且不响亮——与本包「配置/端点错误响亮失败」口径一致。
+  if (a.length !== b.length) {
+    throw new Error(`writer-rag：embeddings 端点返回的向量维度不一致（${a.length} vs ${b.length}），疑似模型/版本变更，请清空向量缓存或核对 external.model 配置`)
+  }
   let dot = 0
   let normA = 0
   let normB = 0
-  const n = Math.min(a.length, b.length)
+  const n = a.length
   for (let i = 0; i < n; i++) {
     dot += a[i] * b[i]
     normA += a[i] * a[i]

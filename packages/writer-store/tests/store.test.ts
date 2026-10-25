@@ -80,10 +80,11 @@ test('乐观锁指向不存在的实体被拒', async () => {
   }
 })
 
-test('Windows 保留名 id 被拒', async () => {
+test('Windows 保留名 id 被拒（chapter 命中三位序号守卫；character 命中通用保留名守卫）', async () => {
   const { store, root } = await makeStore()
   try {
-    await assert.rejects(() => store.save('chapter', 'con', { content: 'x' }), /id 非法/)
+    await assert.rejects(() => store.save('chapter', 'con', { content: 'x' }), /三位序号/)
+    await assert.rejects(() => store.save('character', 'con', { content: 'x' }), /id 非法/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -103,11 +104,13 @@ test('get 直读磁盘：外部编辑后立即可见', async () => {
   }
 })
 
-test('path traversal 被拒', async () => {
+test('path traversal 被拒（chapter 先命中三位序号守卫——非数字 id 同被拒）', async () => {
   const { store, root } = await makeStore()
   try {
-    await assert.rejects(() => store.save('chapter', '../evil', { content: 'x' }), /id 非法/)
-    await assert.rejects(() => store.save('chapter', 'a/b', { content: 'x' }), /id 非法/)
+    await assert.rejects(() => store.save('chapter', '../evil', { content: 'x' }), /三位序号/)
+    await assert.rejects(() => store.save('chapter', 'a/b', { content: 'x' }), /三位序号/)
+    await assert.rejects(() => store.save('character', '../evil', { content: 'x' }), /id 非法/)
+    await assert.rejects(() => store.save('character', 'a/b', { content: 'x' }), /id 非法/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

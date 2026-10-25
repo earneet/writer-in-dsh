@@ -57,6 +57,11 @@ function assertSafeId(kind: EntityKind, id: string): void {
     if (id !== kind) throw new Error(`实体 ${kind} 是单文件实体，id 必须为 "${kind}"`)
     return
   }
+  if (kind === 'chapter' && !/^\d{3}$/.test(id)) {
+    // 章节 id 是全书排序键：一致性检查 scope 区间比较、导出章序、RAG/组装器序号
+    // 解析均按三位序号假设；非数字 id 会在下游静默失效（轮次 33），存储层统一设防。
+    throw new Error(`章节 id 必须为三位序号（001-999）：${JSON.stringify(id)}`)
+  }
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id) || WINDOWS_RESERVED.has(id.toLowerCase())) {
     throw new Error(`实体 id 非法：${JSON.stringify(id)}（仅允许字母/数字/下划线/连字符，1-64 字符，不得为 Windows 保留名）`)
   }

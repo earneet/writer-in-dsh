@@ -397,7 +397,8 @@ export function chapterNumberOf(entity: WriterEntity): number | undefined {
 
 function briefOf(entity: WriterEntity, maxChars: number): string {
   const flat = entity.content.replace(/\s+/g, ' ').trim()
-  return flat.length <= maxChars ? flat : `${flat.slice(0, maxChars)}…`
+  // 码点安全截断（轮次 33 统一口径：与 truncateCodePoints 一致，防孤立代理项乱码）
+  return Array.from(flat).length <= maxChars ? flat : `${truncateCodePoints(flat, maxChars)}…`
 }
 
 /**
@@ -501,7 +502,7 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
       const title = typeof c.frontmatter['title'] === 'string' ? ` ${c.frontmatter['title']}` : ''
       const summary = input.chapterSummaries?.[c.id]
       return summary !== undefined && summary.trim().length > 0
-        ? `- 第 ${chapterNumberOf(c)} 章 ${c.id}${title}：${summary.replace(/\s+/g, ' ').trim().slice(0, 160)}`
+        ? `- 第 ${chapterNumberOf(c)} 章 ${c.id}${title}：${truncateCodePoints(summary.replace(/\s+/g, ' ').trim(), 160)}`
         : `- 第 ${chapterNumberOf(c)} 章 ${c.id}${title}`
     })
     remaining = optional('更早章节（摘要/标题）', earlier.join('\n'), remaining)

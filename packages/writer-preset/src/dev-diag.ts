@@ -19,12 +19,12 @@ export function apply(ctx: any): void {
       if (svc === undefined) {
         if (tries < 30) return
         clearInterval(timer)
-        await writeFile(join(process.cwd(), 'dev-diag.json'), JSON.stringify({ at: new Date().toISOString(), error: 'agentPresets service not present' }, null, 2))
+        await writeFile(join(process.cwd(), 'dev-diag.json'), JSON.stringify({ at: new Date().toISOString(), error: 'agentPresets service not present' }, null, 2)).catch(() => {})
         return
       }
       clearInterval(timer)
       const presets = await svc.list()
-      await writeFile(join(process.cwd(), 'dev-diag.json'), JSON.stringify({ at: new Date().toISOString(), stage: 'list', presets }, null, 2))
+      await writeFile(join(process.cwd(), 'dev-diag.json'), JSON.stringify({ at: new Date().toISOString(), stage: 'list', presets }, null, 2)).catch(() => {})
     } catch (error: any) {
       clearInterval(timer)
       await writeFile(join(process.cwd(), 'dev-diag.json'), JSON.stringify({ at: new Date().toISOString(), error: String(error?.stack ?? error) }, null, 2)).catch(() => {})

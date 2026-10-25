@@ -146,8 +146,13 @@ export default class WriterEngineServiceImpl extends EngineService {
     if (inflight !== undefined) await inflight.catch(() => {})
     // 等待期间可能已有新 pass 入表（保存触发）：force 不得覆盖它——覆盖会击穿去重致同章双跑
     // （双倍模型调用、派生互相覆盖）。重新进入等待最新 inflight，force 语义不变（最终单独跑一次）。
+    // 重入链同样受 depth 上限约束（轮次 33）：保存持续触发新 inflight 时不得无限等待重入（活锁），
+    // 达上限时改为直接等待当前 inflight 后返回（用户下次保存自会再触发，不丢语义）。
     const current = this.maintenanceInflight.get(chapterId)
-    if (current !== undefined && current !== inflight) return this.maintenancePass(chapterId, opts, depth)
+    if (current !== undefined && current !== inflight) {
+      if (depth >= 4) return current
+      return this.maintenancePass(chapterId, opts, depth + 1)
+    }
     const run = this.doMaintenancePass(chapterId, opts).finally(() => {
       // 身份校验清理：只删自己入表的 entry，防误删并发后继 pass 的登记（否则 drainMaintenance 漏计漏等）
       if (this.maintenanceInflight.get(chapterId) === run) this.maintenanceInflight.delete(chapterId)
