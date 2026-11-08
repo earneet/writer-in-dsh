@@ -7,17 +7,17 @@
   "dependencies": {
     "dsh-writer-domain": "0.1.0",
     "dsh-writer-core": "0.1.0",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/schemastery": "3.18.4",
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/schemastery": "3.19.0",
     "dsh-writer-store": "0.1.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/schemastery": "3.18.4",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2"
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/schemastery": "3.19.0",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1"
   },
   "engines": {
     "node": ">=20"

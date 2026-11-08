@@ -9,8 +9,8 @@
     "dsh-writer-core": "0.1.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.4",
-    "@deepseek-ai/schemastery": "3.18.4"
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/schemastery": "3.19.0"
   },
   "engines": {
     "node": ">=20"

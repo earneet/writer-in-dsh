@@ -8,7 +8,7 @@ dsh-writer 插件组合的一员：Provider：写作引擎——full/assist/rewr
 
 ```bash
 dsh plugin --profile <name> add dsh-writer-bundle
-dsh plugin --profile <name> add "@deepseek-ai/dsh-headless@0.2.0-rc.2"   # 或 dsh-web-app，app 入口必装
+dsh plugin --profile <name> add "@deepseek-ai/dsh-headless@0.2.2-rc.1"   # 或 dsh-web-app，app 入口必装
 ```
 
 ## 启动
