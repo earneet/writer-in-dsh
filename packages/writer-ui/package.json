@@ -21,6 +21,7 @@
     }
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-rc.1",
     "@types/react": "19.2.2",
     "dsh-writer-domain": "0.1.0",
     "esbuild": "0.25.12"

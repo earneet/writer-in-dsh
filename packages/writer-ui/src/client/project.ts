@@ -6,7 +6,7 @@
 import type { EntityGraph } from './types.ts'
 import { buildEntityGraph } from './graph.ts'
 import type {
-  ChapterRow, CharacterRow, NextStep, NovelOverview, OutlineOverview, PendingSection, PlotRow, SectionEntry, TimelineEvent, RelationEntry,
+  ChapterEntity, ChapterRow, CharacterRow, NextStep, NovelOverview, OutlineOverview, OutlineTreeNode, PendingSection, PlotRow, SectionEntry, TimelineEvent, RelationEntry,
 } from './types.ts'
 import type { NovelScan } from './overview.ts'
 
@@ -97,17 +97,64 @@ export function nextStepOf(overview: { chapters: number; outline: OutlineOvervie
   }
 }
 
+/** 大纲小节标题 → 树节点分型（对齐参考项目 part/act/chapter：卷→幕→章，其余为备注）。 */
+function outlineKindOf(title: string, chapterNumber: number | null): 'volume' | 'act' | 'chapter' | 'note' {
+  if (chapterNumber !== null) return 'chapter'
+  if (/卷/.test(title)) return 'volume'
+  if (/幕/.test(title)) return 'act'
+  return 'note'
+}
+
+/**
+ * 大纲树构建（纯函数）：outline 节点序贯入树——卷/幕作为容器开新层级（同名卷不合并，
+ * 大纲按顺序读），章/备注挂当前容器；容器层级缺失（章直接跟根）时平铺在根。
+ * 章节叶经章号索引联动实际章节（written）。
+ */
+export function buildOutlineTree(graph: EntityGraph): { tree: OutlineTreeNode[]; unanchored: ChapterRow[] } {
+  const anchored = new Set<number>()
+  const root: OutlineTreeNode[] = []
+  // 容器栈（元素 = { kind, children }）：卷/幕开层；同型容器互斥（连续幕为兄弟不嵌套）
+  const stack: Array<{ kind: 'volume' | 'act'; children: OutlineTreeNode[] }> = []
+  const siblings = (): OutlineTreeNode[] => stack.length === 0 ? root : stack[stack.length - 1]!.children
+  if (graph.outline !== null) {
+    for (const node of graph.outline.nodes) {
+      const kind = outlineKindOf(node.title, node.chapterNumber)
+      // 新卷清空全部容器（回根层）；新幕弹出既有幕（兄弟），只在卷内降一层
+      if (kind === 'volume') stack.length = 0
+      else if (kind === 'act') while (stack.length > 0 && stack[stack.length - 1]!.kind === 'act') stack.pop()
+      const written = node.chapterNumber !== null ? graph.indexes.chapterByNumber.get(node.chapterNumber) : undefined
+      if (node.chapterNumber !== null) anchored.add(node.chapterNumber)
+      const tree: OutlineTreeNode = {
+        kind,
+        title: node.title,
+        body: node.body,
+        chapterNumber: node.chapterNumber,
+        written: written !== undefined ? toChapterRow(written) : null,
+        children: [],
+      }
+      siblings().push(tree)
+      if (kind === 'volume' || kind === 'act') stack.push({ kind, children: tree.children })
+    }
+  }
+  // 已写但未命中任何大纲章锚的章节（按章号序）
+  const unanchored = graph.chapters
+    .filter(ch => ch.number === null || !anchored.has(ch.number))
+    .map(toChapterRow)
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
+  return { tree: root, unanchored }
+}
+
+/** ChapterEntity → ChapterRow 公共映射（chapterRows 与大纲树 written 共用，防双份漂移）。 */
+function toChapterRow(ch: ChapterEntity): ChapterRow {
+  return {
+    id: ch.id, title: ch.title, volume: ch.volume, chars: ch.chars,
+    status: ch.status, storyline: ch.storyline, preview: ch.preview, content: ch.content,
+  }
+}
+
 /** 实体图 + 扫描 → 面板总览（纯函数；pending/project 等扫描侧数据直通）。 */
 export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverview {
-  const chapterRows: ChapterRow[] = graph.chapters.map(ch => ({
-    id: ch.id,
-    title: ch.title,
-    volume: ch.volume,
-    chars: ch.chars,
-    status: ch.status,
-    storyline: ch.storyline,
-    preview: ch.preview,
-  }))
+  const chapterRows: ChapterRow[] = graph.chapters.map(toChapterRow)
 
   const current = currentChapterOf(graph)
 
@@ -122,6 +169,9 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
       status: p.status,
       type: p.type,
       plannedChapter: p.plannedChapter ?? p.plantedChapter ?? '',
+      plantedChapter: p.plantedChapter ?? '',
+      resolvedChapter: p.resolvedChapter ?? '',
+      milestones: p.milestones,
       preview: p.preview,
       risk: risk.level,
       overdue: risk.overdue,
@@ -137,6 +187,12 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
     gray: plotRows.filter(p => p.risk === 'gray').length,
   }
 
+  // id/name → 显示名（反查边的 owner 是声明方 id 或名字，统一映射为人物显示名）
+  const displayName = new Map<string, string>()
+  for (const c of graph.characters) {
+    displayName.set(c.id, c.name)
+    displayName.set(c.name, c.name)
+  }
   const characterRows: CharacterRow[] = graph.characters.map(c => ({
     id: c.id,
     name: c.name,
@@ -146,6 +202,10 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
     relationCount: c.relations.length,
     timeline: c.timeline as TimelineEvent[],
     relations: c.relations.map(r => ({ name: r.name, desc: r.desc }) as RelationEntry),
+    // 反向关系：名字/id 双键反查（「谁声明与我有关」；自己声明的不重复计）
+    reverseRelations: (graph.indexes.relationsByTarget.get(c.name) ?? graph.indexes.relationsByTarget.get(c.id) ?? [])
+      .filter(edge => edge.owner !== c.name && edge.owner !== c.id)
+      .map(edge => ({ name: displayName.get(edge.owner) ?? edge.owner, desc: edge.desc })),
     sections: c.sections as SectionEntry[],
   })).sort((a, b) => b.timelineCount - a.timelineCount || a.id.localeCompare(b.id))
 
@@ -174,6 +234,7 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
   const chapterTarget = project !== null && typeof project.chapters === 'number' ? project.chapters : null
   const totalChars = graph.chapters.reduce((sum, ch) => sum + ch.chars, 0)
   const pending = scan.pending as PendingSection[]
+  const outlineTreeResult = buildOutlineTree(graph)
 
   const partial: Omit<NovelOverview, 'nextStep'> = {
     title: project !== null && typeof project.title === 'string' && project.title.length > 0 ? project.title : '未命名项目',
@@ -198,6 +259,15 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
     staleChapters: scan.staleChapters ?? [],
     failedFiles: scan.failedFiles ?? [],
     pendingArchive: scan.pendingArchive ?? [],
+    // —— v8 设定面投影 ——
+    outlineTree: outlineTreeResult.tree,
+    unanchoredChapters: outlineTreeResult.unanchored,
+    ideas: graph.ideas !== null ? graph.ideas.sections : null,
+    principles: graph.principles !== null ? graph.principles.sections : null,
+    events: graph.events !== null ? graph.events.sections : null,
+    worldRows: graph.worldEntries.map(w => ({ id: w.id, title: w.title, sections: w.sections })),
+    styleRows: graph.styleRefs,
+    worldbuildingTruncated: scan.worldbuildingTruncated ?? 0,
   }
   return { ...partial, nextStep: nextStepOf(partial) }
 }

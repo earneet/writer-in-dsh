@@ -56,6 +56,8 @@ export interface ChapterEntity {
   /** 相对项目根的 POSIX 路径（含卷子目录前缀；顶层章为 chapters/<id>.md）。 */
   path: string
   preview: string
+  /** 正文全文（章节页签阅读面）。 */
+  content: string
 }
 
 /** 伏笔/情节实体（字段级纳入 milestones + planted/resolved_chapter）。 */
@@ -83,9 +85,11 @@ export interface CharacterEntity {
   sections: SectionEntry[]
 }
 
-/** 世界观条目（M1a 仅扫描 id 清单；全文读取随 M1b 总线落地）。 */
+/** 世界观条目（全文读取：标题回退 frontmatter.name → 正文首标题 → id）。 */
 export interface WorldEntry {
   id: string
+  title: string
+  sections: SectionEntry[]
 }
 
 /** 灵感碎片（单文件实体 ideas.md；原文不可覆盖——「原文」语义在 M2 设定库呈现）。 */
@@ -178,7 +182,7 @@ export interface Page<T> {
 // 视图模型行类型（M1b 自 overview.ts 迁入；视图语义注释见原定义处与 project.ts）
 // ---------------------------------------------------------------------------
 
-/** 章节行（章节页签 + 概况最近章节；preview 为展开预览文本）。 */
+/** 章节行（章节页签 + 概况最近章节；preview 为展开预览文本，content 为正文全文——阅读面）。 */
 export interface ChapterRow {
   id: string
   title: string
@@ -187,12 +191,14 @@ export interface ChapterRow {
   status: string
   storyline: string
   preview: string
+  content: string
 }
 
 /**
  * 伏笔行（伏笔页签；preview 为展开预览文本）。
  * 决策面字段：risk 三色档（red=planted 超期未回收/yellow=停滞或无锚活跃/gray=planned
  * 未种植/none=已收束或新鲜）、overdue 逾期标记、dueDelta 计划章与当前章差值。
+ * 生命周期锚（展开态步进轨）：plantedChapter / milestones / resolvedChapter。
  */
 export interface PlotRow {
   id: string
@@ -200,13 +206,16 @@ export interface PlotRow {
   status: string
   type: string
   plannedChapter: string
+  plantedChapter: string
+  resolvedChapter: string
+  milestones: PlotMilestone[]
   preview: string
   risk: 'red' | 'yellow' | 'gray' | 'none'
   overdue: boolean
   dueDelta: number | null
 }
 
-/** 人物行（人物页签；展开详情 = 正文小节 + 时间线 + 关系）。 */
+/** 人物行（人物页签；展开详情 = 正文小节 + 时间线 + 关系 + 反向关系）。 */
 export interface CharacterRow {
   id: string
   name: string
@@ -216,7 +225,27 @@ export interface CharacterRow {
   relationCount: number
   timeline: TimelineEvent[]
   relations: RelationEntry[]
+  /** 反向关系（他人声明与我有关系；名字反查 indexes.relationsByTarget）。 */
+  reverseRelations: RelationEntry[]
   sections: SectionEntry[]
+}
+
+/**
+ * 大纲树节点（大纲页签的树形视图）。命名留痕：参考项目 outline_nodes 的 node_type 实为
+ * part / chapter_group / chapter；本仓取中文创作语境的「卷 / 幕 / 章」三型（「幕」对应
+ * chapter_group 的中继层语义，属本项目命名偏离，口径以本注释为准）。分型由 outline.md
+ * 小节标题序贯判定：含「卷」= 卷、含「幕」= 幕、带章号锚 = 章、其余 = 备注。
+ * chapter 叶子经章号索引联动实际章节（written 非空 = 已写，含字数与状态）。
+ */
+export interface OutlineTreeNode {
+  kind: 'volume' | 'act' | 'chapter' | 'note'
+  title: string
+  body: string
+  /** 章节叶子的章号锚（非章为 null）。 */
+  chapterNumber: number | null
+  /** 章号联动的实际章节（未写/章号不可判为 null）。 */
+  written: ChapterRow | null
+  children: OutlineTreeNode[]
 }
 
 /** 大纲视图模型（大纲页签）。 */
@@ -273,6 +302,23 @@ export interface NovelOverview {
   pendingArchive: PendingSection[]
   /** 下一步情境卡。 */
   nextStep: NextStep
+  // —— 设定面（灵感/准则/世界观/事件/风格示范；v8 大纲树 + 设定页数据源）——
+  /** 大纲树（卷→幕→章；无大纲为空数组）。 */
+  outlineTree: OutlineTreeNode[]
+  /** 已写但未命中大纲章锚的章节（树下方「已写未入大纲」区）。 */
+  unanchoredChapters: ChapterRow[]
+  /** 灵感碎片小节（ideas.md；null = 无文件）。 */
+  ideas: SectionEntry[] | null
+  /** 创作准则小节（principles.md；null = 无文件）。 */
+  principles: SectionEntry[] | null
+  /** 重要事件小节（events.md；null = 无文件）。 */
+  events: SectionEntry[] | null
+  /** 世界观条目（worldbuilding/ 全文卡片）。 */
+  worldRows: WorldEntry[]
+  /** worldbuilding 超过读取上限被截断的条目数（0 = 未截断；设定页如实披露）。 */
+  worldbuildingTruncated: number
+  /** 风格示范条目（style/ 目录）。 */
+  styleRows: StyleRef[]
 }
 
 /**

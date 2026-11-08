@@ -109,6 +109,8 @@ function buildChapter(source: ChapterSource): ChapterEntity {
     chars: charCount(source.content),
     path: source.subdir !== undefined ? `chapters/${source.subdir}/${source.name}` : `chapters/${source.name}`,
     preview: preview(source.content),
+    // 章节正文全文（章节页签阅读面；保留在实体/行模型中——浏览器端常驻，长书内存代价可接受）
+    content: source.content,
   }
 }
 
@@ -213,12 +215,26 @@ function buildCharacter(source: CharacterSource, warnings: string[]): CharacterE
   }
 }
 
-/** outline 正文小节 → 节点（`第 N 章` 小节带章号锚；卷/其他小节 chapterNumber=null）。 */
+/**
+ * outline 正文小节 → 节点（`第 N 章` 小节带章号锚）。
+ * 与 splitSections 不同：按 `#{2,6}` 任意层级标题切分（大纲常用 `## 卷 / ### 幕 /
+ * #### 章` 嵌套书写），层级本身不进节点——树形分型由 project.ts 的序贯分型承担
+ * （卷/幕/章由标题语义决定，书写层级与语义层级解耦：平铺与嵌套两种笔法同构）。
+ */
 function buildOutlineNodes(content: string): OutlineNode[] {
-  return splitSections(content).map(section => {
-    const m = /^第\s*(\d+)\s*章/.exec(section.title)
-    return { title: section.title, chapterNumber: m !== null ? Number(m[1]) : null, body: section.body }
-  })
+  const parts = content.split(/^#{2,6}\s+/m)
+  const nodes: OutlineNode[] = []
+  const preamble = (parts[0] ?? '').replace(/^#\s+\S[^\n]*\n?/, '').trim()
+  if (preamble.length > 0) nodes.push({ title: '简介', chapterNumber: null, body: preamble })
+  for (let i = 1; i < parts.length; i++) {
+    const nl = parts[i]!.indexOf('\n')
+    const title = (nl >= 0 ? parts[i]!.slice(0, nl) : parts[i]!).replace(/#+\s*$/, '').trim()
+    const body = (nl >= 0 ? parts[i]!.slice(nl + 1) : '').trim()
+    if (title.length === 0 && body.length === 0) continue
+    const m = /^第\s*(\d+)\s*章/.exec(title)
+    nodes.push({ title: title.length > 0 ? title : '—', chapterNumber: m !== null ? Number(m[1]) : null, body })
+  }
+  return nodes
 }
 
 function buildOutline(scan: NovelScan): OutlineEntity | null {
@@ -321,7 +337,15 @@ export function buildEntityGraph(scan: NovelScan): EntityGraph {
     chapters,
     characters,
     plots,
-    worldEntries: (scan.worldbuildingNames ?? []).map(name => ({ id: name.replace(/\.md$/, '') })),
+    worldEntries: (scan.worldbuilding ?? []).map(w => {
+      const id = String(w.name).replace(/\.md$/, '')
+      // 标题：frontmatter.name 优先（domain 权威口径，人物档案 fm.name 同款先例），
+      // 回退正文首个一级/二级标题，再回退 id
+      const fmName = typeof w.frontmatter?.name === 'string' ? w.frontmatter.name.trim() : ''
+      const heading = fmName.length > 0 ? fmName
+        : w.content.split('\n').find(line => /^#{1,2}\s+\S/.test(line))?.replace(/^#{1,2}\s+/, '').trim() ?? ''
+      return { id, title: heading.length > 0 ? heading : id, sections: splitSections(w.content) }
+    }),
     ideas: scan.ideas !== undefined ? { id: 'idea', sections: splitSections(scan.ideas.content) } : null,
     principles: scan.principles !== undefined ? { id: 'principles', sections: splitSections(scan.principles.content) } : null,
     events: scan.events !== undefined ? { id: 'event', sections: splitSections(scan.events.content) } : null,

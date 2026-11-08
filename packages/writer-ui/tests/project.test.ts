@@ -99,6 +99,145 @@ test('扫描侧新字段直通：staleChapters/failedFiles/pendingArchive/nextSt
   assert.equal(overview.nextStep.kind, 'maintain')
 })
 
+test('大纲树：卷→幕→章分型嵌套 + 章节叶联动已写状态 + 未锚定章节回填', () => {
+  const overview = buildOverview({
+    ...baseScan,
+    outline: {
+      frontmatter: {},
+      content: [
+        '# 大纲',
+        '## 第一卷 启程',
+        '开局设定。',
+        '### 第一幕 逃离',
+        '幕级铺垫。',
+        '#### 第 1 章 灯塔',
+        '章级节拍 A。',
+        '#### 第 2 章 海雾',
+        '章级节拍 B。',
+        '## 第二卷 归途',
+        '卷级走向。',
+        '### 第 5 章 归航',
+        '章级节拍 C。',
+      ].join('\n'),
+    },
+    chapters: [
+      { name: '001.md', frontmatter: { number: 1, title: '灯塔' }, content: '正文一' },
+      { name: '002.md', frontmatter: { number: 2, title: '海雾' }, content: '正文二' },
+      { name: '009.md', frontmatter: { number: 9, title: '番外' }, content: '正文九' },
+    ],
+  })
+  // 树形：卷一 > 幕一 > 章 1/2；卷二 > 章 5（无幕直挂卷）
+  const [vol1, vol2] = overview.outlineTree
+  assert.equal(vol1!.kind, 'volume')
+  assert.equal(vol1!.title, '第一卷 启程')
+  const [act1] = vol1!.children
+  assert.equal(act1!.kind, 'act')
+  assert.equal(act1!.title, '第一幕 逃离')
+  assert.deepEqual(act1!.children.map(c => c.kind), ['chapter', 'chapter'])
+  assert.deepEqual(act1!.children.map(c => c.chapterNumber), [1, 2])
+  // 章节叶联动：1/2 已写（带字数），5 未写（written=null）
+  assert.equal(act1!.children[0]!.written!.title, '灯塔')
+  assert.equal(vol2!.children[0]!.written, null)
+  assert.equal(vol2!.children[0]!.chapterNumber, 5)
+  // 009 无大纲锚 → 未锚定回填区
+  assert.deepEqual(overview.unanchoredChapters.map(c => c.id), ['009'])
+})
+
+test('大纲树容器分型边界：连续幕为兄弟不嵌套；幕前无卷挂根；章在容器前平铺根', () => {
+  const overview = buildOverview({
+    ...baseScan,
+    outline: {
+      frontmatter: {},
+      content: [
+        '## 第 1 章 开局',
+        '章在一切容器前。',
+        '## 第一幕 无根之幕',
+        '幕 A。',
+        '## 第二幕 兄弟幕',
+        '幕 B。',
+        '## 第 2 章 入幕',
+        '入幕章。',
+      ].join('\n'),
+    },
+  })
+  // 根层：章1、幕A、幕B（兄弟），幕B 下挂章 2
+  assert.deepEqual(overview.outlineTree.map(n => n.kind), ['chapter', 'act', 'act'])
+  assert.deepEqual(overview.outlineTree[1]!.children.map(n => n.title), [])
+  assert.deepEqual(overview.outlineTree[2]!.children.map(n => n.title), ['第 2 章 入幕'])
+})
+
+test('大纲切分：平铺 ### 第 N 章（无 ## 上级）也能成节点（与 splitSections ## 切分的行为差异点）', () => {
+  const overview = buildOverview({
+    ...baseScan,
+    outline: { frontmatter: {}, content: '### 第 3 章 孤章\n\n节拍。\n' },
+  })
+  assert.equal(overview.outlineTree.length, 1)
+  assert.equal(overview.outlineTree[0]!.kind, 'chapter')
+  assert.equal(overview.outlineTree[0]!.chapterNumber, 3)
+})
+
+test('worldbuilding 标题三级回退：frontmatter.name > 正文首标题 > id', () => {
+  const mk = (fm: object, content: string) => buildOverview({
+    ...baseScan,
+    worldbuilding: [{ name: 'city.md', frontmatter: fm, content }],
+    worldbuildingCount: 1,
+  })
+  assert.equal(mk({ name: '雾都志' }, '# 无关标题\n').worldRows[0]!.title, '雾都志')
+  assert.equal(mk({}, '# 雾都\n\n## 街区\n\nx\n').worldRows[0]!.title, '雾都')
+  assert.equal(mk({}, '无标题正文').worldRows[0]!.title, 'city')
+})
+
+test('设定面投影：灵感/准则/事件/世界观/风格直通总览', () => {
+  const overview = buildOverview({
+    ...baseScan,
+    principles: { frontmatter: {}, content: '## 红线\n\n不写超自然\n' },
+    ideas: { frontmatter: {}, content: '## 雨夜站台\n\n桥段一枚\n' },
+    events: { frontmatter: {}, content: '## 事件\n\n灯塔失窃\n' },
+    style: [{ name: 'lyric.md', frontmatter: {}, content: '## 示范\n\n一段语感\n' }],
+    worldbuilding: [{ name: 'city.md', frontmatter: {}, content: '# 雾都\n\n## 街区\n\n港口常年封冻\n' }],
+    worldbuildingCount: 1,
+  })
+  assert.deepEqual(overview.ideas?.map(s => s.title), ['雨夜站台'])
+  assert.deepEqual(overview.principles?.map(s => s.title), ['红线'])
+  assert.deepEqual(overview.events?.map(s => s.title), ['事件'])
+  assert.equal(overview.worldRows.length, 1)
+  assert.equal(overview.worldRows[0]!.title, '雾都')
+  assert.deepEqual(overview.styleRows.map(s => s.id), ['lyric'])
+})
+
+test('人物反查关系：他人档案声明的边进 reverseRelations（自己声明的不重复计）', () => {
+  const overview = buildOverview({
+    ...baseScan,
+    characters: [
+      { name: 'elin.md', frontmatter: { name: '艾琳' }, content: '' },
+      { name: 'kai.md', frontmatter: { name: '凯', relations: [{ name: '艾琳', desc: '宿敌' }] }, content: '' },
+    ],
+  })
+  const elin = overview.characterRows.find(c => c.id === 'elin')!
+  assert.deepEqual(elin.reverseRelations, [{ name: '凯', desc: '宿敌' }])
+  const kai = overview.characterRows.find(c => c.id === 'kai')!
+  assert.deepEqual(kai.reverseRelations, [])
+})
+
+test('伏笔生命周期锚投影：planted/milestones/resolved 进行数据', () => {
+  const overview = buildOverview({
+    ...baseScan,
+    plots: [{
+      name: 'p1.md',
+      frontmatter: {
+        status: 'planted', planned_chapter: '004', planted_chapter: '002', resolved_chapter: '',
+        milestones: '[{"type":"reinforcement","chapter":"003","note":"雨夜重提"}]',
+      },
+      content: '',
+    }],
+  })
+  const p = overview.plotRows[0]!
+  assert.equal(p.plannedChapter, '004')
+  assert.equal(p.plantedChapter, '002')
+  assert.equal(p.resolvedChapter, '')
+  assert.deepEqual(p.milestones, [{ type: 'reinforcement', chapter: '003', note: '雨夜重提' }])
+})
+
 test('换源等价抽查：基础聚合字段与 v5 口径一致（标题/进度/卷分组/最近章节/待办）', () => {
   const overview = buildOverview({
     ...baseScan,
@@ -115,6 +254,8 @@ test('换源等价抽查：基础聚合字段与 v5 口径一致（标题/进度
   assert.equal(overview.progress, 6 / 1000)
   assert.deepEqual(overview.volumes, [{ name: '第一卷', count: 2 }])
   assert.deepEqual(overview.recentChapters.map(c => c.id), ['002', '001'])
+  // v9：正文全文进 ChapterRow（章节页签阅读面）
+  assert.equal(overview.chapterRows.find(c => c.id === '001')!.content, '两个字')
   assert.equal(overview.pendingLineTotal, 2)
   assert.equal(overview.nextStep.kind, 'next-chapter')
 })

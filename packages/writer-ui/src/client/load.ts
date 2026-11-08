@@ -137,6 +137,9 @@ export async function mapPool<T, R>(items: readonly T[], limit: number, fn: (ite
   return results
 }
 
+/** worldbuilding 全文读取条目上限（保险丝：冷扫描无条件读，防超长项目读放大）。 */
+export const WORLDBUILDING_MAX = 24
+
 /** 小说项目根的标记物：任一命中即认定（兼容 novel/ 子目录布局与项目根直铺布局；含 ideas.md——纯灵感起步项目也要能识别）。 */
 const ROOT_MARKERS = ['project.md', 'principles.md', 'outline.md', 'ideas.md', 'events.md', 'chapters', 'characters', 'plots', 'worldbuilding']
 
@@ -204,9 +207,17 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
       }
     }
   }
-  for (const dirName of ['plots', 'characters', 'style']) {
+  let worldbuildingTruncated = 0
+  for (const dirName of ['plots', 'characters', 'style', 'worldbuilding']) {
     const entries = await listDir(sessionId, join(root, dirName), signal)
-    if (entries !== null) for (const entry of mdFiles(entries)) tasks.push({ dir: join(root, dirName), name: entry.name })
+    if (entries !== null) {
+      const names = mdFiles(entries).map(e => e.name)
+      // worldbuilding 读取上限保险丝（v8 审查 ④）：冷扫描无条件读全文，超长项目防读放大；
+      // 溢出部分不读（截断数随扫描返回，设定页如实披露）；其余目录无此面（量级天然有限）
+      const capped = dirName === 'worldbuilding' ? names.slice(0, WORLDBUILDING_MAX) : names
+      if (dirName === 'worldbuilding') worldbuildingTruncated = names.length - capped.length
+      for (const name of capped) tasks.push({ dir: join(root, dirName), name })
+    }
   }
   // 单文件实体与项目文件（根目录命中才读）
   const rootFiles = ['project.md', 'outline.md', 'principles.md', 'events.md', 'ideas.md', 'pending.md', '.writer/pending-archive.md']
@@ -254,6 +265,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   const plots: any[] = []
   const characters: any[] = []
   const style: any[] = []
+  const worldbuilding: any[] = []
   const singletons = new Map<string, { frontmatter: any; content: string }>()
   const maintenance = new Map<string, { sourceHash?: string; updatedAt?: string }>()
   for (const { task, raw } of readResults) {
@@ -264,6 +276,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     else if (task.dir === join(root, 'plots')) plots.push(record)
     else if (task.dir === join(root, 'characters')) characters.push(record)
     else if (task.dir === join(root, 'style')) style.push(record)
+    else if (task.dir === join(root, 'worldbuilding')) worldbuilding.push(record)
     else if (task.dir === maintenanceDir) {
       try {
         const json = JSON.parse(raw) as { sourceHash?: string; updatedAt?: string }
@@ -275,10 +288,8 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     } else singletons.set(task.name, parsed)
   }
 
-  // worldbuilding：条目 id 清单（M1a 口径；全文读取随需）
-  let worldbuildingNames: string[] = []
-  const worldbuildingEntries = await listDir(sessionId, join(root, 'worldbuilding'), signal)
-  if (worldbuildingEntries !== null) worldbuildingNames = mdFiles(worldbuildingEntries).map(e => e.name)
+  // worldbuilding：全文读取（设定页卡片数据源；文件级失败进 failedFiles 不炸扫描）
+  const worldbuildingNames = worldbuilding.map(e => String(e.name))
 
   // 大纲/项目/待办/归档
   const outline = singletons.get('outline.md') ?? null
@@ -318,7 +329,8 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     ...(singleton('events.md') !== undefined ? { events: singleton('events.md')! } : {}),
     ...(singleton('ideas.md') !== undefined ? { ideas: singleton('ideas.md')! } : {}),
     ...(style.length > 0 ? { style } : {}),
-    ...(worldbuildingNames.length > 0 ? { worldbuildingNames } : {}),
+    ...(worldbuilding.length > 0 ? { worldbuilding } : {}),
+    ...(worldbuildingTruncated > 0 ? { worldbuildingTruncated } : {}),
     ...(failedFiles.length > 0 ? { failedFiles } : {}),
     ...(staleChapters.length > 0 ? { staleChapters } : {}),
     ...(pendingArchive.length > 0 ? { pendingArchive } : {}),

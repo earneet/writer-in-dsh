@@ -46,7 +46,7 @@ export interface ToolViewPropsBase {
 
 // —— 排版（只引用 token；颜色零字面）——
 const muted: React.CSSProperties = { color: 'var(--dsw-alias-label-secondary)' }
-const dim: React.CSSProperties = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12 }
+const dim: React.CSSProperties = { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 }
 const detail: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0 8px 24px',
   fontSize: 12, lineHeight: 1.7, color: 'var(--dsw-alias-label-secondary)',
@@ -62,9 +62,9 @@ const statCell: React.CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-2)',
 }
 const statValue: React.CSSProperties = { fontSize: 16, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' }
-const statLabel: React.CSSProperties = { fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', marginTop: 2 }
+const statLabel: React.CSSProperties = { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginTop: 2 }
 const tagRowStyle: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }
-const warnRowStyle: React.CSSProperties = { display: 'flex', gap: 6, alignItems: 'center', color: 'var(--dsw-alias-state-warn-label)' }
+const warnRowStyle: React.CSSProperties = { display: 'flex', gap: 6, alignItems: 'center', color: 'var(--dsw-alias-state-warn-primary)' }
 
 /** 结果文本归一化：兼容 string 与 ContentBlock[]（text 块取 .text，其余 JSON 序列化）。 */
 function resultText(block: ToolViewPropsBase['block']): string {
@@ -161,7 +161,7 @@ function ToolRow({ icon, title, running, isError = false, summary, expandable, u
         keepContentWhenOpen
         onToggle={toggle}
         collapsedContent={
-          <span style={{ fontSize: 12, color: isError ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-tertiary)' }}>
+          <span style={{ fontSize: 12, color: isError ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)' }}>
             {summary}
           </span>
         }
@@ -332,7 +332,7 @@ export function ReviewCard(props: ToolViewPropsBase) {
               <span><span style={muted}>{s.dimension}：</span>{s.problem}</span>
             </div>
             {s.quote !== null && (
-              <div style={{ ...muted, paddingLeft: 8, borderLeft: '2px solid var(--dsw-alias-border-l3)' }}>原文：{s.quote}</div>
+              <div style={{ ...muted, paddingLeft: 8, borderLeft: '2px solid var(--dsw-alias-border-l2)' }}>原文：{s.quote}</div>
             )}
             {s.suggestion !== null && <div>建议：{s.suggestion}</div>}
             {s.rewriteOption !== null && <div>改写方案：{s.rewriteOption}</div>}

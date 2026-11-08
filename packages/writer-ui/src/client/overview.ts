@@ -70,8 +70,14 @@ export interface NovelScan {
   ideas?: OutlineSource
   /** style/ 目录（KIND_LAYOUT:37；风格示范 few-shot）。 */
   style?: PlotSource[]
-  /** worldbuilding 条目 id 清单（M1a 仅扫描名字；全文读取随 M1b 总线）。 */
-  worldbuildingNames?: string[]
+  /** worldbuilding 条目全文记录（设定页数据源；name/frontmatter/content）。
+   * 迁移留痕（v8）：旧键 `worldbuildingNames?: string[]`（仅名单）改为本全文形态——
+   * 形式上是字段替换；旧形状（只带 names）会被解释为 0 条世界观实体（graph 消费方
+   * 仅包内，无外部持有者）。读取条目数有上限（WORLDBUILDING_MAX），超出截断并在
+   * scan 标记 worldbuildingTruncated。 */
+  worldbuilding?: PlotSource[]
+  /** worldbuilding 条目超过读取上限被截断的数量（0/缺省 = 未截断）。 */
+  worldbuildingTruncated?: number
   // —— M1b 数据总线扩展（全部 optional：旧形状扫描结果与既有 fixture 不破坏）——
   /** 单文件读取失败清单（部分失败语义：不使整扫描失败，面板呈现「N 个文件读取失败」）。 */
   failedFiles?: string[]

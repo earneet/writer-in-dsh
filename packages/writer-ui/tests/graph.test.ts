@@ -150,14 +150,15 @@ test('扫描缺口四实体 + worldbuilding 名单（对照 KIND_LAYOUT）', () 
     events: { frontmatter: {}, content: '# 事件\n\n## 第 1 章 灯塔失窃\n\n描述\n' },
     ideas: { frontmatter: {}, content: '# 灵感\n\n- 桥段：雨夜站台\n' },
     style: [{ name: 'lyric.md', frontmatter: {}, content: '## 示范\n\n一段语感\n' }],
-    worldbuildingNames: ['city.md'],
+    worldbuilding: [{ name: 'city.md', frontmatter: {}, content: '# 雾都\n\n## 街区\n\n港口常年封冻\n' }],
     worldbuildingCount: 1,
   })
   assert.deepEqual(graph.principles?.sections.map(s => s.title), ['红线'])
   assert.deepEqual(graph.events?.sections.map(s => s.title), ['第 1 章 灯塔失窃'])
   assert.deepEqual(graph.ideas?.sections.map(s => s.title), ['简介'])
   assert.deepEqual(graph.styleRefs.map(s => s.id), ['lyric'])
-  assert.deepEqual(graph.worldEntries, [{ id: 'city' }])
+  // v8 全文读取：标题回退首标题，小节切分
+  assert.deepEqual(graph.worldEntries, [{ id: 'city', title: '雾都', sections: [{ title: '街区', body: '港口常年封冻' }] }])
   // 缺省（旧扫描形状）不炸
   const empty = buildEntityGraph(baseScan)
   assert.equal(empty.principles, null)

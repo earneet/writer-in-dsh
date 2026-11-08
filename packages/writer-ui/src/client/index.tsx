@@ -14,6 +14,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { WriterPanel, WriterPanelIcon } from './Panel.tsx'
+import type { ToolViewPropsBase } from './Cards.tsx'
 import {
   ConsistencyCheckCard, ExportBookCard, ForeshadowUpdateCard, ReviewCard,
   StatsCard, SummaryCard, TimelineUpdateCard, WriterSearchCard, WriteChapterCard,
@@ -65,12 +66,12 @@ export function apply(context: Context): void {
     card('timeline_update', TimelineUpdateCard as never)
     card('export_book', ExportBookCard as never)
     // M1b 卡片覆盖补全：治理类六工具通用卡片（SummaryCard + TOOL_LABELS；治理动作回写「写作动态」）
-    card('writer_read', ((props: never) => <SummaryCard {...props} icon={<IconFolderOpenOutlineRegular />} />) as never)
-    card('writer_update', ((props: never) => <SummaryCard {...props} icon={<IconEditOutlineRegular />} />) as never)
-    card('recompute_derived', ((props: never) => <SummaryCard {...props} icon={<IconRefreshOutlineRegular />} />) as never)
-    card('archive_point', ((props: never) => <SummaryCard {...props} icon={<IconArchiveOutlineRegular />} />) as never)
-    card('pending_cleanup', ((props: never) => <SummaryCard {...props} icon={<IconChecklistOutlineRegular />} />) as never)
-    card('maintenance_flush', ((props: never) => <SummaryCard {...props} icon={<IconSparkleRegular />} />) as never)
+    card('writer_read', ((props: ToolViewPropsBase) => <SummaryCard {...props} icon={<IconFolderOpenOutlineRegular />} />) as never)
+    card('writer_update', ((props: ToolViewPropsBase) => <SummaryCard {...props} icon={<IconEditOutlineRegular />} />) as never)
+    card('recompute_derived', ((props: ToolViewPropsBase) => <SummaryCard {...props} icon={<IconRefreshOutlineRegular />} />) as never)
+    card('archive_point', ((props: ToolViewPropsBase) => <SummaryCard {...props} icon={<IconArchiveOutlineRegular />} />) as never)
+    card('pending_cleanup', ((props: ToolViewPropsBase) => <SummaryCard {...props} icon={<IconChecklistOutlineRegular />} />) as never)
+    card('maintenance_flush', ((props: ToolViewPropsBase) => <SummaryCard {...props} icon={<IconSparkleRegular />} />) as never)
 
     return () => {
       for (const dispose of disposers) dispose()

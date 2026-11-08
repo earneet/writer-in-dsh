@@ -95,3 +95,16 @@
   到面板层或模块级。
 - **XSS 正面确认**：正文/frontmatter/关系名/SVG title 全走 React 文本子节点（自动转义），
   无 dangerouslySetInnerHTML；M3 启用 MarkdownText 时需重新评估不可信渲染配置。
+
+## v7/v8 增补（轮次 36，桌面版实测驱动）
+
+- **token 收敛（v7）**：修复 label-tertiary / bg-layer-3 / border-l3/l4 / state-warn-label 五个在
+  0.2.2 宿主主题不存在的失效引用（回退初始值导致观感塌陷）——全部映射到现行 13 token
+  （label-secondary / bg-layer-2 / border-l1/l2 / state-warn-primary）；关系图节点 fill/stroke 同步收敛。
+- **视觉层级（v7）**：一级卡片 bg-layer-1 + 1px border-l1；Hero 品牌色左条 + 6px 进度条 + 百分比；
+  图标统计格（18px 数值）；卷分布分段占比条（交替 brand/border-l2 防同色连段）；章号方块 chip；
+  人物首字头像（主角品牌描边）；时间线/伏笔生命周期竖向步进轨（1.5px 轨线 + 节点圆点）；待办复选框行标。
+- **信息架构（v8）**：页签 6→7（概况/大纲/伏笔/人物/灵感/设定/待办，「章节」并入大纲树）；
+  大纲树分型算法（卷/幕/章标题序贯 + 同型容器兄弟互斥，嵌套与平铺笔法同构）；伏笔风险分桶 +
+  生命周期步进轨；人物「被指向」反向关系；世界观全文读取（上限 24 条 + 截断披露）。
+- 既有 §审美四级字号等 M3 收口项仍有效；statCell 统一为 StatCell 组件（18px 数值），原 17px 项视为已收敛。
