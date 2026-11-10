@@ -1,5 +1,6 @@
 /**
- * 写作面板本体（注册进 main 槽 key=writer-panel；sidebar.panellist 提供入口）。
+ * 写作面板本体（注册进 conversation.view 槽 id=writer-panel：会话视图标签页，与「对话」「轨迹」同级；
+ * sessionId 经槽标准 props 直达，无需探测活跃会话）。
  *
  * v8（信息架构重设计，对齐参考项目 novel-writer 的 UI 概念）：数据链路（bus 数据总线 /
  * sessions 订阅 / workspaceFiles 增量刷新）不变，呈现层结构性升级——①大纲页签改
@@ -19,7 +20,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import {
   Button, DisclosureRow, MarkdownText, SegmentedTabs, Tag, TextShimmer, Tooltip,
   IconArchiveOutlineRegular, IconBranchOutlineRegular, IconChecklistOutlineRegular,
-  IconClockOutlineRegular, IconDataOutlineRegular, IconEditOutlineMedium,
+  IconClockOutlineRegular, IconDataOutlineRegular,
   IconFolderOpenOutlineRegular, IconGaugeOutlineMedium, IconGlobeOutlineRegular,
   IconGoalOutlineRegular, IconInfoOutlineRegular, IconListPenOutlineRegular,
   IconRefreshOutlineRegular, IconShieldOutlineRegular, IconSparkleRegular,
@@ -95,7 +96,7 @@ const STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral' 
 const statusTone = (status: string): 'success' | 'warning' | 'danger' | 'neutral' | 'outline' =>
   STATUS_TONES[status.toLowerCase()] ?? 'outline'
 
-/** 面板 props（main 槽 keyed 注册的拥有者数据；只用样式无关字段）。 */
+/** 面板 props（conversation.view 槽标准 props 的本地子集：sessionId 直达，无需 sessions 探测）。 */
 export interface WriterPanelProps {
   sessionId?: string
 }
@@ -123,7 +124,7 @@ interface ScanTarget {
  * （不可用回退 2s 轮询）；扫描成功后接管 changes 增量刷新（去抖 600ms 重扫；
  * watch 不支持/断流时降级手动刷新并标记）。
  */
-function useProjectScan(): ScanUiState & { refresh: () => void; bus: WriterBusSnapshot } {
+function useProjectScan(fixedSessionId?: string): ScanUiState & { refresh: () => void; bus: WriterBusSnapshot } {
   const bus = useWriterBus()
   const [ui, setUi] = useState<ScanUiState>({ loading: false, error: null, progress: null })
   const [nonce, setNonce] = useState(0)
@@ -135,9 +136,18 @@ function useProjectScan(): ScanUiState & { refresh: () => void; bus: WriterBusSn
   const retryAnchor = useRef<ScanTarget | null>(null)
   const refresh = useCallback(() => { setNonce(n => n + 1) }, [])
 
-  // 会话切换探测：sessions.list.subscribe（替换 2s 轮询；observable 缺席回退轮询）。
-  // 只在**活跃会话变化**时动作：作废旧 watch target（防旧会话残跑打断新会话扫描）+ 重扫。
+  // 会话切换探测：会话视图（sessionId prop）直达会话，仅作废旧 target + 重扫（nonce 驱动）；
+  // 全局挂载（prop 缺席）回退 sessions.list.subscribe 探测（observable 缺席再回退 2s 轮询）。
+  // 只在**定位会话变化**时动作：作废旧 watch target（防旧会话残跑打断新会话扫描）+ 重扫。
+  const sessionRef = useRef(fixedSessionId)
   useEffect(() => {
+    if (sessionRef.current === fixedSessionId) return
+    sessionRef.current = fixedSessionId
+    setTarget(null)
+    setNonce(n => n + 1)
+  }, [fixedSessionId])
+  useEffect(() => {
+    if (fixedSessionId !== undefined) return
     let last = activeSessionId()
     const onSessionChange = (): void => {
       const current = activeSessionId()
@@ -156,7 +166,7 @@ function useProjectScan(): ScanUiState & { refresh: () => void; bus: WriterBusSn
   useEffect(() => {
     const controller = new AbortController()
     setUi(prev => ({ ...prev, loading: true, progress: null }))
-    const sessionId = activeSessionId()
+    const sessionId = fixedSessionId ?? activeSessionId()
     if (sessionId === null) {
       setUi(prev => ({ ...prev, loading: false, error: '没有活跃会话，无法定位工作区' }))
       return
@@ -1129,8 +1139,8 @@ function PendingTab({ o }: { o: NovelOverview }): React.ReactElement {
 }
 
 /** 写作面板：38px 头部 + 六页签（概况/大纲/章节/伏笔/人物/待办）。 */
-export function WriterPanel(_props: WriterPanelProps) {
-  const { loading, error, progress, refresh, bus } = useProjectScan()
+export function WriterPanel(props: WriterPanelProps) {
+  const { loading, error, progress, refresh, bus } = useProjectScan(props.sessionId)
   const [tab, setTab] = useState<Tab>('overview')
   // 人物页 list/graph 模式提升到面板层（组件内 state 会随页签切换丢失）
   const [charactersMode, setCharactersMode] = useState<'list' | 'graph'>('list')
@@ -1215,9 +1225,4 @@ export function WriterPanel(_props: WriterPanelProps) {
       </div>
     </div>
   )
-}
-
-/** 侧边栏面板列表入口的图标（宿主基元「笔」形图标，与原生观感一致）。 */
-export function WriterPanelIcon() {
-  return <IconEditOutlineMedium size={16} />
 }

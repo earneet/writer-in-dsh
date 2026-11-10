@@ -1,5 +1,5 @@
 /**
- * dsh-writer-ui 浏览器半：注册侧边栏「写作面板」与写作工具富卡片。
+ * dsh-writer-ui 浏览器半：注册会话视图标签页「写作面板」与写作工具富卡片。
  *
  * 机制：本模块经 package.json 的 `dsh.client { platform: 'web' }` 声明 + `./client`
  * 导出（lib/client.js，factory-form CJS）由宿主在 /plugins 路由运行期动态加载；
@@ -7,13 +7,14 @@
  * 扩展位（第三方约定）：`ctx.slots.inject(槽名, () => ctx.slots.register(...))`——
  * 声明感知注入，宿主槽声明出现前后激活均可。
  *
- * 注册面：侧边栏「写作面板」+ 14 张工具卡片全覆盖（八张语义富卡片：write_chapter/
+ * 注册面：会话视图标签页「写作面板」（conversation.view 槽，与「对话」「轨迹」同级；
+ * sessionId 经槽标准 props 直达）+ 14 张工具卡片全覆盖（八张语义富卡片：write_chapter/
  * review_chapter/writer_stats/foreshadow_update/consistency_check/writer_search/
  * timeline_update/export_book；六张治理工具通用 SummaryCard：writer_read/writer_update/
  * recompute_derived/archive_point/pending_cleanup/maintenance_flush）。视觉基元经基线模块 @deepseek-ai/dsh-client-ui-primitives 取用。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { WriterPanel, WriterPanelIcon } from './Panel.tsx'
+import { WriterPanel } from './Panel.tsx'
 import type { ToolViewPropsBase } from './Cards.tsx'
 import {
   ConsistencyCheckCard, ExportBookCard, ForeshadowUpdateCard, ReviewCard,
@@ -37,7 +38,7 @@ export const name = 'dsh-writer-ui'
 // sessions 用于活跃会话探测（workspaceFiles 的 scope 是会话工作区根）。
 export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'sessions']
 
-/** 注册全部 UI 面：侧边栏面板 + 14 张工具卡片（8 语义富卡片 + 6 治理通用卡）。 */
+/** 注册全部 UI 面：会话视图标签页 + 14 张工具卡片（8 语义富卡片 + 6 治理通用卡）。 */
 export function apply(context: Context): void {
   const ctx = context as BrowserContext
   ctx.effect(() => {
@@ -46,11 +47,14 @@ export function apply(context: Context): void {
     setBrowserContext(ctx as never)
     const disposers: Array<() => void> = []
 
-    // 侧边栏「写作面板」：main 槽 keyed 面板体 + 面板列表入口
-    disposers.push(ctx.slots.inject('main', () =>
-      ctx.slots.register({ name: 'main', key: 'writer-panel' }, WriterPanel)))
-    disposers.push(ctx.slots.inject('sidebar.panellist', () =>
-      ctx.slots.register({ name: 'sidebar.panellist', id: 'writer-panel', order: 20, label: '写作面板' }, WriterPanelIcon)))
+    // 会话视图标签页「写作面板」（conversation.view 槽，session 作用域）：与「对话」「轨迹」
+    // 同级；sessionId 经槽标准 props 直达（Panel 侧免活跃会话探测）。order 20 排在 chat(0)/
+    // trajectory(10) 之后。组件经薄包装把 sessionId 传入面板（本地契约不引宿主槽类型）。
+    disposers.push(ctx.slots.inject('conversation.view', () =>
+      ctx.slots.register(
+        { name: 'conversation.view', id: 'writer-panel', order: 20, label: '写作面板' },
+        (props: { sessionId?: string }) => <WriterPanel sessionId={props.sessionId} />,
+      )))
 
     // 写作工具富卡片（keyed toolview：任意工具名可注册，未注册工具落通用卡片）
     const card = (key: string, Component: (props: never) => React.ReactElement): void => {

@@ -2,7 +2,7 @@
 
 「写作面板」Web 客户端插件（dsh-writer 工具链的配套 UI）：
 
-- **侧边栏「写作面板」（八页签，v9 信息架构 + M1b 决策面）**：
+- **会话视图标签页「写作面板」（`conversation.view` 槽，与「对话」「轨迹」同级；八页签，v9 信息架构 + M1b 决策面）**：
   - **概况**：书名/流派卡（品牌色侧条 + 目标字数进度条 + 百分比）、**情境卡（当前项目状态下最有价值的下一步动作）**、**健康度徽章行（伏笔三色 + 待维护）**、图标统计格（**点击跳转对应页签**）、**卷分布分段占比条**、最近章节（章号 chip）、伏笔状态徽章、本会话写作动态；
   - **大纲（v8 树形）**：outline.md 梗概卡 + **卷→幕→章情节结构树**（小节标题分型；`##`~`######` 嵌套与平铺两种笔法同构）；**章叶联动实际章节**（已写显字数/状态点，未写灰标）；已写未入大纲的章节单独回填区；
   - **章节（v9 阅读面）**：按卷分组的已写章节，**展开读正文全文**（Markdown 渲染限高滚动）；**边界留痕**：第三方客户端插件对 workspaceFiles 只有读面，面板内直接编辑无落盘通道——修改走对话（writer_update/补丁改写），落盘后增量订阅自动刷新本页；
@@ -22,8 +22,13 @@
 指向构建产物 `lib/client.js`（factory-form CJS：`window.__ModuleLoader__.load({ id, factory })`，
 与宿主 tsdown clientBundle 预设逐字对齐）。宿主把它经 `/plugins/<pkg>/client.js` 运行期服务给
 浏览器；基线模块（react/cordis/ui-slots 等）经注入的 require 从模块表取。扩展位全部走
-`ctx.slots.inject`（声明感知注入）：`main`（keyed 面板体）、`sidebar.panellist`（面板入口）、
+`ctx.slots.inject`（声明感知注入）：`conversation.view`（会话视图标签页面板体，session
+作用域，sessionId 经槽标准 props 直达；`order: 20` 排在 chat/trajectory 之后）、
 `tool.call.toolview`（keyed 工具卡片，任意工具名可注册）。
+
+入口位置（与旧版侧边栏形态的区别）：`conversation.view` 是**会话作用域**——标签随已打开的
+会话出现，每个会话独立记忆所选视图；未打开会话时没有该入口。当前版本为纯会话视图形态，
+不再注册 `main` + `sidebar.panellist`（旧版全局面板入口已移除）。
 
 ## 安装
 

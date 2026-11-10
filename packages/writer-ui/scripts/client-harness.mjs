@@ -136,17 +136,17 @@ console.log('registered slots:', registered.join(', '))
 // 面板组件：从注册回调抓 Component 太绕，直接从模块导出拿（factory 返回 exports）
 const Panel = client.__writerPanel ?? undefined
 if (Panel === undefined) {
-  // 未直接导出面板：经 slots.register 捕获 key=writer-panel 的组件
+  // 未直接导出面板：经 slots.register 捕获 conversation.view 槽 id=writer-panel 的组件
   let captured = null
   const captureSlots = {
     inject: (_name, register) => { register(); return () => {} },
-    register: (options, Component) => { if (options.key === 'writer-panel') captured = Component; return () => {} },
+    register: (options, Component) => { if (options.id === 'writer-panel') captured = Component; return () => {} },
   }
   client.apply({ ...ctx, slots: captureSlots })
   if (captured === null) throw new Error('未能捕获 writer-panel 组件')
-  // 轮询等待异步 scanNovel 完成后渲染
+  // 轮询等待异步 scanNovel 完成后渲染（会话视图形态：sessionId 经槽标准 props 直达）
   await new Promise(r => setTimeout(r, 300))
-  const html = renderToStaticMarkup(React.createElement(captured, {}))
+  const html = renderToStaticMarkup(React.createElement(captured, { sessionId: 's1' }))
   console.log('--- panel html ---')
   console.log(html)
   const noCrash = html.includes('写作面板') && html.includes('刷新')

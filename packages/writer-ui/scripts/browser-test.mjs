@@ -1,6 +1,6 @@
 /**
  * 真实浏览器自测（node scripts/browser-test.mjs <url>）：
- * 打开 Web GUI，收集 console/pageerror，截图；点击侧边栏「写作面板」入口后再截图。
+ * 打开 Web GUI，收集 console/pageerror，截图；点击会话视图标签页「写作面板」后再截图。
  * 产物写到 scripts/browser-test-out/（诊断用，不入库）。
  */
 import { createRequire } from 'node:module'
@@ -32,7 +32,7 @@ await page.goto(url, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(12000)
 await page.screenshot({ path: new URL('./browser-test-out/1-load.png', import.meta.url).pathname.replace(/^\//, '') && './browser-test-out/1-load.png' })
 
-// 尝试打开写作面板（侧边栏面板入口）并逐页签采样
+// 尝试打开写作面板（会话视图标签页入口）并逐页签采样
 let clicked = false
 for (const label of ['写作面板']) {
   const el = page.getByText(label, { exact: false }).first()

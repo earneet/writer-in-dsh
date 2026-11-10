@@ -69,8 +69,9 @@
 
 | 槽位/服务 | kind | 现状/要点 |
 |---|---|---|
-| `main`（keyed） | keyed | ✅ 写作面板体（key=writer-panel；**保留 key 'conversation' 不可碰**，slot-catalog.ts:1841） |
-| `sidebar.panellist` | list | ✅ 面板入口（order=20） |
+| `conversation.view` | list | ✅ **面板本体**（id=writer-panel，order=20，与「对话」(chat,0)「轨迹」(trajectory,10) 同级的会话视图标签页；session 作用域——sessionId 经槽标准 props 直达，未打开会话无入口） |
+| `main`（keyed） | keyed | ⬜ 不再使用（旧侧边栏形态遗留行；**保留 key 'conversation' 不可碰**，slot-catalog.ts:1841） |
+| `sidebar.panellist` | list | ⬜ 不再使用（旧面板入口，轮次 35 起移除） |
 | `tool.call.toolview` | keyed | ✅ 14 张工具卡片全覆盖（8 语义富卡片 + 6 治理工具通用卡，M1b） |
 | 右栏工作台 tab | 服务+keyed | ⬜ **两阶段注册**：① `ctx.sidebarRightTabs.register(definition)`（静态定义：id/kind/patterns/priority/title/guide/`keepMounted`/`multiple`）；② keyed seat `sidebar.right.pane.tab`（+可选 `.title`）注册 body/title，**key=definition.id，仅 key 无 label/order**（slot-catalog.ts:3262-3269）。范例：ui-sidebar-files/src/client/index.ts:81-96。需 inject `'sidebarRightTabs'`/`'sidebarRight'`。会话级持久（storage `dsh.sidebar-right.v1`）✅ |
 | 右栏程序化打开 | 服务 | ⬜ `ctx.sidebarRight.openTab(kind,{paneId,replaceTab,revealIfOpened,params})` / `openResource(address,{params})`——「点击左栏摘要→右栏展开」联动的实现路径（ui-sidebar-right/src/client/contract/slots.ts:148-158） |

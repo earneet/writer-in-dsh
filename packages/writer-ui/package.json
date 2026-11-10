@@ -29,7 +29,7 @@
   "engines": {
     "node": ">=20"
   },
-  "description": "「写作面板」Web 客户端插件：侧边栏写作动态面板（章节/字数/伏笔/时间线）与 write_chapter/review_chapter/writer_stats 等工具结果富卡片（dsh-writer 工具链配套 UI）",
+  "description": "「写作面板」Web 客户端插件：会话视图标签页写作面板（章节/字数/伏笔/时间线）与 write_chapter/review_chapter/writer_stats 等工具结果富卡片（dsh-writer 工具链配套 UI）",
   "license": "MIT",
   "repository": {
     "type": "git",
