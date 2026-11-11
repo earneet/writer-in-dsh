@@ -18,6 +18,11 @@ async function makeStore(): Promise<{ store: WriterStoreService; root: string }>
   return { store, root }
 }
 
+test('轮次 38（P2-5）：projectRoot 相对路径构造期响亮失败', async () => {
+  // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+  assert.throws(() => new WriterStoreService(new Context(), { projectRoot: 'novel' }), /projectRoot 必须为绝对路径/)
+})
+
 test('创建 → 读取 → 乐观锁更新 → 陈旧 hash 拒绝', async () => {
   const { store, root } = await makeStore()
   try {

@@ -7,7 +7,7 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type {
   ChapterWriteRequest, ChapterWriteResult, ConsistencyReport, EntityKind, Frontmatter,
-  MaintenanceExtraction, ReviewReport, WriterEntity,
+  MaintenanceDerived, MaintenanceExtraction, ReviewReport, RagHit, WriterEntity,
 } from 'dsh-writer-domain'
 
 /** 实体写入补丁：frontmatter 与正文均可选，至少提供其一。 */
@@ -75,16 +75,31 @@ export abstract class WriterService extends Service {
    * 读取派生数据缓存（.writer/derived/<kind>/<id>.json）；不存在返回 undefined。
    * @param kind - 派生数据种类（如 "maintenance"）。
    * @param id - 实体 id（如章节三位序号）。
+   * @deprecated 轮次 38（P0-3 第一步）：消费者不要再用它传磁盘 kind 字面量，改用下面的业务方法。
+   *   磁盘布局是 Provider 的实现细节，不应成为跨包 ABI（对照 dsh-fs 的 Branded 不透明 id：
+   *   "Consumers MUST NOT parse it or assume it is a local absolute path"）。第二步删除本方法。
    */
   abstract readDerived(kind: string, id: string): Promise<unknown | undefined>
 
-  /** 写入派生数据缓存（JSON 可序列化值；覆盖写）。 */
+  /**
+   * 读取某章的维护 pass 派生记录（摘要 + 抽取 + 锚定 hash）；不存在返回 undefined。
+   * 业务语义方法：调用方无需知道磁盘上叫 "maintenance"、按章 id 存、值是 MaintenanceDerived。
+   */
+  abstract readMaintenance(chapterId: string): Promise<MaintenanceDerived | undefined>
+
+  /** 写入某章的维护 pass 派生记录（覆盖写）。业务语义方法，与 readMaintenance 配对。 */
+  abstract writeMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void>
+
+  /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除，重建走维护 pass）。 */
+  abstract deleteMaintenance(chapterId: string): Promise<void>
+
+  /** 写入派生数据缓存（JSON 可序列化值；覆盖写）。@deprecated 轮次 38（P0-3 第一步）：消费者改用 writeMaintenance 等业务方法，本方法第二步删除。 */
   abstract writeDerived(kind: string, id: string, value: unknown): Promise<void>
 
-  /** 删除派生数据缓存（改稿期标记过期 = 删除，重建走维护 pass）。 */
+  /** 删除派生数据缓存（改稿期标记过期 = 删除，重建走维护 pass）。@deprecated 轮次 38（P0-3 第一步）：消费者改用 deleteMaintenance 等业务方法，本方法第二步删除。 */
   abstract deleteDerived(kind: string, id: string): Promise<void>
 
-  /** 列出某类派生数据的全部 id（统计派生覆盖率用）。 */
+  /** 列出某类派生数据的全部 id（统计派生覆盖率用）。@deprecated 轮次 38：生产代码零调用且会把磁盘 kind 字面量重新泄漏给消费者——第二步删除（fix-plan 已列入裁定清单）。 */
   abstract listDerived(kind: string): Promise<string[]>
 
   /** 向 pending.md 追加一节待办（维护 pass 产出，供人确认；原子写）。 */
@@ -250,6 +265,17 @@ export interface RagSearchOptions {
 }
 
 /**
+ * 检索结果（轮次 38 P1-1）：hits 为按融合得分降序的命中；
+ * `degraded` 非空表示语义腿本次降级为纯关键词（如 llm 档打分输出不可解析），
+ * 消费方（engine 分节 / writer_search 回执）必须**可见披露**，不得静默吞掉。
+ */
+export interface RagSearchOutcome {
+  hits: RagHit[]
+  /** 降级原因标识（如 'llm-score-unparsable'）；语义腿正常参与或显式关闭时为 undefined。 */
+  degraded?: string
+}
+
+/**
  * 混合检索服务抽象基线（P4）：关键词先行（自实现 TF-IDF）+ 可选语义档（后端 Config 驱动），
  * RRF 融合。检索对象 = 章节原文 + 派生摘要 + 人物/伏笔/世界观条目。
  * 由 `dsh-writer-rag`（Provider，inject writer）实现并发布 `ctx.writerRag`；
@@ -264,5 +290,13 @@ export abstract class RagService extends Service {
    * 混合检索：返回按融合得分降序的命中（snippet 已截断，含来源引用供核对）。
    * @param query - 查询文本（通常为大纲小节 + 写作指令）。
    */
-  abstract search(query: string, opts?: RagSearchOptions): Promise<import('dsh-writer-domain').RagHit[]>
+  abstract search(query: string, opts?: RagSearchOptions): Promise<RagHit[]>
+
+  /**
+   * 带降级披露的检索（轮次 38 P1-1）：与 search 同参同命中，额外携带 `degraded` 标志。
+   * 基类默认实现委托 search（无降级信息）；Provider 按需覆写以报告语义腿降级。
+   */
+  searchDetailed(query: string, opts?: RagSearchOptions): Promise<RagSearchOutcome> {
+    return this.search(query, opts).then((hits) => ({ hits }))
+  }
 }

@@ -293,6 +293,94 @@ test('配置响亮失败：字段整体缺席（undefined）/ 大重叠 / 非法
   assert.throws(() => new WriterRagService(freshCtx() as never, { embeddingBackend: 'vector' } as never), /embeddingBackend 非法/)
 })
 
+test('轮次 38（P1-4）：backend=llm 且宿主 llm 服务缺席——构造期响亮失败（不等到首次检索）', () => {
+  // @ts-expect-error 测试桩：真实 Context 由 loader 提供（此处刻意不挂 llm）
+  const ctx = new Context()
+  assert.throws(
+    () => new WriterRagService(ctx, {
+      embeddingBackend: 'llm', llmProvider: 'p', llmModel: 'm', externalBaseUrl: '', externalModel: '',
+      externalApiKeyEnv: 'K', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
+      snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
+    }),
+    /宿主未挂载 llm 服务/,
+  )
+})
+
+test('轮次 38（P1-1）：semanticCandidates=0 显式关闭语义腿（llm 不被调用）；打分不可解析时 searchDetailed 披露 degraded', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'writer-rag-off-'))
+  // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+  const ctx = new Context()
+  const store = new WriterStoreService(ctx, { projectRoot: root })
+  await mkdir(join(root, 'chapters'), { recursive: true })
+  await mkdir(join(root, 'characters'), { recursive: true })
+  await mkdir(join(root, 'plots'), { recursive: true })
+  await mkdir(join(root, 'worldbuilding'), { recursive: true })
+  await writeFile(join(root, 'chapters/001.md'), '---\nnumber: 1\ntitle: "雨夜"\n---\n雨夜里，埃琳第一次看见绿焰浮现。', 'utf8')
+  // llm 桩：被调用即抛错（证明语义腿确实关闭）
+  let llmCalled = 0
+  const llm = {
+    stream(): AsyncGenerator<never> {
+      llmCalled += 1
+      throw new Error('语义腿应被关闭，llm 不应被调用')
+    },
+  }
+  const originalGet = ctx.get.bind(ctx)
+  Object.defineProperty(ctx, 'get', {
+    value: (name: string) => (name === 'llm' ? llm : originalGet(name)),
+    configurable: true,
+  })
+  try {
+    // ① semanticCandidates=0：语义腿关闭，纯关键词检索照常返回、无 degraded
+    const offRag = new WriterRagService(ctx, {
+      embeddingBackend: 'llm', llmProvider: 'stub', llmModel: 'stub', externalBaseUrl: '', externalModel: '',
+      externalApiKeyEnv: 'K', semanticCandidates: 0, chunkChars: 600, chunkOverlap: 80,
+      snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
+    })
+    const off = await offRag.searchDetailed('绿焰', { maxResults: 5 })
+    assert.ok(off.hits.length > 0, '纯关键词命中')
+    assert.equal(off.degraded, undefined, '显式关闭不算降级')
+    assert.equal(llmCalled, 0, '语义腿关闭：llm 零调用')
+
+    // ② 打分不可解析：searchDetailed 披露 degraded，search()（兼容入口）行为不变仍返回命中数组
+    const queue: string[] = []
+    const llm2 = {
+      stream(): AsyncGenerator<{ type: string } & Record<string, unknown>> {
+        const text = queue.shift() ?? ''
+        return (async function* () {
+          yield { type: 'text-delta', index: 0, text }
+          yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    }
+    Object.defineProperty(ctx, 'get', {
+      value: (name: string) => (name === 'llm' ? llm2 : originalGet(name)),
+      configurable: true,
+    })
+    // 复用同一 root（store 已挂）需独立 ctx 避免服务重复注册——见上文同款注释
+    // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+    const ctx2 = new Context()
+    new WriterStoreService(ctx2, { projectRoot: root })
+    const originalGet2 = ctx2.get.bind(ctx2)
+    Object.defineProperty(ctx2, 'get', {
+      value: (name: string) => (name === 'llm' ? llm2 : originalGet2(name)),
+      configurable: true,
+    })
+    const rag = new WriterRagService(ctx2, {
+      embeddingBackend: 'llm', llmProvider: 'stub', llmModel: 'stub', externalBaseUrl: '', externalModel: '',
+      externalApiKeyEnv: 'K', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
+      snippetChars: 280, maxResults: 5, embeddingTimeoutMs: 30_000, semanticMinScore: 0.28,
+    })
+    queue.push('完全不是 JSON 的输出')
+    const degraded = await rag.searchDetailed('绿焰', { maxResults: 5 })
+    assert.equal(degraded.degraded, 'llm-score-unparsable', '打分不可解析时披露降级标志')
+    assert.ok(degraded.hits.length > 0, '降级后关键词命中仍在')
+    assert.ok(Array.isArray(await rag.search('绿焰', { maxResults: 5 })), '兼容入口仍返回数组（llm 输出再次不可解析，hits 走关键词）')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('分词缓存：重复查询结果一致且缓存被填充；块内容变化后键失效重算', async () => {
   const { rag, store, root } = await makeFixture()
   try {

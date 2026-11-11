@@ -333,6 +333,13 @@ test('maintenancePass TOCTOU：执行期间章节被改写 → 跳过旧版 pend
     const derived = await setup.store.readDerived('maintenance', '001') as { sourceHash: string }
     assert.equal(derived.sourceHash, latest!.hash, '补跑覆盖为最新版本的派生')
     assert.equal(result.sourceHash, latest!.hash)
+    // 轮次 38（P0-2）：旧版本建议不得混入人工确认清单，最新版待办恰好一条。
+    // 修复前：补跑轮 appendPending 旧版本记录，同一章在 pending.md 留下两条互相矛盾的待办；
+    // 对抗审查修正后锁定：首轮判过期不写、补跑轮锚定最新版写一条（不含旧摘要）。
+    const pending = await readFile(join(setup.root, 'pending.md'), 'utf8').catch(() => '')
+    assert.doesNotMatch(pending, /旧摘要/, 'pending.md 不得含已被取代版本的摘要')
+    assert.equal((pending.match(/## \[维护 pass\]/g) ?? []).length, 1, '最新版待办恰好一节（补跑轮写入）')
+    assert.match(pending, /新摘要/, '补跑轮锚定的最新版待办已落清单')
   } finally {
     await rm(setup.root, { recursive: true, force: true })
   }

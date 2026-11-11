@@ -16,7 +16,7 @@
 
 | 层 | 行 | 说明 |
 |---|---|---|
-| 全局 | `dsh-writer-ui` | 写作面板客户端插件（侧边栏 + 工具富卡片），所有会话可见 |
+| 全局 | `dsh-writer-ui` | 写作面板客户端插件（会话视图「写作面板」标签页 + 工具富卡片，轮次 37 起入口从侧边栏迁至标签页），所有会话可见 |
 | 人设 | `dsh-persona` | 长篇小说协作写作助手身份 + 开场加载 writer-onboarding 技能 |
 | 基础 | `dsh-agent-instructions` / `tool-fs` / `tool-skill` / `tool-todo` / `tool-ask-user` / 平台 shell | 读稿件与 pending.md、加载写作技能、向作者提问 |
 | 写作 | `dsh-writer-store→engine→skills→export→rag→guard→tools` | 全部 dsh-writer 插件，挂载序与 dsh-writer-bundle 一致 |

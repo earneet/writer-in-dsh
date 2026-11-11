@@ -40,7 +40,7 @@ test('契约：writer_stats 回执 ↔ parseWriterStats', async () => {
           : [],
     get: async (_k: string, id: string) => (id === 'event' ? { content: '事件' } : undefined),
     root: '.',
-    readDerived: async (_kind: string, id: string) => (id === '001' ? { sourceHash: 'h1' } : { sourceHash: 'stale' }),
+    readMaintenance: async (id: string) => (id === '001' ? { sourceHash: 'h1' } : { sourceHash: 'stale' }),
   })
   const out = await tools.get('writer_stats')!.execute({})
   const parsed = parseWriterStats(out)

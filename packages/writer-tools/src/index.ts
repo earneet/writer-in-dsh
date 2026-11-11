@@ -292,7 +292,7 @@ export function apply(ctx: Context): void {
       const totalChars = chapters.reduce((sum, c) => sum + c.content.length, 0)
       // 覆盖率按新鲜度计：派生存在且 sourceHash 与当前章节 hash 一致才算覆盖（过期派生 = 待维护）
       const derivedEntries = await Promise.all(chapters.map(async (c) => {
-        const derived = await ctx.writer.readDerived('maintenance', c.id) as { sourceHash?: string } | undefined
+        const derived = await ctx.writer.readMaintenance(c.id)
         return derived !== undefined && derived.sourceHash === c.hash
       }))
       const stale = chapters.filter((_, i) => !derivedEntries[i]).map((c) => c.id)
@@ -476,16 +476,20 @@ export function apply(ctx: Context): void {
       if (args.chapter_limit !== undefined && (!Number.isInteger(args.chapter_limit) || args.chapter_limit < 1)) {
         throw new Error(`chapter_limit 非法：${args.chapter_limit}（须为正整数，填当前写作章号如 3）`)
       }
-      const hits = await rag.search(args.query, {
+      // searchDetailed（轮次 38 P1-1）：语义腿降级在回执首行可见披露，不静默吞掉
+      const { hits, degraded } = await rag.searchDetailed(args.query, {
         ...(args.chapter_limit !== undefined ? { chapterLimit: args.chapter_limit } : {}),
         ...(args.max_results !== undefined ? { maxResults: args.max_results } : {}),
         signal: exec.signal,
       })
       if (hits.length === 0) return `无命中：${args.query}`
-      return hits.map((hit, i) => {
+      const notice = degraded !== undefined
+        ? `⚠ 语义档降级（${degraded}）：以下为纯关键词检索结果。\n`
+        : ''
+      return `${notice}${hits.map((hit, i) => {
         const origin = hit.chapterNumber !== undefined ? `第 ${hit.chapterNumber} 章 ` : ''
         return `${i + 1}. 【${hit.refKind}/${hit.refId}】${origin}${hit.title !== undefined ? `${hit.title}：` : ''}${hit.snippet}（score=${hit.score.toFixed(4)}）`
-      }).join('\n')
+      }).join('\n')}`
     },
   }))
 

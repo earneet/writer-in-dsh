@@ -163,7 +163,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     if (depth < 1) {
       const [latest, derived] = await Promise.all([
         this.ctx.writer.get('chapter', chapterId),
-        this.ctx.writer.readDerived('maintenance', chapterId) as Promise<MaintenanceDerived | undefined>,
+        this.ctx.writer.readMaintenance(chapterId),
       ])
       if (latest !== undefined && derived !== undefined && derived.sourceHash !== latest.hash) {
         return this.maintenancePass(chapterId, { force: true, signal: opts?.signal }, depth + 1)
@@ -172,11 +172,11 @@ export default class WriterEngineServiceImpl extends EngineService {
     return result
   }
 
-  private async doMaintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }): Promise<MaintenancePassResult> {
+  private async doMaintenancePass(chapterId: string, opts: { force?: boolean; signal?: AbortSignal } | undefined): Promise<MaintenancePassResult> {
     opts?.signal?.throwIfAborted()
     const chapter = await this.ctx.writer.get('chapter', chapterId)
     if (chapter === undefined) throw new Error(`章节不存在：chapter/${chapterId}`)
-    const derived = await this.ctx.writer.readDerived('maintenance', chapterId) as MaintenanceDerived | undefined
+    const derived = await this.ctx.writer.readMaintenance(chapterId)
     // 完成 hash 锚定：派生与当前章节内容一致即跳过（防重复触发读己之写）
     if (derived !== undefined && derived.sourceHash === chapter.hash && opts?.force !== true) {
       return { chapterId, status: 'up-to-date', sourceHash: derived.sourceHash }
@@ -242,7 +242,6 @@ export default class WriterEngineServiceImpl extends EngineService {
     // 写回派生数据 + pending.md 待办清单（供人确认，不自动改伏笔/人物实体）。
     // TOCTOU 防护：落盘前重读章节——执行期间被改写则跳过 pending 追加（旧版本待办会误导确认），
     // 派生仍写入（锚定旧 hash，由 maintenancePass 的补跑覆盖）。
-    const changedDuringRun = (await this.ctx.writer.get('chapter', chapterId))?.hash !== chapter.hash
     const record: MaintenanceDerived = {
       sourceHash: chapter.hash,
       summary,
@@ -250,7 +249,14 @@ export default class WriterEngineServiceImpl extends EngineService {
       updatedAt: new Date().toISOString(),
       ...(rejected !== undefined ? { partial: true, rejected } : {}),
     }
-    await this.ctx.writer.writeDerived('maintenance', chapterId, record)
+    await this.ctx.writer.writeMaintenance(chapterId, record)
+    // 重读判据紧贴 appendPending（轮次 38 修复 P0-2）：原先在 writeDerived **之前**判定，
+    // 中间隔着一次 IO；判定与写入之间的窗口越小，「旧版本待办混进人工确认环」的概率越低。
+    // changedDuringRun 是唯一判据：本轮锚定的版本若已被改写则不写 pending（旧版本建议会误导
+    // 人工确认）；若仍为当前版则写——补跑轮开头重读的就是最新版，其待办合法且应当落清单
+    // （对抗审查修正：初版额外按 depth>0 抑制补跑轮，导致「保存落在首轮运行期内」路径下
+    // 最新版待办永久不落 pending.md——自动触发丢弃返回值且后续 pass 命中 up-to-date 短路）。
+    const changedDuringRun = (await this.ctx.writer.get('chapter', chapterId))?.hash !== chapter.hash
     if (!changedDuringRun) {
       await this.ctx.writer.appendPending(renderPendingSection(chapterId, record))
     }
@@ -302,7 +308,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     const batchBudget = Math.max(1000, this.genParams.contextBudgetChars - baselineUsed)
     // 分批输入：派生摘要新鲜（sourceHash 锚定）则用摘要，否则用正文
     const inputs = await Promise.all(inScope.map(async (chapter) => {
-      const derived = await this.ctx.writer.readDerived('maintenance', chapter.id) as MaintenanceDerived | undefined
+      const derived = await this.ctx.writer.readMaintenance(chapter.id)
       const fresh = derived !== undefined && derived.sourceHash === chapter.hash
       return { id: chapter.id, content: chapter.content, summary: fresh === true ? derived.summary : undefined }
     }))
@@ -417,14 +423,14 @@ export default class WriterEngineServiceImpl extends EngineService {
         results.push({ chapterId: id, status: 'no-chapter' })
         continue
       }
-      const derived = await this.ctx.writer.readDerived('maintenance', id) as MaintenanceDerived | undefined
+      const derived = await this.ctx.writer.readMaintenance(id)
       const fresh = derived !== undefined && derived.sourceHash === chapter.hash
       if (fresh && mode === 'recompute') {
         results.push({ chapterId: id, status: 'up-to-date' })
         continue
       }
       if (mode === 'mark') {
-        await this.ctx.writer.deleteDerived('maintenance', id)
+        await this.ctx.writer.deleteMaintenance(id)
         // 旧待办作废提示：pending.md 中该章上次维护 pass 的建议基于旧版本，标记过期即作废
         await this.ctx.writer.appendPending(`## [recompute mark] chapter/${id} 派生已标记过期（${new Date().toISOString()}）——此前针对本章的维护 pass 待办作废，待重算后重新生成。`)
         results.push({ chapterId: id, status: 'marked' })
@@ -450,7 +456,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     // 新鲜派生摘要（sourceHash 锚定；过期摘要不用，正文截断兜底）
     const summaries: Record<string, string> = {}
     await Promise.all(chapters.map(async (chapter) => {
-      const derived = await this.ctx.writer.readDerived('maintenance', chapter.id) as MaintenanceDerived | undefined
+      const derived = await this.ctx.writer.readMaintenance(chapter.id)
       if (derived !== undefined && derived.sourceHash === chapter.hash && derived.summary.trim().length > 0) {
         summaries[chapter.id] = derived.summary
       }
@@ -611,7 +617,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     // 更早章新鲜摘要（sourceHash 锚定；与 rag buildCorpus 同口径）——喂给组装器「更早章节」档
     const chapterSummaries: Record<string, string> = {}
     await Promise.all(chapters.map(async (c) => {
-      const derived = await this.ctx.writer.readDerived('maintenance', c.id) as MaintenanceDerived | undefined
+      const derived = await this.ctx.writer.readMaintenance(c.id)
       if (derived !== undefined && derived.sourceHash === c.hash && derived.summary.trim().length > 0) {
         chapterSummaries[c.id] = derived.summary
       }
@@ -650,9 +656,13 @@ export default class WriterEngineServiceImpl extends EngineService {
     const query = [chapterOutline ?? '', request.instruction ?? ''].filter((s) => s.trim().length > 0).join('\n').trim()
     if (query.length === 0) return assembled
     try {
-      const hits = await rag.search(query, { chapterLimit: chapterNumber, maxResults: 5, signal: request.signal })
+      // searchDetailed（轮次 38 P1-1）：语义腿降级必须在注入分节里可见披露，不静默吞掉
+      const { hits, degraded } = await rag.searchDetailed(query, { chapterLimit: chapterNumber, maxResults: 5, signal: request.signal })
       if (hits.length === 0) return assembled
-      const body = renderRagSection(hits)
+      const notice = degraded !== undefined
+        ? `⚠ 语义档降级（${degraded}）：本次为纯关键词检索结果。\n`
+        : ''
+      const body = `${notice}${renderRagSection(hits)}`
       const cap = Math.max(200, Math.floor(this.genParams.contextBudgetChars / 4))
       const sections = [...assembled.sections, {
         title: '检索增强（RAG，已防剧透过滤）',

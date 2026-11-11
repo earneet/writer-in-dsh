@@ -82,7 +82,7 @@ test('writer_stats：章节/卷/伏笔/弧线/派生覆盖各分支', async () =
     save: async () => { throw new Error('不应到达') },
     root: '.',
     // 派生新鲜度桩：001 新鲜（sourceHash 匹配）、002 过期
-    readDerived: async (_kind: string, id: string) => (id === '001' ? { sourceHash: 'h1' } : { sourceHash: 'stale' }),
+    readMaintenance: async (id: string) => (id === '001' ? { sourceHash: 'h1' } : { sourceHash: 'stale' }),
   } as unknown as WriterStub)
   const stats = tools.get('writer_stats')!
   const out = await stats.execute({})

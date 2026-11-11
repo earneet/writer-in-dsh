@@ -8,10 +8,10 @@
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join, dirname, posix, relative, sep } from 'node:path'
+import { join, dirname, isAbsolute, posix, resolve, relative, sep } from 'node:path'
 import {
   contentHash, parseFrontmatter, serializeEntity,
-  type EntityKind, type Frontmatter, type WriterEntity,
+  type EntityKind, type Frontmatter, type MaintenanceDerived, type WriterEntity,
 } from 'dsh-writer-domain'
 import { WriterService, type EntityPatch } from 'dsh-writer-core'
 
@@ -42,6 +42,68 @@ const KIND_LAYOUT: Readonly<Record<EntityKind, { dir: string } | { file: string 
 const FILE_KINDS = new Set<EntityKind>(['project', 'principles', 'outline', 'event', 'idea'])
 /** Windows 保留设备名（大小写不敏感），作实体 id 会引发诡异文件系统行为。 */
 const WINDOWS_RESERVED = new Set(['con', 'prn', 'aux', 'nul', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9'])
+
+/** 维护 pass 派生数据的磁盘 kind（唯一真源；消费者经 readMaintenance 业务方法访问）。 */
+const MAINTENANCE_KIND = 'maintenance'
+
+/**
+ * 进程内共享的写串行化链（轮次 38 修复 P0-1：跨实例静默丢数据）。
+ *
+ * 原先链是**每个 Service 实例私有**的 `saveChains`，而「写作模式」preset 给每个会话各挂一组
+ * store、projectRoot 又默认同指 `<cwd>/novel`——两个会话并发写同一 pending.md 时，后写者按
+ * 旧快照整体重写，先写者的段静默消失（实测两实例共 40 次追加只落 20 节、零报错）。
+ *
+ * 提到 module 级：realm 隔离隔离的是服务注册符号，不是模块代码，故跨 isolate 域仍共享同一张表，
+ * 单写者语义由此成立。键 = projectRoot + 资源名，不同项目互不阻塞。
+ * 已知限制：跨进程（两个 dsh 进程共用一个小说目录）仍无保护，与派生缓存跨进程不共享同口径。
+ */
+const WRITE_CHAINS = new Map<string, Promise<void>>()
+
+/** 在共享串行链上排队执行：同键并发排队（上一环失败不阻断后续排队，仅传递落点）。 */
+function withWriteChain<T>(projectRoot: string, resource: string, task: () => Promise<T>): Promise<T> {
+  // 键内归一化（对抗审查 P3）：resolve 消尾斜杠/相对段 + Windows 盘符大小写归一——
+  // 否则 F:\a 与 f:\a\ 会同根异键，双链并行使保护失效。
+  // 已知边界（留痕）：Linux 大小写敏感文件系统上仅大小写不同的两个项目根会共链——
+  // 后果只是多余的跨项目串行（保守方向，绝不会漏保护）；小说场景 projectRoot 来自同一配置源，实际不可达。
+  const key = `${resolve(projectRoot).toLowerCase()}\u0000${resource}`
+  const prev = WRITE_CHAINS.get(key) ?? Promise.resolve()
+  const run = prev.then(task, task)
+  const tail = run.then(() => undefined, () => undefined)
+  WRITE_CHAINS.set(key, tail)
+  void tail.then(() => {
+    // 身份校验清理：只删自己入表的 entry，防误删并发后继的登记
+    if (WRITE_CHAINS.get(key) === tail) WRITE_CHAINS.delete(key)
+  })
+  return run
+}
+
+/** 唯一临时文件名（并发写者不共用固定 tmp 互踩；与 writeDerived 同范式）。 */
+let tmpCounter = 0
+function uniqueTmpPath(absPath: string): string {
+  tmpCounter += 1
+  return `${absPath}.${process.pid.toString(36)}${tmpCounter.toString(36)}.tmp`
+}
+
+/** rename 瞬时占用（Windows 杀软/索引器短暂锁目标文件）的可重试错误码。 */
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+/**
+ * 原子 rename + 有界重试（轮次 38 收口）：串行化已消除自撞，但 Windows 上对同一文件的高频
+ * 连续 rename 仍会被杀软/索引器的实时扫描瞬时锁住（EPERM/EACCES/EBUSY）——重试 3 次
+ * （10/20/40ms 退避）后仍失败才按原口径响亮报错（目标文件可能被外部程序占用）。
+ */
+async function renameWithRetry(tmpPath: string, absPath: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(tmpPath, absPath)
+      return
+    } catch (err) {
+      const code = (err as { code?: string }).code
+      if (attempt >= 3 || code === undefined || !RENAME_RETRY_CODES.has(code)) throw err
+      await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** attempt))
+    }
+  }
+}
 
 /** 绝对路径 → 项目根相对的 POSIX 展示路径（错误消息用）。 */
 function relativePathOf(root: string, absPath: string): string {
@@ -81,6 +143,11 @@ export default class WriterStoreService extends WriterService {
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
+    // 轮次 38（P2-5）：相对路径按 process.cwd() 解析极其隐蔽（错一个字符要到首次 save 才以
+    // 「实体不存在」间接暴露）——配置错误在构造期响亮失败，给出当前值与建议。
+    if (!isAbsolute(config.projectRoot)) {
+      throw new Error(`projectRoot 必须为绝对路径：${JSON.stringify(config.projectRoot)}（相对路径会按宿主进程启动目录解析；请改为绝对路径，如 preset 的 !!js join(process.cwd(), 'novel') 形式）`)
+    }
     this.projectRoot = config.projectRoot
   }
 
@@ -96,21 +163,10 @@ export default class WriterStoreService extends WriterService {
   }
 
   async save(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
-    // (kind,id) promise 链串行化：同键并发 save 排队执行，关闭读-改-写窗口的 TOCTOU
-    // （上一环失败不阻断后续排队，仅传递落点）
-    const key = `${kind}/${id}`
-    const prev = this.saveChains.get(key) ?? Promise.resolve()
-    const run = prev.then(() => this.saveLocked(kind, id, patch, expectHash), () => this.saveLocked(kind, id, patch, expectHash))
-    const tail = run.then(() => undefined, () => undefined)
-    this.saveChains.set(key, tail)
-    void tail.then(() => {
-      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
-    })
-    return run
+    // (kind,id) 在共享串行链上排队：同键并发 save 串行执行，关闭读-改-写窗口的 TOCTOU。
+    // 用模块级共享链而非实例私有链，使多会话（多 store 实例）指向同一项目时仍是单写者（P0-1）。
+    return withWriteChain(this.projectRoot, `entity:${kind}/${id}`, () => this.saveLocked(kind, id, patch, expectHash))
   }
-
-  /** 并发 save 串行化链：key = `${kind}/${id}`；链条空时清理防泄漏。 */
-  private saveChains = new Map<string, Promise<void>>()
 
   /** 串行化保护下的实际保存（read→校验→原子写→索引→emit 的临界区）。 */
   private async saveLocked(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
@@ -139,10 +195,10 @@ export default class WriterStoreService extends WriterService {
     const absPath = this.absPathOf(kind, id)
     // 原子写：temp + rename（半写文件是索引可重建的隐性破坏者）；rename 失败清理 tmp 并抛友好错误
     await mkdir(dirname(absPath), { recursive: true })
-    const tmpPath = `${absPath}.tmp`
+    const tmpPath = uniqueTmpPath(absPath)
     await writeFile(tmpPath, text, 'utf8')
     try {
-      await rename(tmpPath, absPath)
+      await renameWithRetry(tmpPath, absPath)
     } catch (err) {
       await rm(tmpPath, { force: true }).catch(() => {})
       throw new Error(`落盘失败（目标文件可能被外部程序占用）：${this.relPathOf(kind, id)}：${String(err)}`)
@@ -180,6 +236,24 @@ export default class WriterStoreService extends WriterService {
     return this.projectRoot
   }
 
+  /**
+   * 读取某章的维护 pass 派生记录（轮次 38 P0-3 第一步：业务方法上提）。
+   * `'maintenance'` 这个磁盘 kind 字面量只允许出现在本文件，消费者一律走本方法。
+   */
+  async readMaintenance(chapterId: string): Promise<MaintenanceDerived | undefined> {
+    return await this.readDerived(MAINTENANCE_KIND, chapterId) as MaintenanceDerived | undefined
+  }
+
+  /** 写入某章的维护 pass 派生记录（覆盖写；业务语义方法，见 readMaintenance）。 */
+  async writeMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void> {
+    await this.writeDerived(MAINTENANCE_KIND, chapterId, record)
+  }
+
+  /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除）。 */
+  async deleteMaintenance(chapterId: string): Promise<void> {
+    await this.deleteDerived(MAINTENANCE_KIND, chapterId)
+  }
+
   async readDerived(kind: string, id: string): Promise<unknown | undefined> {
     const abs = this.derivedPath(kind, id)
     let raw: string
@@ -204,10 +278,10 @@ export default class WriterStoreService extends WriterService {
     const abs = this.derivedPath(kind, id)
     await mkdir(dirname(abs), { recursive: true })
     // 唯一 tmp 名（与 engine recoverySnapshot 同范式）：无串行化链时并发写者不共用 tmp 互踩
-    const tmpPath = `${abs}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`
+    const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf8')
     try {
-      await rename(tmpPath, abs)
+      await renameWithRetry(tmpPath, abs)
     } catch (err) {
       await rm(tmpPath, { force: true }).catch(() => {})
       throw new Error(`派生数据落盘失败：${relativePathOf(this.projectRoot, abs)}：${String(err)}`)
@@ -230,16 +304,8 @@ export default class WriterStoreService extends WriterService {
   }
 
   async appendPending(section: string): Promise<void> {
-    // 读-改-写跨并发维护 pass 必须串行（与 save 同款固定 key promise 链），否则 last-writer-wins 丢段
-    const key = 'pending.md'
-    const prev = this.saveChains.get(key) ?? Promise.resolve()
-    const run = prev.then(() => this.appendPendingLocked(section), () => this.appendPendingLocked(section))
-    const tail = run.then(() => undefined, () => undefined)
-    this.saveChains.set(key, tail)
-    void tail.then(() => {
-      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
-    })
-    return run
+    // 读-改-写跨并发维护 pass 必须串行：共享链按项目根取键，跨 store 实例仍是单写者（P0-1）
+    return withWriteChain(this.projectRoot, 'pending.md', () => this.appendPendingLocked(section))
   }
 
   /** 串行化保护下的实际追加（读 → 拼接 → 原子写）。 */
@@ -252,10 +318,10 @@ export default class WriterStoreService extends WriterService {
       // 首次创建
     }
     const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
-    const tmpPath = `${abs}.tmp`
+    const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, next, 'utf8')
     try {
-      await rename(tmpPath, abs)
+      await renameWithRetry(tmpPath, abs)
     } catch (err) {
       await rm(tmpPath, { force: true }).catch(() => {})
       throw new Error(`pending.md 追加失败：${String(err)}`)
@@ -268,15 +334,7 @@ export default class WriterStoreService extends WriterService {
    * extracted 为空串时零文件写入（幂等 no-op）。返回 extracted。
    */
   async archivePending(mutator: (text: string) => { next: string; extracted: string }): Promise<string> {
-    const key = 'pending.md'
-    const prev = this.saveChains.get(key) ?? Promise.resolve()
-    const run = prev.then(() => this.archivePendingLocked(mutator), () => this.archivePendingLocked(mutator))
-    const tail = run.then(() => undefined, () => undefined)
-    this.saveChains.set(key, tail)
-    void tail.then(() => {
-      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
-    })
-    return run
+    return withWriteChain(this.projectRoot, 'pending.md', () => this.archivePendingLocked(mutator))
   }
 
   private async archivePendingLocked(mutator: (text: string) => { next: string; extracted: string }): Promise<string> {
@@ -293,10 +351,10 @@ export default class WriterStoreService extends WriterService {
     // 归档写入走 appendPendingArchive 的串行链（与 pending.md 链不同 key，无死锁）——
     // 与公开 API 并发追加归档不互踩（否则两处对同一文件读-改-写可能丢段）。
     await this.appendPendingArchive(extracted)
-    const tmpPath = `${abs}.tmp`
+    const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, next, 'utf8')
     try {
-      await rename(tmpPath, abs)
+      await renameWithRetry(tmpPath, abs)
     } catch (err) {
       await rm(tmpPath, { force: true }).catch(() => {})
       throw new Error(`pending.md 变更失败（归档已写入，待办仍在本清单，重试安全）：${String(err)}`)
@@ -306,15 +364,11 @@ export default class WriterStoreService extends WriterService {
 
   /** 归档追加：.writer/pending-archive.md（只增不删；独立串行化链防并发互踩）。 */
   async appendPendingArchive(section: string): Promise<void> {
-    const key = 'pending-archive.md'
-    const prev = this.saveChains.get(key) ?? Promise.resolve()
-    const run = prev.then(() => this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), section), () => this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), section))
-    const tail = run.then(() => undefined, () => undefined)
-    this.saveChains.set(key, tail)
-    void tail.then(() => {
-      if (this.saveChains.get(key) === tail) this.saveChains.delete(key)
-    })
-    return run
+    return withWriteChain(
+      this.projectRoot,
+      'pending-archive.md',
+      () => this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), section),
+    )
   }
 
   /** 通用原子追加（建父目录；跨调用方串行由调用方的链保证）。 */
@@ -327,10 +381,10 @@ export default class WriterStoreService extends WriterService {
       // 首次创建
     }
     const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
-    const tmpPath = `${abs}.tmp`
+    const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, next, 'utf8')
     try {
-      await rename(tmpPath, abs)
+      await renameWithRetry(tmpPath, abs)
     } catch (err) {
       await rm(tmpPath, { force: true }).catch(() => {})
       throw new Error(`归档追加失败：${String(err)}`)

@@ -26,6 +26,7 @@ const INTENTIONALLY_UNCLASSIFIED: readonly string[] = [
   '模型未返回任何文本', '恢复快照落盘失败',
   '窗口容量非法', '批次正文预算必须为正数', '一致性检查预算必须为正数',
   'keywordScoresFromCounts 形状不符', '范围内没有已写章节', '切片参数非法',
+  'projectRoot 必须为绝对路径',
   'decideRewritePath', '模型调用失败', '模型输出达到 maxOutputTokens', '写作引擎调用不携带工具',
 ]
 

@@ -4,7 +4,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -107,6 +107,38 @@ test('root getter 返回项目根', async () => {
   const { store, root } = await makeStore()
   try {
     assert.equal(store.root, root)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('轮次 38（P0-1）：两个独立 store 实例并发 appendPending——共享串行链，不静默丢段', async () => {
+  const { root } = await makeStore()
+  try {
+    // 模拟「写作模式」preset 的形态：每个会话各自挂一组 store，projectRoot 同指一个小说目录
+    // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+    const storeA = new WriterStoreService(new Context(), { projectRoot: root })
+    // @ts-expect-error 测试桩：真实 Context 由 loader 提供
+    const storeB = new WriterStoreService(new Context(), { projectRoot: root })
+    const writes: Promise<void>[] = []
+    for (let i = 0; i < 20; i++) {
+      writes.push(storeA.appendPending(`## A-${i}\n内容`))
+      writes.push(storeB.appendPending(`## B-${i}\n内容`))
+    }
+    const settled = await Promise.allSettled(writes)
+    assert.equal(settled.filter((s) => s.status === 'rejected').length, 0, '并发追加不应报错')
+    const text = await readFile(join(root, 'pending.md'), 'utf8')
+    const sections = (text.match(/^## /gm) ?? []).length
+    // 修复前：40 次写入只落 20 节（后写者按旧快照整体重写，先写者的段消失且零报错）
+    assert.equal(sections, 40, `40 次并发追加应全部落盘，实际 ${sections} 节`)
+    // 每个段都必须真实存在（不是重复计数）
+    for (let i = 0; i < 20; i++) {
+      assert.ok(text.includes(`## A-${i}\n`), `A-${i} 段存在`)
+      assert.ok(text.includes(`## B-${i}\n`), `B-${i} 段存在`)
+    }
+    // 唯一 tmp 名：不残留固定名临时文件
+    const leftovers = (await readdir(root)).filter((n) => n.endsWith('.tmp'))
+    assert.deepEqual(leftovers, [], '无残留临时文件')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
