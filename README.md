@@ -20,7 +20,7 @@
 | `dsh-writer-guard` | 工具业务错误预算（超预算注入纠偏提示，不熔断） |
 | `dsh-writer-bundle` | 组合包：profile 级全局挂载全部插件（含 headless） |
 | `dsh-writer-preset` | 「写作模式」agent preset：Web 新建会话的模式选择器并列预制，会话级挂载写作工具链 |
-| `dsh-writer-ui` | 写作面板客户端插件：侧边栏面板 + 工具结果富卡片（/plugins 动态加载） |
+| `dsh-writer-ui` | 写作面板客户端插件：会话视图「写作面板」标签页 + 工具结果富卡片（/plugins 动态加载；入口轮次 37 起由侧边栏迁至标签页） |
 
 ## 快速开始
 

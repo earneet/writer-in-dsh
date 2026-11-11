@@ -20,6 +20,7 @@
 - [ ] **writer-ui 双半形态**（轮次 18）：exports `.` → `lib/index.js`（宿主半，tsc）与 `./client` → `lib/client.js`（浏览器半，esbuild factory-form CJS，banner/intro/footer 与宿主 tsdown clientBundle 预设逐字对齐）；`dsh.client { platform: 'web' }` manifest；`files: ["lib"]` 覆盖双半产物；构建依赖 esbuild/@types/react 为 devDependencies（不进运行时依赖图）；宿主 slots 类型为本地最小契约（不依赖 ui-slots 包）。
 - [ ] `writer-skills` 的 `files` 含 `assets`（技能资产随包分发）；`writer-bundle` / `writer-preset` 的 `files` 含 `cordis.patch.yml`。
 - [ ] 根 `npm run typecheck` 零错、`npm test` 全绿、writer-ui `npx tsc -p tsconfig.client.json` 零错（client 半不在根 tsc 覆盖内）。
+- [ ] **lockfile 卫生（轮次 38 修改后审查留痕）**：lock 重建曾致 semver 范围内传递依赖重解析（非 dev 漂移仅根 zod 4.4.3→4.6.7，本仓 12 包不 import zod；`@deepseek-ai/*` 钉版零漂移、npm ci 可复现、resolved 全指 registry.npmjs.org）——发布前如需收窄 zod，在根 devDependencies 显式钉 `4.4.3`。另：`@google/genai@2.21.0` 在 lock 中 `hasInstallScript: true` 但根 allowScripts 未列（旧 lock 同状旧账）——是否放行其安装脚本待发布时裁定，本仓未直接消费该包，默认维持不列。
 
 ## 2. 打包预检
 
