@@ -9,3 +9,9 @@ packages/writer-ui/browser-test-out/
 dev-diag.json
 
 browser-test-out/
+# 崩溃孤儿临时文件（store 原子写 tmp；rename 重试耗尽或进程崩溃时残留）
+*.tmp
+# 本地评审/修复工作目录（临时脚本与测试输出，结束前应清理）
+.tmp/
+# 本会话工具产物（grill-first 记忆等，不随仓库分发）
+.dsh/

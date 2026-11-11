@@ -1,0 +1,31 @@
+# CI（轮次 38 / P1-3）：可复现安装 + 类型检查 + 测试。
+# 测试跑 3 遍：本仓历史上有过 flaky 用例（单次全绿可能是侥幸），重复跑把这类问题变成「每次都能抓到」。
+# 已知覆盖缺口（修改后审查留痕）：renameWithRetry 针对的 EPERM/EACCES/EBUSY 瞬时锁是
+# Windows 特有失败类，ubuntu runner 不会行使该路径（该路径经 Windows 本机 10 跑/5 跑 0 败手工验证）；
+# 如后续报告 Windows flake，可加 windows-latest 矩阵。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: 安装依赖（npm ci，验证 lock 可复现）
+        run: npm ci --no-audit --no-fund
+      - name: 类型检查（含全部包构建）
+        run: npm run typecheck
+      - name: 测试（第 1 遍）
+        run: npm test
+      - name: 测试（第 2 遍）
+        run: npm test
+      - name: 测试（第 3 遍）
+        run: npm test
