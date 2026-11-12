@@ -314,18 +314,24 @@ test('maintenancePass TOCTOU：执行期间章节被改写 → 跳过旧版 pend
       '新摘要。',
       JSON.stringify({ facts: [], foreshadowEvents: [], characterStates: [] }),
     )
-    // 摘要调用完成后、抽取调用前改写章节（第一次 stream 请求已记录即第一次调用已发起）
+    // 摘要调用完成后、抽取调用前改写章节；改写落盘完成后抽取流才返回。
+    // 确定性时序（轮次 41 修复）：旧版 fire-and-forget 改写与引擎「判据重读」（紧贴
+    // appendPending）互抢——慢速 runner 上改写偶发落在重读之后、补跑 post-check 之前，
+    // 旧摘要混进 pending（两条矛盾待办，断言 340/341 齐红，CI run 43151062188 实锤）。
+    // 改写并入第二次调用的流内 await，保证判据重读必然读到新版 hash；被测行为不变
+    // （改写仍发生在 pass 执行期内、摘要之后抽取完成之前）。
     const originalStream = setup.llm.stream.bind(setup.llm)
     let calls = 0
-    setup.llm.stream = (options: Parameters<typeof originalStream>[0]) => {
+    setup.llm.stream = (options: Parameters<typeof originalStream>[0]): ReturnType<typeof originalStream> => {
       calls += 1
-      if (calls === 2) {
-        // 摘要完成后、抽取完成前改写章节（fire-and-forget；引擎后续多处 await 让其先行落盘）
-        void setup.store.get('chapter', '001').then((entity) =>
-          setup.store.save('chapter', '001', { content: '第二版。' }, entity!.hash),
-        )
-      }
-      return originalStream(options)
+      if (calls !== 2) return originalStream(options)
+      const rewritten = setup.store.get('chapter', '001').then((entity) =>
+        setup.store.save('chapter', '001', { content: '第二版。' }, entity!.hash),
+      )
+      return (async function* (): AsyncGenerator<StreamChunk> {
+        await rewritten
+        yield* originalStream(options)
+      })()
     }
     const result = await setup.engine.maintenancePass('001')
     // 补跑后派生锚定最新 hash
