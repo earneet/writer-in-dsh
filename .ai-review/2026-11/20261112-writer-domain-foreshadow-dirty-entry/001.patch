@@ -1,0 +1,96 @@
+diff --git a/packages/writer-domain/src/guard.ts b/packages/writer-domain/src/guard.ts
+index edd2bfd..e868640 100644
+--- a/packages/writer-domain/src/guard.ts
++++ b/packages/writer-domain/src/guard.ts
+@@ -26,7 +26,7 @@ const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> =
+   ['illegal-transition', /^伏笔状态非法迁移/],
+   ['not-found', /^(实体不存在|章节不存在|伏笔实体不存在|人物实体不存在)/],
+   // 「未知X」家族含无空格变体（未知导出格式：/未知实体种类：）——\s? 兼容两种措辞
+-  ['validation', /^未知\s?(action|mode|实体种类|写作模式|导出格式)|^focus (无有效维度|含无效维度)|milestone_type 非法|章节 id 必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|(max_results|chapter_limit) 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON|实体 .* 是单文件实体|^timeline (章节锚非法|state 不能为空)|^现有 timeline 非法，拒绝追加|^character\/.+ 的 timeline 字段非法/],
++  ['validation', /^未知\s?(action|mode|实体种类|写作模式|导出格式)|^focus (无有效维度|含无效维度)|milestone_type 非法|章节 id 必须为三位序号|伏笔章锚必须为三位序号|章节区间(格式非法|倒序)|保存补丁为空|至少提供其一|content 与 frontmatter 至少提供|(max_results|chapter_limit) 非法|(plant|resolve|milestone) 需要提供 chapter|rewrite 模式必须提供|派生数据 (kind|id) 非法|实体 id 非法|必须是 JSON|实体 .* 是单文件实体|^timeline (章节锚非法|state 不能为空)|^现有 timeline 非法，拒绝追加|^character\/.+ 的 timeline 字段非法/],
+   // 续写复述拒绝：模型输出质量问题（非 schema 解析失败）——独立预算与纠偏提示（轮次 30：
+   // 归 parse 会挤占解析失败预算且触发「按 JSON schema 输出」的错向指引）
+   ['repeat-reject', /^assist 续写输出为正文复述/],
+diff --git a/packages/writer-domain/src/index.ts b/packages/writer-domain/src/index.ts
+index 3a1e11e..ca07dec 100644
+--- a/packages/writer-domain/src/index.ts
++++ b/packages/writer-domain/src/index.ts
+@@ -134,8 +134,11 @@ export const FORESHADOW_TRANSITIONS: Readonly<Record<ForeshadowStatus, readonly
+ 
+ /** 校验并执行状态迁移；非法迁移抛错（调用方反馈为业务错误，不熔断）。 */
+ export function transitionForeshadow(from: ForeshadowStatus, to: ForeshadowStatus): ForeshadowStatus {
+-  if (!FORESHADOW_TRANSITIONS[from].includes(to)) {
+-    throw new Error(`伏笔状态非法迁移：${from} → ${to}`)
++  // 未知 from 状态（frontmatter status 被手编/模型误写为 "Planted"/"draft" 等）查表得
++  // undefined——原实现直接 .includes 抛原生 TypeError，guard 分类逃逸且模型拿不到纠偏指引
++  const allowed = FORESHADOW_TRANSITIONS[from] ?? []
++  if (!allowed.includes(to)) {
++    throw new Error(`伏笔状态非法迁移：${String(from)} → ${String(to)}（合法状态：planned / planted / resolved / abandoned）`)
+   }
+   return to
+ }
+diff --git a/packages/writer-domain/tests/domain.test.ts b/packages/writer-domain/tests/domain.test.ts
+index bf322b9..e2ecae1 100644
+--- a/packages/writer-domain/tests/domain.test.ts
++++ b/packages/writer-domain/tests/domain.test.ts
+@@ -130,4 +130,7 @@ test('transitionForeshadow：合法与非法迁移', () => {
+   assert.equal(transitionForeshadow('planted', 'abandoned'), 'abandoned')
+   assert.throws(() => transitionForeshadow('resolved', 'planned'))
+   assert.throws(() => transitionForeshadow('planned', 'resolved'))
++  // 未知 from 状态（手编/模型误写 status）：业务错误而非原生 TypeError（guard 可归类给纠偏指引）
++  assert.throws(() => transitionForeshadow('draft' as never, 'planted'), /伏笔状态非法迁移.*draft.*合法状态/)
++  assert.throws(() => transitionForeshadow('Planted' as never, 'abandoned'), /伏笔状态非法迁移.*Planted/)
+ })
+diff --git a/packages/writer-domain/tests/guard.test.ts b/packages/writer-domain/tests/guard.test.ts
+index 06885b8..6db6c3d 100644
+--- a/packages/writer-domain/tests/guard.test.ts
++++ b/packages/writer-domain/tests/guard.test.ts
+@@ -15,6 +15,8 @@ test('classifyBusinessError：可分类类别命中；无关消息不可分类',
+   assert.equal(classifyBusinessError('审稿输出无法解析为结构化报告'), 'parse')
+   assert.equal(classifyBusinessError('foreshadowEvent 引用不存在的伏笔：plot/ghost'), 'reference-reject')
+   assert.equal(classifyBusinessError('伏笔状态非法迁移：resolved → planted'), 'illegal-transition')
++  assert.equal(classifyBusinessError('伏笔状态非法迁移：draft → planted（合法状态：planned / planted / resolved / abandoned）'), 'illegal-transition', '未知状态也归 illegal-transition（非 TypeError 逃逸）')
++  assert.equal(classifyBusinessError('伏笔章锚必须为三位序号："第七章"（plant 落点章节，如 "003"）'), 'validation')
+   assert.equal(classifyBusinessError('实体不存在：chapter/009'), 'not-found')
+   assert.equal(classifyBusinessError('未知 action：explode（可选 plant / resolve）'), 'validation')
+   assert.equal(classifyBusinessError('plant 需要提供 chapter（三位序号，伏笔落点章节）'), 'validation')
+diff --git a/packages/writer-tools/src/index.ts b/packages/writer-tools/src/index.ts
+index 5c42d53..d5e242c 100644
+--- a/packages/writer-tools/src/index.ts
++++ b/packages/writer-tools/src/index.ts
+@@ -195,6 +195,11 @@ export function apply(ctx: Context): void {
+       const frontmatter: Frontmatter = {}
+       if (args.action === 'plant' || args.action === 'resolve') {
+         if (args.chapter === undefined) throw new Error(`${args.action} 需要提供 chapter（三位序号，伏笔落点章节）`)
++        // 章锚格式入口校验：脏锚（如 "第七章"）落盘后 chapterAnchorOf 按缺失处理，
++        // 该伏笔的「本章必须设置/回收」红线将静默失效——与 pending_cleanup/timeline_update 同口径设防
++        if (!/^\d{3}$/.test(args.chapter)) {
++          throw new Error(`伏笔章锚必须为三位序号：${JSON.stringify(args.chapter)}（${args.action} 落点章节，如 "003"）`)
++        }
+         const target = args.action === 'plant' ? 'planted' : 'resolved'
+         frontmatter['status'] = transitionForeshadow(currentStatus, target)
+         frontmatter[args.action === 'plant' ? 'planted_chapter' : 'resolved_chapter'] = args.chapter
+@@ -204,6 +209,9 @@ export function apply(ctx: Context): void {
+         // milestone 不改 status；回执须带事件信息（type+chapter），否则 UI 卡片只能显示旧状态
+         const type = assertMilestoneType(args.milestone_type)
+         if (args.chapter === undefined) throw new Error('milestone 需要提供 chapter（事件发生章节）')
++        if (!/^\d{3}$/.test(args.chapter)) {
++          throw new Error(`伏笔章锚必须为三位序号：${JSON.stringify(args.chapter)}（milestone 事件章节，如 "003"）`)
++        }
+         const milestones = parseMilestones(plot.frontmatter['milestones'])
+         milestones.push({ type, chapter: args.chapter, ...(args.milestone_note !== undefined ? { note: args.milestone_note } : {}) })
+         frontmatter['milestones'] = JSON.stringify(milestones)
+diff --git a/packages/writer-tools/tests/tools.test.ts b/packages/writer-tools/tests/tools.test.ts
+index 1a5a4d3..b52c7ba 100644
+--- a/packages/writer-tools/tests/tools.test.ts
++++ b/packages/writer-tools/tests/tools.test.ts
+@@ -113,6 +113,9 @@ test('foreshadow_update：plant/resolve/abandon/milestone 状态机与校验', a
+   assert.match(await fo.execute({ id: 'ghost', action: 'plant', chapter: '001', expectHash: 'h' }, exec), /伏笔实体不存在/)
+   await assert.rejects(fo.execute({ id: 'gf', action: 'plant', expectHash: 'h' }, exec), /plant 需要提供 chapter/)
+   await assert.rejects(fo.execute({ id: 'gf', action: 'milestone', milestone_type: 'reinforcement', expectHash: 'h' }, exec), /milestone 需要提供 chapter/)
++  // 脏章锚入口拒绝：落盘后 chapterAnchorOf 按缺失处理会静默废掉伏笔红线（同 pending_cleanup/timeline_update 口径）
++  await assert.rejects(fo.execute({ id: 'gf', action: 'plant', chapter: '第七章', expectHash: 'h' }, exec), /伏笔章锚必须为三位序号/)
++  await assert.rejects(fo.execute({ id: 'gf', action: 'milestone', chapter: 'ch3', milestone_type: 'callback', expectHash: 'h' }, exec), /伏笔章锚必须为三位序号/)
+   await assert.rejects(fo.execute({ id: 'gf', action: 'explode', expectHash: 'h' }, exec), /未知 action/)
+   await assert.rejects(fo.execute({ id: 'gf', action: 'milestone', chapter: '001', milestone_type: 'boom', expectHash: 'h' }, exec), /milestone_type 非法/)
+   assert.match(await fo.execute({ id: 'gf', action: 'plant', chapter: '001', expectHash: 'h' }, exec), /已更新伏笔 gf（status=planted/)
