@@ -425,7 +425,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'pending_cleanup',
-    description: '待办清单归档：把 pending.md 中归属某章的全部待办节（维护 pass 建议 / recompute mark 作废提示）移出并归档到 .writer/pending-archive.md（只增不删，可追溯）。适用于该章的建议已全部确认处理（timeline_update / foreshadow_update / writer_update 落实）或已作废之后清理清单。该章没有待办节时无操作返回。',
+    description: '待办清单归档：把 pending.md 中归属某章的全部待办节（维护 pass 建议 / recompute mark 作废提示）移出并归档到 pending-archive.md（项目根，只增不删，可追溯）。适用于该章的建议已全部确认处理（timeline_update / foreshadow_update / writer_update 落实）或已作废之后清理清单。该章没有待办节时无操作返回。',
     parameters: {
       chapter: { type: 'string', required: true, description: '章节 id（三位序号，如 "002"）' },
     },
@@ -447,7 +447,7 @@ export function apply(ctx: Context): void {
         }
       })
       if (archived.length === 0) return `chapter/${args.chapter} 在 pending.md 中没有待办节，无需归档。`
-      return `已归档 chapter/${args.chapter} 的待办节到 .writer/pending-archive.md（pending.md 已移除对应节）。`
+      return `已归档 chapter/${args.chapter} 的待办节到 pending-archive.md（项目根；pending.md 已移除对应节）。`
     },
   }))
 

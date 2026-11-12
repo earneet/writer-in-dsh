@@ -249,7 +249,7 @@ reverse-reference 技能触发即对话路径，UI 无需新面）；**LLM Conte
 - **待办页前置小修（轮次 22，P1）**：现状 `slice(0,30)` 取最旧 30 行 + 丢 `##
   [维护 pass]` 分节 + 重复 pass 不去重——改分节折叠、最新 pass 优先/建议去重、截断显示
   「还有 N 条」；`[x] 已完成` 行过滤或划线区分。**轮次 23 补**：分节设计须同时纳入
-  `.writer/pending-archive.md` 归档区折叠展示（pending_cleanup 移档后条目现状彻底消失、
+  `pending-archive.md`（项目根）归档区折叠展示（pending_cleanup 移档后条目现状彻底消失、
   无追溯入口）；M2 pending 工作台操作语义留痕（升格=原版 confirm 等价、作废=reject 等价）。
 - **卡片覆盖与回写补全（轮次 23）**：writer-tools 注册 14 工具、writer-ui 仅 8 卡片——
   writer_read/writer_update/recompute_derived/archive_point/pending_cleanup/maintenance_flush

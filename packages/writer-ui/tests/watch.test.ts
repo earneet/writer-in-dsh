@@ -182,6 +182,26 @@ test('scanNovel：小分页拼接还原全文（页间换行契约）+ never-eof
   setBrowserContext(null)
 })
 
+test('scanNovel（轮次 42）：归档双来源——根下 pending-archive.md 为主 + 旧布局 .writer/ 兜底合并', async () => {
+  const fs = minimalProject()
+  fs.set('novel', [{ name: 'project.md', type: 'file' }, { name: 'chapters', type: 'directory' }, { name: 'pending-archive.md', type: 'file' }])
+  fs.set('novel/pending-archive.md', '# 归档\n\n## [已归档] chapter/003（2026-11-01T00:00:00.000Z）\n\n- 新段\n')
+  fs.set('novel/.writer', [{ name: 'pending-archive.md', type: 'file' }])
+  fs.set('novel/.writer/pending-archive.md', '# 归档\n\n## [已归档] chapter/001（2026-10-01T00:00:00.000Z）\n\n- 旧段\n')
+  setBrowserContext({ remote: mockRemote(fs) as never })
+  const scan = await scanNovel('s1', new AbortController().signal)
+  assert.equal(scan.pendingArchive?.length, 2, '两来源各一节合并')
+  assert.ok(scan.pendingArchive?.[0]?.heading.includes('003'), '根下来源在前')
+  assert.ok(scan.pendingArchive?.[1]?.heading.includes('001'), '旧布局兜底在后')
+  // 仅旧布局（迁移未触发的纯读项目）：兜底读仍可见，历史段不消失
+  fs.delete('novel/pending-archive.md')
+  fs.set('novel', [{ name: 'project.md', type: 'file' }, { name: 'chapters', type: 'directory' }])
+  const legacyOnly = await scanNovel('s1', new AbortController().signal)
+  assert.equal(legacyOnly.pendingArchive?.length, 1, '仅旧布局时兜底节可见')
+  assert.ok(legacyOnly.pendingArchive?.[0]?.heading.includes('001'))
+  setBrowserContext(null)
+})
+
 test('环路（函数级接线）：工具落盘→变更帧→重扫→总线新值（实体变更达页签）', async () => {
   resetBus()
   const fs = minimalProject()

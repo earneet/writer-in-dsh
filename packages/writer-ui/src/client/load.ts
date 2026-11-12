@@ -6,7 +6,7 @@
  * M1b：①readText 分页保险丝（页数/字节上限防协议异常 OOM）；②批量读有限并发（4 路）
  * + 进度回调；③单文件失败收集（清单呈现，不再整扫描失败）；④扫描 .writer/derived/
  * maintenance + client 侧内容哈希（与 domain 同口径）计算待维护章节；⑤pending-archive
- * 归档扫描；⑥watchProject 订阅 workspaceFiles.changes（不支持时降级手动刷新）；
+ * 归档扫描（项目根为主 + 旧布局 .writer/ 兜底合并）；⑥watchProject 订阅 workspaceFiles.changes（不支持时降级手动刷新）；
  * ⑦会话切换经 sessions.list.subscribe（替换 2s 轮询）。
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -155,11 +155,12 @@ function looksLikeProject(entries: any[], lenient: boolean): boolean {
   return strong || hits.length >= 2
 }
 
-/** 一个待读文件任务（dir 为项目内相对目录；subdir 为章卷子目录名）。 */
+/** 一个待读文件任务（dir 为项目内相对目录；subdir 为章卷子目录名；key 为 singletons 归类键，缺省 name）。 */
 interface ReadTask {
   dir: string
   name: string
   subdir?: string
+  key?: string
 }
 
 /** 扫描进度（done/total 按文件读取计）。 */
@@ -219,18 +220,21 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
       for (const name of capped) tasks.push({ dir: join(root, dirName), name })
     }
   }
-  // 单文件实体与项目文件（根目录命中才读）
-  const rootFiles = ['project.md', 'outline.md', 'principles.md', 'events.md', 'ideas.md', 'pending.md', '.writer/pending-archive.md']
+  // 单文件实体与项目文件（根目录命中才读）。pending-archive.md 在项目根（轮次 42：归档是
+  // 不可重建史料，入 git 与 pending.md 同居）；旧布局 .writer/ 兜底读取——迁移由服务端归档
+  // 写入触发，纯读项目不迁移，两来源并存时合并展示（key 区分防 singletons 互覆）。
+  const rootFiles = ['project.md', 'outline.md', 'principles.md', 'events.md', 'ideas.md', 'pending.md', 'pending-archive.md']
   for (const name of rootFiles) {
-    if (name.includes('/')) {
-      // 归档在 .writer/ 子目录：目录列举缺失时静默跳过（.writer 可能整体 gitignore 不可见）
-      const dir = join(root, '.writer')
-      const entries = await listDir(sessionId, dir, signal)
-      if (entries !== null && entries.some(e => e.type === 'file' && e.name === 'pending-archive.md')) {
-        tasks.push({ dir, name: 'pending-archive.md' })
-      }
-    } else if (projectEntries.some(e => e.type === 'file' && e.name === name)) {
+    if (projectEntries.some(e => e.type === 'file' && e.name === name)) {
       tasks.push({ dir: root, name })
+    }
+  }
+  // 旧布局兜底：.writer/pending-archive.md（目录列举缺失时静默跳过——.writer 可能整体 gitignore 不可见）
+  {
+    const dir = join(root, '.writer')
+    const entries = await listDir(sessionId, dir, signal)
+    if (entries !== null && entries.some(e => e.type === 'file' && e.name === 'pending-archive.md')) {
+      tasks.push({ dir, name: 'pending-archive.md', key: 'pending-archive-legacy.md' })
     }
   }
   // 派生维护产物（.writer/derived/maintenance/<chapterId>.json）
@@ -285,7 +289,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
         // 逐章独立：内容哈希匹配者为新鲜，另一章计待维护（合理信号而非误报）
         maintenance.set(task.name.replace(/\.json$/i, ''), { sourceHash: json.sourceHash, updatedAt: json.updatedAt })
       } catch { /* 坏派生 JSON：按缺失处理（该章计待维护），不使扫描失败 */ }
-    } else singletons.set(task.name, parsed)
+    } else singletons.set(task.key ?? task.name, parsed)
   }
 
   // worldbuilding：全文读取（设定页卡片数据源；文件级失败进 failedFiles 不炸扫描）
@@ -303,7 +307,11 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     project = /^(大纲|outline|目录|toc)$/i.test(heading) || heading.length === 0 ? null : { title: heading }
   }
   const pending: PendingSection[] = singletons.has('pending.md') ? extractPendingSections(singletons.get('pending.md')!.content) : []
-  const pendingArchive: PendingSection[] = singletons.has('pending-archive.md') ? extractPendingSections(singletons.get('pending-archive.md')!.content) : []
+  // 归档：根下为主，旧布局 .writer/ 兜底合并（迁移前的历史段仍可见，新来源在前）
+  const pendingArchive: PendingSection[] = [
+    ...(singletons.has('pending-archive.md') ? extractPendingSections(singletons.get('pending-archive.md')!.content) : []),
+    ...(singletons.has('pending-archive-legacy.md') ? extractPendingSections(singletons.get('pending-archive-legacy.md')!.content) : []),
+  ]
 
   // —— 派生新鲜度（维护徽章数据源）：client 内容哈希与 derived sourceHash 同口径比对 ——
   // 章节缺失派生或哈希不一致 = 待维护 pass（与服务端 writer_stats staleChapters 同语义；

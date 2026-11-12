@@ -79,7 +79,7 @@ const slots = {
 }
 const fileSystem = {
   // 与 example-project/novel 布局一致的最小项目
-  'novel': [{ name: 'project.md', type: 'file' }, { name: 'outline.md', type: 'file' }, { name: 'pending.md', type: 'file' }, { name: 'chapters', type: 'directory' }, { name: 'characters', type: 'directory' }, { name: 'plots', type: 'directory' }],
+  'novel': [{ name: 'project.md', type: 'file' }, { name: 'outline.md', type: 'file' }, { name: 'pending.md', type: 'file' }, { name: 'pending-archive.md', type: 'file' }, { name: 'chapters', type: 'directory' }, { name: 'characters', type: 'directory' }, { name: 'plots', type: 'directory' }],
   '': [{ name: 'novel', type: 'directory' }],
   'novel/chapters': [{ name: '001.md', type: 'file' }, { name: '002.md', type: 'file' }],
   'novel/characters': [{ name: 'a.md', type: 'file' }, { name: 'hero.md', type: 'file' }],
@@ -88,12 +88,14 @@ const fileSystem = {
   'novel/outline.md': `---\nvolumes: 2\nchapters: 10\nsynopsis: "两卷十章的最小大纲"\n---\n# 大纲\n\n## 一览\n\n- 主线\n\n## 第二卷\n\n收束\n`,
   'novel/worldbuilding': [{ name: 'w.md', type: 'file' }],
   'novel/plots': [{ name: 'p1.md', type: 'file' }, { name: 'p2.md', type: 'file' }],
-  // M1b：派生维护产物（002 哈希不匹配 → 待维护；001 缺派生 → 待维护）与归档
+  // M1b：派生维护产物（002 哈希不匹配 → 待维护；001 缺派生 → 待维护）；归档在项目根
+  // （轮次 42），旧布局 .writer/ 兜底段保留（验证双来源合并）
   'novel/.writer': [{ name: 'pending-archive.md', type: 'file' }, { name: 'derived', type: 'directory' }],
   'novel/.writer/derived': [{ name: 'maintenance', type: 'directory' }],
   'novel/.writer/derived/maintenance': [{ name: '002.json', type: 'file' }],
   'novel/.writer/derived/maintenance/002.json': JSON.stringify({ sourceHash: 'stale', updatedAt: '2026-10-01T00:00:00.000Z' }),
-  'novel/.writer/pending-archive.md': '# 归档\n\n## [已归档] chapter/001（2026-10-01T00:00:00.000Z）\n\n- 旧建议\n',
+  'novel/pending-archive.md': '# 归档\n\n## [已归档] chapter/003（2026-11-01T00:00:00.000Z）\n\n- 新建议（根下归档）\n',
+  'novel/.writer/pending-archive.md': '# 归档\n\n## [已归档] chapter/001（2026-10-01T00:00:00.000Z）\n\n- 旧建议（旧布局兜底段）\n',
   'novel/project.md': `---\ntitle: "测试书"\ngenre: "测试"\ntarget_words: 1000\nchapters: 10\n---\n简介\n`,
   'novel/pending.md': `# 待办\n\n- 002 章伏笔升级\n- 复核时间线\n`,
   'novel/chapters/001.md': `---\nnumber: 1\ntitle: "守灯"\nvolume: "第一卷"\n---\n四个字。\n`,
@@ -173,7 +175,9 @@ if (Panel === undefined) {
     && overview.plotRows[0]?.overdue === true
     && overview.currentChapter === 2
     && overview.staleChapters.length === 2 && overview.staleChapters.join(',') === '001,002'
-    && overview.pendingArchive.length === 1
+    && overview.pendingArchive.length === 2
+    && overview.pendingArchive.some(s => s.heading.includes('003'))
+    && overview.pendingArchive.some(s => s.heading.includes('001'))
     && overview.nextStep.kind === 'maintain'
     && overview.outline !== null && overview.outline.sections.length === 2
     && overview.chapterRows.length === 2 && overview.characterRows.length === 2

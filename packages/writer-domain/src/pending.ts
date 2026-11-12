@@ -3,7 +3,7 @@
  * 待办节形态：`## [维护 pass] chapter/001（时间）待人工确认` / `## [recompute mark] chapter/001 ...`——
  * **归属只认节头行**（稳定约定）：节正文常含跨章引用（伏笔建议指向后续章），按正文归属会把
  * 其他章的提醒连带移出活跃清单（审查 M 级裁定）。按章归档 = 把该章的全部节移出 pending.md，
- * 由调用方追加进归档文件（.writer/pending-archive.md）。全部纯函数可独立单测。
+ * 由调用方追加进归档文件（pending-archive.md，项目根）。全部纯函数可独立单测。
  * @module dsh-writer-domain/pending
  */
 

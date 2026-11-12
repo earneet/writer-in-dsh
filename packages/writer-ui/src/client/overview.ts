@@ -83,7 +83,7 @@ export interface NovelScan {
   failedFiles?: string[]
   /** 待维护 pass 章节清单（client 内容哈希 vs derived sourceHash 同口径比对）。 */
   staleChapters?: string[]
-  /** .writer/pending-archive.md 归档分节（倒序：最新归档在前）。 */
+  /** 项目根 pending-archive.md 归档分节（倒序：最新归档在前；旧布局 .writer/ 兜底合并）。 */
   pendingArchive?: PendingSection[]
 }
 

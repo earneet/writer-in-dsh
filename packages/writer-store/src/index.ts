@@ -1,6 +1,8 @@
 /**
  * Provider：Markdown SoT 存储，发布 `ctx.writer`。
- * 写路径 = 原子写（temp+rename）落盘 → 派生索引更新；索引是纯缓存（.writer/index/，可删除后 rebuildIndex 全量重建）。
+ * 写路径 = 原子写（temp+rename）落盘 → 解析缓存更新（纯内存缓存，无落盘物）。
+ * 不变量：.writer/ 整目录可删且无损——derived/ 由维护 pass 重建、recovery-snapshot.md 由下次
+ * 恢复快照再生成；归档 pending-archive.md 是不可重建史料，住项目根入 git（轮次 42）。
  * 乐观锁：save 带 expectHash 时与磁盘当前 hash 比对，不符抛错（read-before-update 防护）。
  * 规划见 docs/implementation-plan.md §1.3；R-改进来源 docs/novel-writer-review.md §6.2-1/§6.2-2。
  * @module dsh-writer-store
@@ -149,6 +151,20 @@ export default class WriterStoreService extends WriterService {
       throw new Error(`projectRoot 必须为绝对路径：${JSON.stringify(config.projectRoot)}（相对路径会按宿主进程启动目录解析；请改为绝对路径，如 preset 的 !!js join(process.cwd(), 'novel') 形式）`)
     }
     this.projectRoot = config.projectRoot
+    // 轮次 42（对抗审查 #2）：装载时即触发一次旧布局归档迁移（fire-and-forget，失败仅 warn 不
+    // 阻断装载）——关闭「纯读/完结项目永不产生归档写入 → 旧归档无限期滞留 .writer/」的窗口：
+    // 窗口内「.writer/ 整目录可删且无损」不变量不成立，archive_point 也会把它挡在存档外。
+    void this.runPendingArchiveMigration().catch((err) => {
+      const logger = (this.ctx as { logger?: (name: string) => { warn: (msg: string) => void } }).logger?.('writer-store')
+      logger?.warn(`旧归档迁移未完成（将在下次归档写入时重试）：${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
+
+  /** 触发一次旧布局归档迁移（幂等；走归档串行链，与归档写入互斥；构造期与归档写入共用）。 */
+  private runPendingArchiveMigration(): Promise<void> {
+    return withWriteChain(this.projectRoot, 'pending-archive.md', async () => {
+      await this.migrateLegacyPendingArchiveLocked()
+    })
   }
 
   async list(kind: EntityKind): Promise<readonly WriterEntity[]> {
@@ -362,13 +378,59 @@ export default class WriterStoreService extends WriterService {
     return extracted
   }
 
-  /** 归档追加：.writer/pending-archive.md（只增不删；独立串行化链防并发互踩）。 */
+  /**
+   * 归档追加：<projectRoot>/pending-archive.md（只增不删；独立串行化链防并发互踩）。
+   * 归档是不可重建的人工史料（维护 pass 一次性产出的唯一副本），与 pending.md 同住项目根入 git
+   * （轮次 42；旧位置 .writer/ 随「整目录可删」口径被 gitignore/清理静默丢弃——架构评审 P2-2）。
+   * 每次追加前先做旧布局幂等迁移（migrateLegacyPendingArchiveLocked）。
+   */
   async appendPendingArchive(section: string): Promise<void> {
     return withWriteChain(
       this.projectRoot,
       'pending-archive.md',
-      () => this.appendFileAtomic(join(this.projectRoot, '.writer', 'pending-archive.md'), section),
+      async () => {
+        await this.migrateLegacyPendingArchiveLocked()
+        await this.appendFileAtomic(join(this.projectRoot, 'pending-archive.md'), section)
+      },
     )
+  }
+
+  /**
+   * 旧布局迁移（.writer/pending-archive.md → 根下 pending-archive.md）：幂等，在归档串行链内执行。
+   * 旧文件不存在即 no-op（每次调用一次读取探测，无标记位）；旧存在 → 内容原子拼接进新文件
+   * （appendFileAtomic 复用：建父目录/唯一 tmp/rename 重试；新文件不存在时等价整体搬移）→ 删旧。
+   * 失败方向安全（对抗审查 #3 强化）：拼接失败时旧文件原样保留，重试安全；删旧失败时新文件已含
+   * 全部内容，重试经「已并入检测」跳过拼接只重试删旧——副本不随重试次数增长（归档只增不删不丢数据）。
+   * 触发时机 = store 装载（构造期 fire-and-forget）+ 任何归档写入（appendPendingArchive /
+   * archivePending / pending_cleanup 工具）；UI 侧另对旧路径保留兜底读取（writer-ui load.ts）。
+   * 裁定留痕（对抗审查 #5）：新旧并存的迁移中断态续迁后，较老的旧段拼接在新文件末尾，归档区
+   * 「最新在前」的展示顺序可能瞬时乱序——节头时间戳可辨识，不修；按节头时间戳排序入 UI backlog。
+   */
+  private async migrateLegacyPendingArchiveLocked(): Promise<void> {
+    const legacyPath = join(this.projectRoot, '.writer', 'pending-archive.md')
+    let legacy: string
+    try {
+      legacy = await readFile(legacyPath, 'utf8')
+    } catch (err) {
+      if ((err as { code?: string }).code === 'ENOENT') return
+      throw new Error(`旧归档迁移读取失败：${relativePathOf(this.projectRoot, legacyPath)}：${String(err)}`)
+    }
+    const targetPath = join(this.projectRoot, 'pending-archive.md')
+    // 已并入检测：上次「拼接成功、删旧失败」的重试不再重复拼接（旧文件全文已在新文件中）
+    let existing = ''
+    try {
+      existing = await readFile(targetPath, 'utf8')
+    } catch {
+      // 首次创建
+    }
+    if (!existing.includes(legacy.trim())) {
+      await this.appendFileAtomic(targetPath, legacy)
+    }
+    try {
+      await rm(legacyPath, { force: true })
+    } catch (err) {
+      throw new Error(`旧归档已并入根下 ${relativePathOf(this.projectRoot, targetPath)}，但旧文件删除失败（旧文件保留，下次归档写入只重试删除、不重复并入）：${String(err)}`)
+    }
   }
 
   /** 通用原子追加（建父目录；跨调用方串行由调用方的链保证）。 */

@@ -298,7 +298,7 @@ export interface NovelOverview {
   staleChapters: string[]
   /** 单文件读取失败清单（部分失败提示条）。 */
   failedFiles: string[]
-  /** 归档分节（.writer/pending-archive.md，倒序）。 */
+  /** 归档分节（项目根 pending-archive.md；含旧布局 .writer/ 兜底合并，倒序）。 */
   pendingArchive: PendingSection[]
   /** 下一步情境卡。 */
   nextStep: NextStep

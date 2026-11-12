@@ -107,14 +107,14 @@ export abstract class WriterService extends Service {
 
   /**
    * 归档式变更 pending.md（P7 归档语义）：在 pending.md 串行链的锁定区内执行——
-   * mutator 计算分区 → **先**原子追加归档（.writer/pending-archive.md）→ **再**原子重写 pending.md。
+   * mutator 计算分区 → **先**原子追加归档（pending-archive.md，项目根；旧 .writer/ 位置由 store 幂等迁移）→ **再**原子重写 pending.md。
    * 失败方向安全：归档先落，pending 重写失败时待办仍在 pending.md（重试在归档多一份带新时间戳副本，
    * 「只增不删」可接受）；不会出现「pending 已删节而归档未写」的不可重建丢失。
    * extracted 为空串时不发生任何文件写入（幂等 no-op），返回 extracted 供调用方报告。
    */
   abstract archivePending(mutator: (text: string) => { next: string; extracted: string }): Promise<string>
 
-  /** 向归档文件 .writer/pending-archive.md 追加文本（原子写，只增不删）。 */
+  /** 向归档文件 pending-archive.md（项目根）追加文本（原子写，只增不删）。 */
   abstract appendPendingArchive(section: string): Promise<void>
 }
 
