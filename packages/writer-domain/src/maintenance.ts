@@ -1,6 +1,6 @@
 /**
  * 维护 pass 的分节 JSON schema 定义 + 抽取引用存在性校验（规划 §1.4）。
- * 全部纯函数：模型输出的解析、分节校验、按节重试的合并，供 engine 编排、可独立单测。
+ * 全部纯函数：模型输出的解析与分节校验，供 engine 编排按节重试、可独立单测。
  * R-改进来源：原项目「引用脏值致入库失败」复发病——引用实体 id 不存在时拒收该节并按节重试。
  * @module dsh-writer-domain/maintenance
  */
@@ -179,18 +179,3 @@ export interface MaintenanceDerived {
   partial?: boolean
   rejected?: string[]
 }
-
-/**
- * 重试节合并：用重试产出覆盖对应节（仅当该节在重试产出中出现且整体通过引用校验的条目非空或显式空）。
- * 纯函数，engine 按节重试后调用。
- */
-export function mergeExtractionSections(
-  base: MaintenanceExtraction,
-  section: ExtractionSectionName,
-  retry: ExtractedSectionEntries,
-): MaintenanceExtraction {
-  return { ...base, [section]: retry } as MaintenanceExtraction
-}
-
-/** 节条目的联合类型（mergeExtractionSections 的重试入参）。 */
-export type ExtractedSectionEntries = ExtractedFact[] | ExtractedForeshadowEvent[] | ExtractedCharacterState[]

@@ -4,14 +4,14 @@ title: 'writer-domain: 删除零引用的 mergeExtractionSections/ExtractedSecti
 module: writer-domain
 audit_type: delete
 created_at: '2026-11-12T10:41:00+08:00'
-updated_at: '2026-11-12T17:55:00+08:00'
+updated_at: '2026-11-12T09:55:00.001Z'
 owner: cxs
 tags:
   - domain
   - dead-code
   - maintenance
 ticket: null
-status: pending
+status: approved
 target_files:
   - packages/writer-domain/src/maintenance.ts
 current_revision: 2
@@ -37,7 +37,21 @@ comments:
     status: resolved
     created_at: '2026-11-12T09:38:00.783Z'
 human_decisions: []
-approval: null
+approval:
+  approved_by: cxs
+  approved_at: '2026-11-12T09:43:57.511Z'
+  gate_checks:
+    - npm run typecheck
+    - npm test
+  gate_results:
+    - command: npm run typecheck
+      exit_code: 0
+      duration_ms: 12396
+    - command: npm test
+      exit_code: 0
+      duration_ms: 15169
+  confirmed_decisions: []
+  waived_decisions: []
 rejection: null
 commit_message: 'writer-domain: 删除零引用的 mergeExtractionSections/ExtractedSectionEntries 死导出'
 ---
@@ -92,3 +106,22 @@ typecheck 0 错；全量 286/286；补丁在基线 worktree 干净应用。
 `npm run typecheck` / `npm test` 因 DSH 沙箱授权失败未能执行，详见「验证证据」；已完成符号级静态复核。合并前需补跑门禁。
 ### 意见处理结果
 - **c1（再次复核待删代码确实无引用）**：已处理并标记 `resolved`。复核范围与结论见「当前修复方案」；未发现任何源码、测试、配置或技能资产引用这两个导出。
+
+## 版本 2 (base: 38855c6393d2dd1e3ddb6d1fa418c244490099e7)
+
+### 验证结果
+
+<!-- ai-review:validation -->
+### 门禁执行结果
+
+- 工作目录: F:\workspace_2\writer-in-dsh · 基线: 2dec9f765c42eb0bc93411f62f3cf6db62ab86c7 · 平台: win32 / node v24.21.0 · 执行时间: 2026-11-12T09:43:54.394Z
+
+| 结果 | 命令 | 退出码 | 耗时 |
+| --- | --- | --- | --- |
+| 通过 | `npm run typecheck` | 0 | 12.4s |
+| 通过 | `npm test` | 0 | 15.2s |
+<!-- /ai-review:validation -->
+
+### 人类总体意见
+
+批准（cxs）
