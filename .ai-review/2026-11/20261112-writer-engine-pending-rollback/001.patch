@@ -1,0 +1,61 @@
+diff --git a/packages/writer-engine/src/index.ts b/packages/writer-engine/src/index.ts
+index 92961f3..5c3f173 100644
+--- a/packages/writer-engine/src/index.ts
++++ b/packages/writer-engine/src/index.ts
+@@ -258,7 +258,17 @@ export default class WriterEngineServiceImpl extends EngineService {
+     // 最新版待办永久不落 pending.md——自动触发丢弃返回值且后续 pass 命中 up-to-date 短路）。
+     const changedDuringRun = (await this.ctx.writer.get('chapter', chapterId))?.hash !== chapter.hash
+     if (!changedDuringRun) {
+-      await this.ctx.writer.appendPending(renderPendingSection(chapterId, record))
++      // pending 追加失败回滚派生记录：writeMaintenance 是不可逆提交点（hash 锚定使下次
++      // pass 命中 up-to-date 短路），追加失败不回滚则该章待办建议永久缺席、重试也是 no-op。
++      // 删除记录让下次触发自然重跑全 pass 并补 pending（宁多一次模型调用，不丢人工确认环）。
++      try {
++        await this.ctx.writer.appendPending(renderPendingSection(chapterId, record))
++      } catch (err) {
++        await this.ctx.writer.deleteMaintenance(chapterId).catch((rollbackErr: unknown) => {
++          this.loggerWarn(`维护 pass 待办追加失败后回滚派生记录失败（chapter/${chapterId}）：${String(rollbackErr)}`)
++        })
++        throw err
++      }
+     }
+     const result: MaintenancePassResult = {
+       chapterId,
+diff --git a/packages/writer-engine/tests/p3-integration.test.ts b/packages/writer-engine/tests/p3-integration.test.ts
+index 3f0894b..efc5762 100644
+--- a/packages/writer-engine/tests/p3-integration.test.ts
++++ b/packages/writer-engine/tests/p3-integration.test.ts
+@@ -389,3 +389,33 @@ test('maintenancePass：force 与在飞非 force 并发——不共享执行、
+     await rm(setup.root, { recursive: true, force: true })
+   }
+ })
++
++test('maintenancePass：appendPending 失败回滚派生记录——待办不因提交点先行而永久丢失', async () => {
++  const setup = await makeSetup()
++  try {
++    await seedChapter(setup, '001', '正文。')
++    await seedRefs(setup)
++    setup.llm.reply('摘要一。', JSON.stringify({ facts: [], foreshadowEvents: [], characterStates: [] }))
++    // 首次 appendPending 失败（如 rename 重试耗尽/IO 故障），第二次恢复正常
++    const originalAppend = setup.store.appendPending.bind(setup.store)
++    let failOnce = true
++    setup.store.appendPending = async (section: string): Promise<void> => {
++      if (failOnce) {
++        failOnce = false
++        throw new Error('模拟：pending.md 追加失败')
++      }
++      return originalAppend(section)
++    }
++    // 修复前：派生已锚定 sourceHash，appendPending 抛错后重试命中 up-to-date 短路——待办永久缺席
++    await assert.rejects(() => setup.engine.maintenancePass('001'), /模拟：pending\.md 追加失败/)
++    assert.equal(await setup.store.readMaintenance('001'), undefined, '失败后派生记录已回滚（下次触发重跑全 pass）')
++    setup.llm.reply('摘要二。', JSON.stringify({ facts: [], foreshadowEvents: [], characterStates: [] }))
++    const retried = await setup.engine.maintenancePass('001')
++    assert.equal(retried.status, 'done', '回滚后重试真正重跑（而非 up-to-date 短路 no-op）')
++    assert.equal(setup.llm.calls, 4, '两次完整 pass 各 2 次调用')
++    const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
++    assert.match(pending, /摘要二/, '重跑轮待办已落清单')
++  } finally {
++    await rm(setup.root, { recursive: true, force: true })
++  }
++})
