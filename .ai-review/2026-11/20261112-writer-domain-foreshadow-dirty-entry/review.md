@@ -34,7 +34,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-domain): 伏笔脏值入口防护——未知状态抛 TypeError 逃逸分类、章锚无格式校验致红线静默失效'
+commit_message: 'writer-domain: 伏笔脏值入口防护——未知状态抛 TypeError 逃逸分类、章锚无格式校验致红线静默失效'
 ---
 
 # 问题与影响

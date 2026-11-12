@@ -29,7 +29,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-export): 空作者时 OPF 无条件渲染空 dc:creator——epubcheck 校验错误且与 HTML 路径不同型'
+commit_message: 'writer-export: 空作者时 OPF 无条件渲染空 dc:creator——epubcheck 校验错误且与 HTML 路径不同型'
 ---
 
 # 问题与影响

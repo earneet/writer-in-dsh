@@ -29,7 +29,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-domain): 组装器可降级分节截断用 UTF-16 slice——孤立代理项进入 LLM 提示词'
+commit_message: 'writer-domain: 组装器可降级分节截断用 UTF-16 slice——孤立代理项进入 LLM 提示词'
 ---
 
 # 问题与影响

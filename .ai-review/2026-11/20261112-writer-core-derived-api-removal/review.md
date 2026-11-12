@@ -33,7 +33,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'refactor(writer-core): 删除 deprecated 的 readDerived/writeDerived/deleteDerived/listDerived 派生存取公开面'
+commit_message: 'writer-core: 删除 deprecated 的 readDerived/writeDerived/deleteDerived/listDerived 派生存取公开面'
 ---
 
 # 问题与影响

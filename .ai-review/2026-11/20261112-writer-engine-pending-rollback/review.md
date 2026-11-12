@@ -29,7 +29,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-engine): 维护 pass 待办追加失败不回滚——该章人工确认建议永久丢失'
+commit_message: 'writer-engine: 维护 pass 待办追加失败不回滚——该章人工确认建议永久丢失'
 ---
 
 # 问题与影响

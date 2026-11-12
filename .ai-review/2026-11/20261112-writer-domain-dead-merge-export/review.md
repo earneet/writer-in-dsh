@@ -27,7 +27,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'refactor(writer-domain): 删除零引用的 mergeExtractionSections/ExtractedSectionEntries 死导出'
+commit_message: 'writer-domain: 删除零引用的 mergeExtractionSections/ExtractedSectionEntries 死导出'
 ---
 
 # 问题与影响

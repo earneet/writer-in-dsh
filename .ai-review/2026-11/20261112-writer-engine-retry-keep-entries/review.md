@@ -30,7 +30,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-engine): 维护 pass 按节重试漏回节时已通过条目被静默清空'
+commit_message: 'writer-engine: 维护 pass 按节重试漏回节时已通过条目被静默清空'
 ---
 
 # 问题与影响

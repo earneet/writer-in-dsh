@@ -29,7 +29,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-export): 附录 XHTML 用 HTML5 doctype——同书文档类型漂移，EPUB 2 严格校验失败'
+commit_message: 'writer-export: 附录 XHTML 用 HTML5 doctype——同书文档类型漂移，EPUB 2 严格校验失败'
 ---
 
 # 问题与影响

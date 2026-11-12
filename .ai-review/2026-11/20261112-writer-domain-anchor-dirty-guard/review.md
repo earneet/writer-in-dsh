@@ -30,7 +30,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-domain): 章节锚布尔/空串脏值被 Number() 伪造成 0/1 号章——假「已逾期」红线逐章注入'
+commit_message: 'writer-domain: 章节锚布尔/空串脏值被 Number() 伪造成 0/1 号章——假「已逾期」红线逐章注入'
 ---
 
 # 问题与影响

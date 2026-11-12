@@ -31,7 +31,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-ui): 世界观超读取上限时概况统计格显示已读数（≤24）而非总数'
+commit_message: 'writer-ui: 世界观超读取上限时概况统计格显示已读数（≤24）而非总数'
 ---
 
 # 问题与影响

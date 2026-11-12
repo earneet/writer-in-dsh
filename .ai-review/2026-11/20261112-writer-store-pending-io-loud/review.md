@@ -31,7 +31,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-store): IO 错误误判为不存在——pending.md 被静默截断重写、清单谎报为空'
+commit_message: 'writer-store: IO 错误误判为不存在——pending.md 被静默截断重写、清单谎报为空'
 ---
 
 # 问题与影响

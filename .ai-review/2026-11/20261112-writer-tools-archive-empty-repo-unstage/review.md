@@ -29,7 +29,7 @@ comments: []
 human_decisions: []
 approval: null
 rejection: null
-commit_message: 'fix(writer-tools): archive_point 在零提交仓库首存档时排除命令静默失败——exports 与 .writer 全部入库'
+commit_message: 'writer-tools: archive_point 在零提交仓库首存档时排除命令静默失败——exports 与 .writer 全部入库'
 ---
 
 # 问题与影响
