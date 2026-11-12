@@ -1,0 +1,67 @@
+diff --git a/packages/writer-tools/src/index.ts b/packages/writer-tools/src/index.ts
+index 5c42d53..8cfe83c 100644
+--- a/packages/writer-tools/src/index.ts
++++ b/packages/writer-tools/src/index.ts
+@@ -357,8 +357,13 @@ export function apply(ctx: Context): void {
+       }
+       await execFileAsync('git', ['add', '-A'], { cwd: root })
+       // 派生缓存与导出产物不入存档（.writer/derived 可弃、exports 含整本 epub 会让仓库快速膨胀）；
+-      // 未 gitignore 的项目由这里显式取消暂存，已 gitignore 的项目该命令是空操作
+-      await execFileAsync('git', ['reset', '--', '.writer', 'exports'], { cwd: root }).catch(() => {})
++      // 未 gitignore 的项目由这里显式取消暂存，已 gitignore 的项目该命令是空操作。
++      // `git reset -- <paths>` 隐式依赖 HEAD 存在：零提交仓库（git init 后未 commit）会
++      // "Failed to resolve 'HEAD'" 被 .catch 吞掉——回退 `git rm --cached`（纯索引操作，
++      // 不需要 HEAD）兜底，否则首个存档点会把 exports 整本 epub 与派生缓存一起提交
++      await execFileAsync('git', ['reset', '--', '.writer', 'exports'], { cwd: root }).catch(() =>
++        execFileAsync('git', ['rm', '--cached', '-r', '--ignore-unmatch', '--', '.writer', 'exports'], { cwd: root }).catch(() => {}),
++      )
+       // 无变更预检：git commit 在工作区干净时以非零退出且提示走 stdout——预检避免把正常空存档当错误
+       const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: root })
+       if (status.stdout.trim().length === 0) {
+diff --git a/packages/writer-tools/tests/tools.test.ts b/packages/writer-tools/tests/tools.test.ts
+index 1a5a4d3..6d0d637 100644
+--- a/packages/writer-tools/tests/tools.test.ts
++++ b/packages/writer-tools/tests/tools.test.ts
+@@ -9,6 +9,8 @@ import assert from 'node:assert/strict'
+ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
++import { execFile } from 'node:child_process'
++import { promisify } from 'node:util'
+ import type { Context } from '@deepseek-ai/cordis'
+ import { apply } from '../src/index.ts'
+ 
+@@ -173,6 +175,33 @@ test('archive_point：非 git 目录返回指引（不抛错）', async () => {
+   }
+ })
+ 
++test('archive_point：零提交仓库（无 HEAD）首存档不把 .writer/exports 带入提交', async () => {
++  const root = await mkdtemp(join(tmpdir(), 'writer-tools-git-'))
++  const run = promisify(execFile)
++  try {
++    await run('git', ['init'], { cwd: root })
++    await run('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
++    await run('git', ['config', 'user.name', 'test'], { cwd: root })
++    await mkdir(join(root, 'chapters'), { recursive: true })
++    await writeFile(join(root, 'chapters/001.md'), '正文。', 'utf8')
++    await mkdir(join(root, 'exports'), { recursive: true })
++    await writeFile(join(root, 'exports/book.epub'), '伪 epub 字节', 'utf8')
++    await mkdir(join(root, '.writer/derived'), { recursive: true })
++    await writeFile(join(root, '.writer/derived/x.json'), '{}', 'utf8')
++    const { tools } = makeCtx({ list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应到达') }, root })
++    const out = await tools.get('archive_point')!.execute({}, exec)
++    assert.match(out, /已创建存档点/, `实际输出：${out}`)
++    // 修复前：`git reset -- .writer exports` 在无 HEAD 仓库报 fatal 被 .catch 吞掉，
++    // 首个提交把 exports/book.epub 与 .writer/derived 一起带入
++    const { stdout: tree } = await run('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: root })
++    assert.ok(!tree.includes('exports/'), `提交树不得含 exports/，实际：${tree}`)
++    assert.ok(!tree.includes('.writer/'), `提交树不得含 .writer/，实际：${tree}`)
++    assert.ok(tree.includes('chapters/001.md'), '正文照常入存档')
++  } finally {
++    await rm(root, { recursive: true, force: true })
++  }
++})
++
+ test('pending_cleanup：按章归档 + 无待办幂等 + 脏章锚拒绝', async () => {
+   let pendingText = '## [维护 pass] chapter/001（t）待人工确认\n- 建议 A\n\n## [维护 pass] chapter/002（t）待人工确认\n- 建议 B\n'
+   const archived: string[] = []
