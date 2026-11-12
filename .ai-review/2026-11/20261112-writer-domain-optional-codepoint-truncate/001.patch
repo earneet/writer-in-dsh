@@ -1,0 +1,46 @@
+diff --git a/packages/writer-domain/src/index.ts b/packages/writer-domain/src/index.ts
+index 3a1e11e..92f2a11 100644
+--- a/packages/writer-domain/src/index.ts
++++ b/packages/writer-domain/src/index.ts
+@@ -429,7 +429,9 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
+     const overhead = title.length + 2
+     const used = Math.min(trimmed.length, Math.max(0, remaining - overhead))
+     if (used <= 0) return remaining
+-    const sectionBody = used >= trimmed.length ? trimmed : `${trimmed.slice(0, used)}…`
++    // 码点安全截断（轮次 33 统一口径漏改点）：UTF-16 slice 会切开代理对，
++    // 孤立代理项随分节进入 LLM user message——JSON 序列化产出 \uD8XX 转义，多数网关拒收或替换乱码
++    const sectionBody = used >= trimmed.length ? trimmed : `${truncateCodePoints(trimmed, used)}…`
+     sections.push({ title, body: sectionBody, truncated: used < trimmed.length && truncatedFlag })
+     return remaining - overhead - sectionBody.length
+   }
+diff --git a/packages/writer-domain/tests/rewrite.test.ts b/packages/writer-domain/tests/rewrite.test.ts
+index 396292d..26e504d 100644
+--- a/packages/writer-domain/tests/rewrite.test.ts
++++ b/packages/writer-domain/tests/rewrite.test.ts
+@@ -181,6 +181,26 @@ test('assembleWritingContext：前一章原文超出预算保头截断且 trunca
+   assert.ok(prev.body.startsWith('甲'), '保头截断（开头保留）')
+ })
+ 
++test('assembleWritingContext：预算截断不切开代理对（可选分节截断码点安全，轮次 33 口径漏改）', () => {
++  const smallPrinciples = entity('principles', 'principles', {}, '克制。')
++  // 全 astral 字符正文（𝐀 = U+1D400，代理对占 2 个 UTF-16 单元）——截断点必落在代理对中间
++  const astralPrev = entity('chapter', '001', { number: 1 }, '𝐀'.repeat(80))
++  const r = assembleWritingContext({
++    chapterNumber: 2,
++    principles: smallPrinciples, outline,
++    chapters: [astralPrev],
++    characters: [],
++    plots: [],
++    budgetChars: 120,
++  })
++  const prev = r.sections.find((s) => s.title.includes('前一章原文'))
++  assert.ok(prev !== undefined && prev.truncated === true, '预算迫使截断发生')
++  // 修复前：UTF-16 slice 切开代理对，body 末尾为孤立高代理项 + '…'（非 well-formed）
++  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
++  assert.ok(!lone.test(prev.body), '截断产物不含孤立代理项（well-formed）')
++  assert.ok(prev.body.startsWith('𝐀'), '保头截断（码点口径）')
++})
++
+ test('assembleWritingContext：逾期 planned 伏笔标记必须设置（状态机禁止 planned 直接回收）', () => {
+   const r = assembleWritingContext({
+     chapterNumber: 3,
