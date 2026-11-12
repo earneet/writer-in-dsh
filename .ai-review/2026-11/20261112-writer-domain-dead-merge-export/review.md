@@ -4,14 +4,14 @@ title: 'writer-domain: 删除零引用的 mergeExtractionSections/ExtractedSecti
 module: writer-domain
 audit_type: delete
 created_at: '2026-11-12T10:41:00+08:00'
-updated_at: '2026-11-12T10:41:00+08:00'
+updated_at: '2026-11-12T09:38:00.784Z'
 owner: cxs
 tags:
   - domain
   - dead-code
   - maintenance
 ticket: null
-status: pending
+status: changes_requested
 target_files:
   - packages/writer-domain/src/maintenance.ts
 current_revision: 1
@@ -23,7 +23,15 @@ revisions:
 gate_checks:
   - npm run typecheck
   - npm test
-comments: []
+comments:
+  - id: cmwdcufv317n3
+    revision: 1
+    file: ''
+    line: 0
+    author: cxs
+    content: 再次复核该问题，确保待删除的代码确实无引用
+    status: unresolved
+    created_at: '2026-11-12T09:38:00.783Z'
 human_decisions: []
 approval: null
 rejection: null
