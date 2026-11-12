@@ -1,0 +1,80 @@
+diff --git a/packages/writer-domain/src/index.ts b/packages/writer-domain/src/index.ts
+index 3a1e11e..474ac56 100644
+--- a/packages/writer-domain/src/index.ts
++++ b/packages/writer-domain/src/index.ts
+@@ -402,11 +402,15 @@ function briefOf(entity: WriterEntity, maxChars: number): string {
+ }
+ 
+ /**
+- * 解析 frontmatter 里的章节锚（三位序号字符串或数字）；缺失/脏值（NaN）返回 undefined
++ * 解析 frontmatter 里的章节锚（三位序号字符串或数字）；缺失/脏值返回 undefined
+  * （按缺失处理：伏笔红线不因脏数据静默误判，也不因脏数据误触发）。
++ * 脏值除 NaN 外显式拒绝布尔与空串——Number(true)=1、Number('')=0 都是有限数，
++ * 会把不可解析锚伪造成 0/1 号章，使「已逾期」红线自此后的每一章误触发。
+  */
+-function chapterAnchorOf(value: FrontmatterValue | undefined): number | undefined {
++export function chapterAnchorOf(value: FrontmatterValue | undefined): number | undefined {
+   if (value === undefined) return undefined
++  if (typeof value === 'boolean') return undefined
++  if (typeof value === 'string' && value.trim().length === 0) return undefined
+   const n = Number(value)
+   return Number.isFinite(n) ? n : undefined
+ }
+diff --git a/packages/writer-domain/src/rag.ts b/packages/writer-domain/src/rag.ts
+index 0f51932..c7246c1 100644
+--- a/packages/writer-domain/src/rag.ts
++++ b/packages/writer-domain/src/rag.ts
+@@ -5,7 +5,7 @@
+  * 本仓降级为：CJK bigram TF-IDF 关键词先行 + 可选语义档后验，语义后端由 Provider 配置）。
+  * 全部纯函数可独立单测。@module dsh-writer-domain/rag
+  */
+-import { chapterNumberOf, type EntityKind, type WriterEntity } from './index.ts'
++import { chapterAnchorOf, chapterNumberOf, type EntityKind, type WriterEntity } from './index.ts'
+ 
+ /** 一条检索语料块：实体派生（章节切片/摘要/条目）。 */
+ export interface RagChunk {
+@@ -221,9 +221,10 @@ export function filterChunksBySpoiler(chunks: readonly RagChunk[], filter: Spoil
+       if (plot === undefined) return true
+       const status = String(plot.frontmatter['status'] ?? 'planned')
+       if (status !== 'planned' && status !== 'planted') return true
+-      const anchor = Number(plot.frontmatter['planned_chapter'])
+-      // planned_chapter 缺失按「不晚于本章」处理（脏值按缺失，与组装器 chapterAnchorOf 同语义）
+-      if (!Number.isFinite(anchor)) return true
++      // planned_chapter 缺失按「不晚于本章」处理（脏值含布尔/空串按缺失，与组装器共用 chapterAnchorOf——
++      // 此前本处内联 Number() 与组装器并行实现，注释声称同语义实则各自漂移）
++      const anchor = chapterAnchorOf(plot.frontmatter['planned_chapter'])
++      if (anchor === undefined) return true
+       return anchor <= filter.chapterNumber
+     }
+     return true
+diff --git a/packages/writer-domain/tests/rewrite.test.ts b/packages/writer-domain/tests/rewrite.test.ts
+index 396292d..b673f87 100644
+--- a/packages/writer-domain/tests/rewrite.test.ts
++++ b/packages/writer-domain/tests/rewrite.test.ts
+@@ -211,6 +211,26 @@ test('assembleWritingContext：planned_chapter 脏值按缺失处理（不误触
+   assert.ok(foreshadow.body.includes('dirty'))
+ })
+ 
++test('assembleWritingContext：planned_chapter 布尔/空串脏值不得经 Number() 伪造成 0/1 号锚（假逾期红线）', () => {
++  // Number(true)=1、Number('')=0 均为有限数——修复前绕过 isFinite 脏值闸，
++  // 使 planned 伏笔自第 2 章起每章注入「🔴 已逾期未设置，本章必须设置」假红线
++  const boolAnchor = entity('plot', 'b-anch', { status: 'planned', planned_chapter: true }, '布尔锚伏笔。')
++  const emptyAnchor = entity('plot', 'e-anch', { status: 'planned', planned_chapter: '' }, '空串锚伏笔。')
++  for (const plot of [boolAnchor, emptyAnchor]) {
++    const r = assembleWritingContext({
++      chapterNumber: 3,
++      principles, outline,
++      chapters: [],
++      characters: [],
++      plots: [plot],
++      budgetChars: 5000,
++    })
++    const body = r.sections.find((s) => s.title === '伏笔指令')!.body
++    assert.ok(!body.includes('🔴'), `${plot.id} 布尔/空串锚按缺失处理，不触发假逾期红线`)
++    assert.ok(body.includes('🟡'), `${plot.id} 仍以活跃伏笔注入（黄档，不因脏值丢失伏笔）`)
++  }
++})
++
+ test('assembleWritingContext：resolve_chapter 回收锚（轮次 31）——到期/逾期红线、未来锚黄档提示', () => {
+   const due = entity('plot', 'r-due', { status: 'planted', planted_chapter: '001', planned_chapter: '001', resolve_chapter: '003' }, '到期回收伏笔。')
+   const overdueR = entity('plot', 'r-overdue', { status: 'planted', planted_chapter: '001', planned_chapter: '001', resolve_chapter: '002' }, '逾期回收伏笔。')
