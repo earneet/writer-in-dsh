@@ -429,7 +429,9 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
     const overhead = title.length + 2
     const used = Math.min(trimmed.length, Math.max(0, remaining - overhead))
     if (used <= 0) return remaining
-    const sectionBody = used >= trimmed.length ? trimmed : `${trimmed.slice(0, used)}…`
+    // 码点安全截断（轮次 33 统一口径漏改点）：UTF-16 slice 会切开代理对，
+    // 孤立代理项随分节进入 LLM user message——JSON 序列化产出 \uD8XX 转义，多数网关拒收或替换乱码
+    const sectionBody = used >= trimmed.length ? trimmed : `${truncateCodePoints(trimmed, used)}…`
     sections.push({ title, body: sectionBody, truncated: used < trimmed.length && truncatedFlag })
     return remaining - overhead - sectionBody.length
   }

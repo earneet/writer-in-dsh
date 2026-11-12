@@ -4,7 +4,7 @@ title: 'writer-domain: 组装器可降级分节截断用 UTF-16 slice——孤�
 module: writer-domain
 audit_type: bugfix
 created_at: '2026-11-12T10:26:30+08:00'
-updated_at: '2026-11-12T10:26:30+08:00'
+updated_at: '2026-11-12T12:43:01.597Z'
 owner: cxs
 tags:
   - domain
@@ -12,7 +12,7 @@ tags:
   - unicode
   - truncation
 ticket: null
-status: pending
+status: approved
 target_files:
   - packages/writer-domain/src/index.ts
   - packages/writer-domain/tests/rewrite.test.ts
@@ -27,7 +27,21 @@ gate_checks:
   - npm test
 comments: []
 human_decisions: []
-approval: null
+approval:
+  approved_by: cxs
+  approved_at: '2026-11-12T12:43:01.596Z'
+  gate_checks:
+    - npm run typecheck
+    - npm test
+  gate_results:
+    - command: npm run typecheck
+      exit_code: 0
+      duration_ms: 12453
+    - command: npm test
+      exit_code: 0
+      duration_ms: 14900
+  confirmed_decisions: []
+  waived_decisions: []
 rejection: null
 commit_message: 'writer-domain: 组装器可降级分节截断用 UTF-16 slice——孤立代理项进入 LLM 提示词'
 ---
@@ -64,3 +78,22 @@ typecheck 0 错；全量 287/287；补丁在基线 worktree 干净应用。
 待审核
 ### 意见处理结果
 无
+
+## 版本 1 (base: abd326dba0a03b22a359afda8fa5b2f1482b6835)
+
+### 验证结果
+
+<!-- ai-review:validation -->
+### 门禁执行结果
+
+- 工作目录: F:\workspace_2\writer-in-dsh · 基线: 84c9e8071593e60d96d408273fdb9a018ddd7273 · 平台: win32 / node v24.21.0 · 执行时间: 2026-11-12T12:42:58.361Z
+
+| 结果 | 命令 | 退出码 | 耗时 |
+| --- | --- | --- | --- |
+| 通过 | `npm run typecheck` | 0 | 12.5s |
+| 通过 | `npm test` | 0 | 14.9s |
+<!-- /ai-review:validation -->
+
+### 人类总体意见
+
+批准（cxs）

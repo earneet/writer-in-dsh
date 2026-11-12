@@ -181,6 +181,26 @@ test('assembleWritingContext：前一章原文超出预算保头截断且 trunca
   assert.ok(prev.body.startsWith('甲'), '保头截断（开头保留）')
 })
 
+test('assembleWritingContext：预算截断不切开代理对（可选分节截断码点安全，轮次 33 口径漏改）', () => {
+  const smallPrinciples = entity('principles', 'principles', {}, '克制。')
+  // 全 astral 字符正文（𝐀 = U+1D400，代理对占 2 个 UTF-16 单元）——截断点必落在代理对中间
+  const astralPrev = entity('chapter', '001', { number: 1 }, '𝐀'.repeat(80))
+  const r = assembleWritingContext({
+    chapterNumber: 2,
+    principles: smallPrinciples, outline,
+    chapters: [astralPrev],
+    characters: [],
+    plots: [],
+    budgetChars: 120,
+  })
+  const prev = r.sections.find((s) => s.title.includes('前一章原文'))
+  assert.ok(prev !== undefined && prev.truncated === true, '预算迫使截断发生')
+  // 修复前：UTF-16 slice 切开代理对，body 末尾为孤立高代理项 + '…'（非 well-formed）
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+  assert.ok(!lone.test(prev.body), '截断产物不含孤立代理项（well-formed）')
+  assert.ok(prev.body.startsWith('𝐀'), '保头截断（码点口径）')
+})
+
 test('assembleWritingContext：逾期 planned 伏笔标记必须设置（状态机禁止 planned 直接回收）', () => {
   const r = assembleWritingContext({
     chapterNumber: 3,
