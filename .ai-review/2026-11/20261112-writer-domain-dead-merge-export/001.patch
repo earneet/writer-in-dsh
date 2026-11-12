@@ -1,0 +1,23 @@
+diff --git a/packages/writer-domain/src/maintenance.ts b/packages/writer-domain/src/maintenance.ts
+index ea4ad2a..e5b3d01 100644
+--- a/packages/writer-domain/src/maintenance.ts
++++ b/packages/writer-domain/src/maintenance.ts
+@@ -179,18 +179,3 @@ export interface MaintenanceDerived {
+   partial?: boolean
+   rejected?: string[]
+ }
+-
+-/**
+- * 重试节合并：用重试产出覆盖对应节（仅当该节在重试产出中出现且整体通过引用校验的条目非空或显式空）。
+- * 纯函数，engine 按节重试后调用。
+- */
+-export function mergeExtractionSections(
+-  base: MaintenanceExtraction,
+-  section: ExtractionSectionName,
+-  retry: ExtractedSectionEntries,
+-): MaintenanceExtraction {
+-  return { ...base, [section]: retry } as MaintenanceExtraction
+-}
+-
+-/** 节条目的联合类型（mergeExtractionSections 的重试入参）。 */
+-export type ExtractedSectionEntries = ExtractedFact[] | ExtractedForeshadowEvent[] | ExtractedCharacterState[]
