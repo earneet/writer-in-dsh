@@ -1,0 +1,25 @@
+diff --git a/packages/writer-export/src/render.ts b/packages/writer-export/src/render.ts
+index d118b9f..29ac61c 100644
+--- a/packages/writer-export/src/render.ts
++++ b/packages/writer-export/src/render.ts
+@@ -263,7 +263,9 @@ export function renderTocNcx(book: ExportBook, tocItems: readonly { label: strin
+ export function renderPlainXhtml(title: string, text: string): string {
+   return [
+     '<?xml version="1.0" encoding="utf-8"?>',
+-    '<!DOCTYPE html>',
++    // EPUB 2 内容文档统一 XHTML 1.1 DTD（轮次 16 口径）：附录与章节/卷首同书同规范——
++    // 此前遗留 HTML5 doctype，同书文档类型漂移且 epubcheck 对 EPUB2 校验报错
++    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">',
+     '<html xmlns="http://www.w3.org/1999/xhtml">',
+     '  <head>',
+     `    <title>${escapeXmlText(title)}</title>`,
+diff --git a/packages/writer-export/tests/export.test.ts b/packages/writer-export/tests/export.test.ts
+index a7e9249..00ad644 100644
+--- a/packages/writer-export/tests/export.test.ts
++++ b/packages/writer-export/tests/export.test.ts
+@@ -210,4 +210,5 @@ test('renderPlainXhtml：附录 XHTML 同样剥离非法控制字符（审查 P1
+   const xhtml = renderPlainXhtml('附录\u0007：大纲', '大纲\u0007正文')
+   assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(xhtml), '附录 XHTML 输出无非法控制字符')
+   assert.match(xhtml, /<pre>/, '预格式正文结构保持')
++  assert.match(xhtml, /DOCTYPE html PUBLIC "-\/\/W3C\/\/DTD XHTML 1\.1\/\/EN"/, '附录与章节/卷首同为 XHTML 1.1 DTD（EPUB 2 规范，同书不漂移）')
+ })
