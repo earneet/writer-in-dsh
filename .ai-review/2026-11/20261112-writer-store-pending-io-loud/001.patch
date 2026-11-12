@@ -1,0 +1,143 @@
+diff --git a/packages/writer-domain/tests/guard-contract.test.ts b/packages/writer-domain/tests/guard-contract.test.ts
+index a63dd4d..4997bb9 100644
+--- a/packages/writer-domain/tests/guard-contract.test.ts
++++ b/packages/writer-domain/tests/guard-contract.test.ts
+@@ -23,6 +23,8 @@ const SRC_DIRS = ['writer-tools', 'writer-engine', 'writer-store', 'writer-domai
+ /** 有意不分类的基建/环境/内部不变量错误前缀（IO 落盘、模型与宿主、逻辑断言——不是工具业务失败）。 */
+ const INTENTIONALLY_UNCLASSIFIED: readonly string[] = [
+   '落盘失败', '派生数据落盘失败', '派生数据读取失败', '实体文件读取失败', '实体文件状态读取失败', 'pending.md 追加失败', 'pending.md 变更失败', '归档追加失败', '旧归档迁移读取失败', '旧归档已并入根下',
++  '落盘失败', '派生数据落盘失败', '派生数据读取失败', '实体文件读取失败', '实体文件状态读取失败', 'pending.md 追加失败', 'pending.md 变更失败', '归档追加失败',
++  'pending.md 读取失败', '归档文件读取失败', '实体目录读取失败',
+   '模型未返回任何文本', '恢复快照落盘失败',
+   '窗口容量非法', '批次正文预算必须为正数', '一致性检查预算必须为正数',
+   'keywordScoresFromCounts 形状不符', '范围内没有已写章节', '切片参数非法',
+diff --git a/packages/writer-store/src/index.ts b/packages/writer-store/src/index.ts
+index 2cfb992..d6f9e4c 100644
+--- a/packages/writer-store/src/index.ts
++++ b/packages/writer-store/src/index.ts
+@@ -330,8 +330,12 @@ export default class WriterStoreService extends WriterService {
+     let existing = ''
+     try {
+       existing = await readFile(abs, 'utf8')
+-    } catch {
+-      // 首次创建
++    } catch (err) {
++      // ENOENT = 首次创建（合法）；其他 IO 错静默按空文本会以「仅含新节」整体重写清单，
++      // 既有待办全部静默消失——与 readRaw/readDerived 同口径响亮失败
++      if ((err as { code?: string }).code !== 'ENOENT') {
++        throw new Error(`pending.md 读取失败：${String(err)}`)
++      }
+     }
+     const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
+     const tmpPath = uniqueTmpPath(abs)
+@@ -358,8 +362,12 @@ export default class WriterStoreService extends WriterService {
+     let existing = ''
+     try {
+       existing = await readFile(abs, 'utf8')
+-    } catch {
+-      // 文件不存在按空文本处理（空清单归档是合法 no-op）
++    } catch (err) {
++      // ENOENT = 文件不存在按空文本处理（空清单归档是合法 no-op）；其他 IO 错响亮失败
++      // （空文本喂给 mutator 会把「清空全部待办」的结果重写落盘——不可静默）
++      if ((err as { code?: string }).code !== 'ENOENT') {
++        throw new Error(`pending.md 读取失败：${String(err)}`)
++      }
+     }
+     const { next, extracted } = mutator(existing)
+     if (extracted.trim().length === 0) return extracted
+@@ -439,8 +447,11 @@ export default class WriterStoreService extends WriterService {
+     let existing = ''
+     try {
+       existing = await readFile(abs, 'utf8')
+-    } catch {
+-      // 首次创建
++    } catch (err) {
++      // ENOENT = 首次创建；其他 IO 错响亮失败（与 appendPendingLocked 同口径，防静默截断重写）
++      if ((err as { code?: string }).code !== 'ENOENT') {
++        throw new Error(`归档文件读取失败：${String(err)}`)
++      }
+     }
+     const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
+     const tmpPath = uniqueTmpPath(abs)
+@@ -508,8 +519,13 @@ export default class WriterStoreService extends WriterService {
+     let names: string[]
+     try {
+       names = await readdir(dirAbs)
+-    } catch {
+-      return [] // 目录不存在视为空（懒创建）
++    } catch (err) {
++      // ENOENT = 目录不存在视为空（懒创建）；其他 IO 错（EACCES/EBUSY 等）静默返回空清单
++      // 会让 list() 谎报「无章节/无人物」误导一致性检查与组装器——响亮失败
++      if ((err as { code?: string }).code !== 'ENOENT') {
++        throw new Error(`实体目录读取失败：${layout.dir}：${String(err)}`)
++      }
++      return []
+     }
+     const entities: WriterEntity[] = []
+     for (const name of names.sort()) {
+diff --git a/packages/writer-store/tests/derived.test.ts b/packages/writer-store/tests/derived.test.ts
+index dca0c32..4cb0eb0 100644
+--- a/packages/writer-store/tests/derived.test.ts
++++ b/packages/writer-store/tests/derived.test.ts
+@@ -103,6 +103,38 @@ test('archivePending（P7 归档语义）：锁定区内先归档后改清单；
+   }
+ })
+ 
++test('appendPending/archivePending：pending.md 读失败（非 ENOENT）响亮拒绝，不按空文本静默重写', async () => {
++  const { store, root } = await makeStore()
++  try {
++    // 目录占位 pending.md 路径：readFile 得 EISDIR（非 ENOENT 的 IO 错误）
++    // 修复前被静默当「首次创建」，以仅含新节的全文重写——既有待办全部消失且零报错
++    await mkdir(join(root, 'pending.md'), { recursive: true })
++    await assert.rejects(() => store.appendPending('## 新节'), /pending\.md 读取失败/)
++    await assert.rejects(
++      () => store.archivePending(() => ({ next: '', extracted: 'x' })),
++      /pending\.md 读取失败/,
++    )
++  } finally {
++    await rm(root, { recursive: true, force: true })
++  }
++})
++
++test('appendPendingArchive：归档文件读失败（非 ENOENT）响亮拒绝', async () => {
++  const { store, root } = await makeStore()
++  try {
++    // 目录占位根归档路径：readFile 得 EISDIR（非 ENOENT 的 IO 错误），与派生 dirblock 范式同款
++    // 修复前被静默当「首次创建」，既有归档被仅含新节的全文覆盖
++    await mkdir(join(root, 'pending-archive.md'), { recursive: true })
++    await assert.rejects(() => store.appendPendingArchive('# [已归档] chapter/001（t）\n\n## 其他\n- A\n'), /归档文件读取失败/)
++    // 轮次 42 迁移引入的旧布局路径同样响亮：.writer 归档读失败不得被静默吞掉
++    await rm(join(root, 'pending-archive.md'), { recursive: true, force: true })
++    await mkdir(join(root, '.writer', 'pending-archive.md'), { recursive: true })
++    await assert.rejects(() => store.appendPendingArchive('# [已归档] chapter/002（t）\n\n## 其他\n- B\n'), /旧归档迁移读取失败/)
++  } finally {
++    await rm(root, { recursive: true, force: true })
++  }
++})
++
+ test('root getter 返回项目根', async () => {
+   const { store, root } = await makeStore()
+   try {
+diff --git a/packages/writer-store/tests/store.test.ts b/packages/writer-store/tests/store.test.ts
+index a15ee5c..1e151a7 100644
+--- a/packages/writer-store/tests/store.test.ts
++++ b/packages/writer-store/tests/store.test.ts
+@@ -23,6 +23,18 @@ test('轮次 38（P2-5）：projectRoot 相对路径构造期响亮失败', asyn
+   assert.throws(() => new WriterStoreService(new Context(), { projectRoot: 'novel' }), /projectRoot 必须为绝对路径/)
+ })
+ 
++test('list：实体目录读失败（非 ENOENT）响亮拒绝，不谎报空清单', async () => {
++  const { store, root } = await makeStore()
++  try {
++    // 文件占位实体目录路径：readdir 得 ENOTDIR（非 ENOENT 的 IO 错误）
++    // 修复前被静默当「目录不存在」，list() 谎报无章节——一致性检查/组装器据此给出误导性结论
++    await writeFile(join(root, 'chapters'), '占位文件', 'utf8')
++    await assert.rejects(() => store.list('chapter'), /实体目录读取失败/)
++  } finally {
++    await rm(root, { recursive: true, force: true })
++  }
++})
++
+ test('创建 → 读取 → 乐观锁更新 → 陈旧 hash 拒绝', async () => {
+   const { store, root } = await makeStore()
+   try {
