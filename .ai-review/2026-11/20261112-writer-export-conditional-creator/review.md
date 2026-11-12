@@ -4,7 +4,7 @@ title: 'writer-export: 空作者时 OPF 无条件渲染空 dc:creator——epubc
 module: writer-export
 audit_type: bugfix
 created_at: '2026-11-12T10:31:30+08:00'
-updated_at: '2026-11-12T10:31:30+08:00'
+updated_at: '2026-11-12T12:52:53.691Z'
 owner: cxs
 tags:
   - export
@@ -12,7 +12,7 @@ tags:
   - opf
   - metadata
 ticket: null
-status: pending
+status: rejected
 target_files:
   - packages/writer-export/src/render.ts
   - packages/writer-export/tests/export.test.ts
@@ -28,7 +28,13 @@ gate_checks:
 comments: []
 human_decisions: []
 approval: null
-rejection: null
+rejection:
+  rejected_by: cxs
+  rejected_at: '2026-11-12T12:52:53.691Z'
+  reason: 这个不是问题
+  related_symbols:
+    - 'export function renderContentOpf(book: ExportBook, items: readonly EpubManifestI'
+    - test('EPUB 结构文档：container/opf/ncx 均含必需元素且转义', () =>
 commit_message: 'writer-export: 空作者时 OPF 无条件渲染空 dc:creator——epubcheck 校验错误且与 HTML 路径不同型'
 ---
 
@@ -64,3 +70,8 @@ typecheck 0 错；全量 286/286；补丁在基线 worktree 干净应用。
 待审核
 ### 意见处理结果
 无
+
+## 版本 1 (base: eb9b14f9e51912006632bdbb1fab8c64b77d0c5e)
+
+### 放弃
+这个不是问题
