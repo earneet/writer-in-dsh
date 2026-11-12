@@ -8,7 +8,7 @@
   "scripts": {
     "typecheck": "npm run build && tsc --noEmit",
     "test": "npm run build && node --test packages/*/tests/*.test.ts",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build -w dsh-writer-domain --if-present && npm run build -w dsh-writer-core --if-present && npm run build --workspaces --if-present"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",

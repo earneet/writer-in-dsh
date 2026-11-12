@@ -68,7 +68,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - **本地功能验证**：overlay 方式跑 headless 即可——`npx @deepseek-ai/dsh --profile headless --patch ./dev.cordis.yml "<任务>"`；最终形态验证再走 profile 安装路径（`--dump-config` 核对组合树 + web/headless 启动）。
 - **临时插件位置**：overlay 里挂载的临时 .ts 插件文件**必须放在有 package.json 的包目录内**（如 packages/ 下）；放仓库根目录会导致首次模型调用 REQUEST_EXTENSION 失败（插件清单解析需要包身份）。
 - **projectRoot**：writer-bundle/writer-preset 默认 `<启动目录>/novel/`（轮次 18 布局：创作与工作文件全收 novel/ 子目录），验证时从含 novel/ 的目录启动 dsh 或显式覆盖 projectRoot；writer.yaml 已废除（project → novel/project.md 可写实体）。
-- **构建先行（P6 起）**：包产物在 `lib/`（.gitignore），`npm test`/`npm run typecheck` 已自动串 build；overlay/profile 形态下修改 domain/core 等**被裸导入包**的源码后须 `npm run build` 才生效（overlay 入口指 src，但 src 内包间裸导入经 main 解析到 lib）。
+- **构建先行（P6 起）**：包产物在 `lib/`（.gitignore），`npm test`/`npm run typecheck` 已自动串 build；overlay/profile 形态下修改 domain/core 等**被裸导入包**的源码后须 `npm run build` 才生效（overlay 入口指 src，但 src 内包间裸导入经 main 解析到 lib）。根 `build` 脚本必须先建 domain、core 再全量 workspaces——npm `--workspaces` 是字母序，干净树上 core 会先于 domain 构建而 TS2307（轮次 40 实证，此前 CI 从未绿过）；**每次推送后查看 GitHub Actions run 结果**（轮次 38 引入 CI 首跑即红、隔日才被发现）。
 - **patch 覆盖方言（轮次 39 实证）**：`cordis.patch.yml` 对 id 命中行做**整字段替换**（config 不深合并）；非 group 行 config 内的子列表（如 preset 行 `config.plugins`）**不可被外层 patch 按 id 直击**——覆盖 preset 参数必须以包内 cordis.patch.yml 为底稿**整段重述**该行 config，否则 agent-preset 必填 `id` 被顶掉即 `$.id missing required value` 整行失败。桌面 profile（Electron 独占）诊断走宿主内 plugin_manager list_plugins（fiberPhase/diagnostic），CLI `--dump-config` 会被拒。
 
 ## 当前状态
