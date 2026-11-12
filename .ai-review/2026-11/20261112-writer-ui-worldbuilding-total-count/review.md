@@ -4,7 +4,7 @@ title: 'writer-ui: 世界观超读取上限时概况统计格显示已读数（�
 module: writer-ui
 audit_type: bugfix
 created_at: '2026-11-12T10:39:00+08:00'
-updated_at: '2026-11-12T10:39:00+08:00'
+updated_at: '2026-11-12T07:06:21.533Z'
 owner: cxs
 tags:
   - ui
@@ -12,7 +12,7 @@ tags:
   - worldbuilding
   - stats
 ticket: null
-status: pending
+status: approved
 target_files:
   - packages/writer-ui/src/client/load.ts
   - packages/writer-ui/src/client/project.ts
@@ -29,7 +29,21 @@ gate_checks:
   - npm test
 comments: []
 human_decisions: []
-approval: null
+approval:
+  approved_by: cxs
+  approved_at: '2026-11-12T07:06:21.533Z'
+  gate_checks:
+    - npm run typecheck
+    - npm test
+  gate_results:
+    - command: npm run typecheck
+      exit_code: 0
+      duration_ms: 12363
+    - command: npm test
+      exit_code: 0
+      duration_ms: 15323
+  confirmed_decisions: []
+  waived_decisions: []
 rejection: null
 commit_message: 'writer-ui: 世界观超读取上限时概况统计格显示已读数（≤24）而非总数'
 ---
@@ -66,3 +80,22 @@ typecheck 0 错；全量 288/288；补丁在基线 worktree 干净应用。
 待审核
 ### 意见处理结果
 无
+
+## 版本 1 (base: 4af40f30d74d7366de0aceb9633e22925481bba0)
+
+### 验证结果
+
+<!-- ai-review:validation -->
+### 门禁执行结果
+
+- 工作目录: F:\workspace_2\writer-in-dsh · 基线: fde010ac4eaf289ae8429f7bdf9935eca875fa85 · 平台: win32 / node v24.21.0 · 执行时间: 2026-11-12T07:06:18.007Z
+
+| 结果 | 命令 | 退出码 | 耗时 |
+| --- | --- | --- | --- |
+| 通过 | `npm run typecheck` | 0 | 12.4s |
+| 通过 | `npm test` | 0 | 15.3s |
+<!-- /ai-review:validation -->
+
+### 人类总体意见
+
+批准（cxs）

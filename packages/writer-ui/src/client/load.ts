@@ -209,15 +209,22 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     }
   }
   let worldbuildingTruncated = 0
+  // worldbuilding 总数（概况统计格数据源）：读取上限只限制条目读取，统计必须是全量数
+  let worldbuildingTotal = 0
   for (const dirName of ['plots', 'characters', 'style', 'worldbuilding']) {
     const entries = await listDir(sessionId, join(root, dirName), signal)
     if (entries !== null) {
       const names = mdFiles(entries).map(e => e.name)
       // worldbuilding 读取上限保险丝（v8 审查 ④）：冷扫描无条件读全文，超长项目防读放大；
       // 溢出部分不读（截断数随扫描返回，设定页如实披露）；其余目录无此面（量级天然有限）
-      const capped = dirName === 'worldbuilding' ? names.slice(0, WORLDBUILDING_MAX) : names
-      if (dirName === 'worldbuilding') worldbuildingTruncated = names.length - capped.length
-      for (const name of capped) tasks.push({ dir: join(root, dirName), name })
+      if (dirName === 'worldbuilding') {
+        worldbuildingTotal = names.length
+        const capped = names.slice(0, WORLDBUILDING_MAX)
+        worldbuildingTruncated = names.length - capped.length
+        for (const name of capped) tasks.push({ dir: join(root, dirName), name })
+        continue
+      }
+      for (const name of names) tasks.push({ dir: join(root, dirName), name })
     }
   }
   // 单文件实体与项目文件（根目录命中才读）。pending-archive.md 在项目根（轮次 42：归档是
@@ -292,8 +299,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     } else singletons.set(task.key ?? task.name, parsed)
   }
 
-  // worldbuilding：全文读取（设定页卡片数据源；文件级失败进 failedFiles 不炸扫描）
-  const worldbuildingNames = worldbuilding.map(e => String(e.name))
+  // worldbuilding：全文读取（设定页卡片数据源；文件级失败进 failedFiles 不炸扫描；总数见 worldbuildingTotal）
 
   // 大纲/项目/待办/归档
   const outline = singletons.get('outline.md') ?? null
@@ -332,7 +338,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
 
   const singleton = (name: string) => singletons.get(name)
   return {
-    root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingNames.length, pending,
+    root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingTotal, pending,
     ...(singleton('principles.md') !== undefined ? { principles: singleton('principles.md')! } : {}),
     ...(singleton('events.md') !== undefined ? { events: singleton('events.md')! } : {}),
     ...(singleton('ideas.md') !== undefined ? { ideas: singleton('ideas.md')! } : {}),

@@ -17,6 +17,19 @@ const baseScan: NovelScan = {
   pending: [],
 }
 
+test('概况统计格 worldbuildingCount 直通扫描总数（截断只影响卡片条数）', () => {
+  const entries = Array.from({ length: 3 }, (_, i) => ({ name: `w${i}.md`, frontmatter: {}, content: `# 条目${i}\n\n正文` }))
+  const overview = buildOverview({
+    ...baseScan,
+    worldbuildingCount: 25,
+    worldbuilding: entries,
+    worldbuildingTruncated: 22,
+  })
+  assert.equal(overview.worldbuildingCount, 25, '统计格 = 总数（修复前取已读取条数 3）')
+  assert.equal(overview.worldRows.length, 3, '卡片仍只含已读取条目')
+  assert.equal(overview.worldbuildingTruncated, 22, '截断披露透传')
+})
+
 test('伏笔三色与风险排序：超期红 > 活跃黄 > 未种植灰 > 已收束；近的先看', () => {
   const overview = buildOverview({
     ...baseScan,

@@ -5,7 +5,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mapPool, scanNovel, setBrowserContext, watchProject } from '../src/client/load.ts'
+import { mapPool, scanNovel, setBrowserContext, watchProject, WORLDBUILDING_MAX } from '../src/client/load.ts'
 import { publishScan, readBus, resetBus } from '../src/client/bus.ts'
 
 /** 可控 changes 流：外部 push 帧 / 结束 / 抛错。 */
@@ -199,6 +199,24 @@ test('scanNovel（轮次 42）：归档双来源——根下 pending-archive.md 
   const legacyOnly = await scanNovel('s1', new AbortController().signal)
   assert.equal(legacyOnly.pendingArchive?.length, 1, '仅旧布局时兜底节可见')
   assert.ok(legacyOnly.pendingArchive?.[0]?.heading.includes('001'))
+  setBrowserContext(null)
+})
+
+test('scanNovel：worldbuilding 超读取上限——总数与截断数如实返回（统计格用总数而非已读数）', async () => {
+  const fs = minimalProject()
+  const wbEntries: unknown[] = []
+  for (let i = 1; i <= WORLDBUILDING_MAX + 1; i++) {
+    const name = `entry-${String(i).padStart(2, '0')}.md`
+    wbEntries.push({ name, type: 'file' })
+    fs.set(`novel/worldbuilding/${name}`, `---\n---\n设定条目 ${i}\n`)
+  }
+  fs.set('novel/worldbuilding', wbEntries)
+  setBrowserContext({ remote: mockRemote(fs) as never })
+  // 修复前：worldbuildingCount 取已读取记录数（≤上限），概况统计格把 25 条项目显示成 24
+  const scan = await scanNovel('s1', new AbortController().signal)
+  assert.equal(scan.worldbuildingCount, WORLDBUILDING_MAX + 1, '总数（非已读取条数）')
+  assert.equal(scan.worldbuilding?.length, WORLDBUILDING_MAX, '读取上限仍生效（防读放大）')
+  assert.equal(scan.worldbuildingTruncated, 1, '截断数如实披露')
   setBrowserContext(null)
 })
 
