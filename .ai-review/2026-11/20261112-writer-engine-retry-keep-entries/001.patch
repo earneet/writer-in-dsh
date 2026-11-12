@@ -1,0 +1,66 @@
+diff --git a/packages/writer-engine/src/index.ts b/packages/writer-engine/src/index.ts
+index 92961f3..db2b108 100644
+--- a/packages/writer-engine/src/index.ts
++++ b/packages/writer-engine/src/index.ts
+@@ -219,9 +219,11 @@ export default class WriterEngineServiceImpl extends EngineService {
+       }
+       const validations = validateExtractionSections(parsed, refs)
+       for (const section of retrySections) {
+-        if (section === 'facts') extraction.facts = validations.facts.entries
+-        else if (section === 'foreshadowEvents') extraction.foreshadowEvents = validations.foreshadowEvents.entries
+-        else extraction.characterStates = validations.characterStates.entries
++        // 缺节守卫：重试输出未回发该节（模型只回其他节/漏回）时不得覆盖——
++        // validateExtractionSections 对缺席节收敛为空数组，直接赋值会静默清空上一轮已通过条目
++        if (section === 'facts' && parsed.facts !== undefined) extraction.facts = validations.facts.entries
++        else if (section === 'foreshadowEvents' && parsed.foreshadowEvents !== undefined) extraction.foreshadowEvents = validations.foreshadowEvents.entries
++        else if (section === 'characterStates' && parsed.characterStates !== undefined) extraction.characterStates = validations.characterStates.entries
+       }
+       const retry = planSectionRetry(validations)
+       if (retry.sections.length === 0) {
+diff --git a/packages/writer-engine/src/prompts.ts b/packages/writer-engine/src/prompts.ts
+index ba4661e..91d48f5 100644
+--- a/packages/writer-engine/src/prompts.ts
++++ b/packages/writer-engine/src/prompts.ts
+@@ -149,7 +149,7 @@ export function buildExtractionUserPrompt(
+   )
+   if (retryFeedback !== undefined && retryFeedback.length > 0) {
+     const sectionNote = retrySections !== undefined && retryFeedback.length > 0
+-      ? `本次只需重新输出以下节（JSON 对象可只含这些节，已通过的节无需重发）：${retrySections.join('、')}。`
++      ? `本次只需重新输出以下节（JSON 对象可只含这些节；未列出的节无需重发）：${retrySections.join('、')}。重发的节请给出该节全部条目（含上一轮已通过的条目），不要只回修正项。`
+       : ''
+     parts.push(`## 上次输出被拒收的原因（请修正后重新输出）\n${retryFeedback.map((f) => `- ${f}`).join('\n')}\n${sectionNote}`)
+   }
+diff --git a/packages/writer-engine/tests/p3-integration.test.ts b/packages/writer-engine/tests/p3-integration.test.ts
+index 3f0894b..74e241c 100644
+--- a/packages/writer-engine/tests/p3-integration.test.ts
++++ b/packages/writer-engine/tests/p3-integration.test.ts
+@@ -131,6 +131,29 @@ test('maintenancePass 按节重试：重试只回修正节，已通过节不被
+   }
+ })
+ 
++test('maintenancePass 按节重试：重试输出漏回被重试节时，已通过条目不清空（缺节守卫）', async () => {
++  const setup = await makeSetup()
++  try {
++    await seedChapter(setup, '001', '正文。')
++    await seedRefs(setup)
++    setup.llm.reply(
++      '摘要。',
++      // 首轮：facts 一好一坏（坏条目引用不存在的伏笔）→ facts 进重试
++      JSON.stringify({ facts: [{ description: '既定事实', plots: ['green-flame'] }, { description: '坏条目', plots: ['ghost'] }], foreshadowEvents: [], characterStates: [] }),
++      // 重试：模型漏回 facts 节，只发了不相关的空节（合理漂移行为）
++      JSON.stringify({ foreshadowEvents: [] }),
++    )
++    const done = await setup.engine.maintenancePass('001')
++    assert.equal(done.status, 'done')
++    // 修复前：缺席节被 validateExtractionSections 收敛为空数组整体覆盖——既定事实静默丢失且无告警
++    assert.deepEqual(done.extraction!.facts, [{ description: '既定事实', plots: ['green-flame'] }], '漏回的节保留上一轮已通过条目')
++    const derived = await setup.store.readMaintenance('001')
++    assert.deepEqual(derived!.extraction.facts.map((f) => f.description), ['既定事实'], '派生记录同样不清空')
++  } finally {
++    await rm(setup.root, { recursive: true, force: true })
++  }
++})
++
+ test('maintenancePass 重试耗尽：partial 标记 + 拒收原因入派生与 pending', async () => {
+   const setup = await makeSetup()
+   try {
