@@ -357,8 +357,13 @@ export function apply(ctx: Context): void {
       }
       await execFileAsync('git', ['add', '-A'], { cwd: root })
       // 派生缓存与导出产物不入存档（.writer/derived 可弃、exports 含整本 epub 会让仓库快速膨胀）；
-      // 未 gitignore 的项目由这里显式取消暂存，已 gitignore 的项目该命令是空操作
-      await execFileAsync('git', ['reset', '--', '.writer', 'exports'], { cwd: root }).catch(() => {})
+      // 未 gitignore 的项目由这里显式取消暂存，已 gitignore 的项目该命令是空操作。
+      // `git reset -- <paths>` 隐式依赖 HEAD 存在：零提交仓库（git init 后未 commit）会
+      // "Failed to resolve 'HEAD'" 被 .catch 吞掉——回退 `git rm --cached`（纯索引操作，
+      // 不需要 HEAD）兜底，否则首个存档点会把 exports 整本 epub 与派生缓存一起提交
+      await execFileAsync('git', ['reset', '--', '.writer', 'exports'], { cwd: root }).catch(() =>
+        execFileAsync('git', ['rm', '--cached', '-r', '--ignore-unmatch', '--', '.writer', 'exports'], { cwd: root }).catch(() => {}),
+      )
       // 无变更预检：git commit 在工作区干净时以非零退出且提示走 stdout——预检避免把正常空存档当错误
       const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: root })
       if (status.stdout.trim().length === 0) {

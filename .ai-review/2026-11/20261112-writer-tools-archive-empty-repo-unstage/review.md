@@ -4,7 +4,7 @@ title: 'writer-tools: archive_point 在零提交仓库首存档时排除命令�
 module: writer-tools
 audit_type: bugfix
 created_at: '2026-11-12T10:36:00+08:00'
-updated_at: '2026-11-12T10:36:00+08:00'
+updated_at: '2026-11-12T07:08:15.796Z'
 owner: cxs
 tags:
   - tools
@@ -12,7 +12,7 @@ tags:
   - git
   - error-handling
 ticket: null
-status: pending
+status: approved
 target_files:
   - packages/writer-tools/src/index.ts
   - packages/writer-tools/tests/tools.test.ts
@@ -27,7 +27,21 @@ gate_checks:
   - npm test
 comments: []
 human_decisions: []
-approval: null
+approval:
+  approved_by: cxs
+  approved_at: '2026-11-12T07:08:15.795Z'
+  gate_checks:
+    - npm run typecheck
+    - npm test
+  gate_results:
+    - command: npm run typecheck
+      exit_code: 0
+      duration_ms: 12200
+    - command: npm test
+      exit_code: 0
+      duration_ms: 15578
+  confirmed_decisions: []
+  waived_decisions: []
 rejection: null
 commit_message: 'writer-tools: archive_point 在零提交仓库首存档时排除命令静默失败——exports 与 .writer 全部入库'
 ---
@@ -64,3 +78,22 @@ typecheck 0 错；全量 287/287；补丁在基线 worktree 干净应用。
 待审核
 ### 意见处理结果
 无
+
+## 版本 1 (base: 18c7dd3e09e93193de56de72692aef552ef8a2d9)
+
+### 验证结果
+
+<!-- ai-review:validation -->
+### 门禁执行结果
+
+- 工作目录: F:\workspace_2\writer-in-dsh · 基线: 564370a09bf3812af399062774946d5f41dde910 · 平台: win32 / node v24.21.0 · 执行时间: 2026-11-12T07:08:12.208Z
+
+| 结果 | 命令 | 退出码 | 耗时 |
+| --- | --- | --- | --- |
+| 通过 | `npm run typecheck` | 0 | 12.2s |
+| 通过 | `npm test` | 0 | 15.6s |
+<!-- /ai-review:validation -->
+
+### 人类总体意见
+
+批准（cxs）

@@ -9,6 +9,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/index.ts'
 
@@ -168,6 +170,33 @@ test('archive_point：非 git 目录返回指引（不抛错）', async () => {
     const out = await tools.get('archive_point')!.execute({}, exec)
     // 两种排障文案都合法：本机无 git 或目录非 git 仓库
     assert.ok(/git 不可用|不是 git 仓库/.test(out), `实际输出：${out}`)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('archive_point：零提交仓库（无 HEAD）首存档不把 .writer/exports 带入提交', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'writer-tools-git-'))
+  const run = promisify(execFile)
+  try {
+    await run('git', ['init'], { cwd: root })
+    await run('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+    await run('git', ['config', 'user.name', 'test'], { cwd: root })
+    await mkdir(join(root, 'chapters'), { recursive: true })
+    await writeFile(join(root, 'chapters/001.md'), '正文。', 'utf8')
+    await mkdir(join(root, 'exports'), { recursive: true })
+    await writeFile(join(root, 'exports/book.epub'), '伪 epub 字节', 'utf8')
+    await mkdir(join(root, '.writer/derived'), { recursive: true })
+    await writeFile(join(root, '.writer/derived/x.json'), '{}', 'utf8')
+    const { tools } = makeCtx({ list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应到达') }, root })
+    const out = await tools.get('archive_point')!.execute({}, exec)
+    assert.match(out, /已创建存档点/, `实际输出：${out}`)
+    // 修复前：`git reset -- .writer exports` 在无 HEAD 仓库报 fatal 被 .catch 吞掉，
+    // 首个提交把 exports/book.epub 与 .writer/derived 一起带入
+    const { stdout: tree } = await run('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: root })
+    assert.ok(!tree.includes('exports/'), `提交树不得含 exports/，实际：${tree}`)
+    assert.ok(!tree.includes('.writer/'), `提交树不得含 .writer/，实际：${tree}`)
+    assert.ok(tree.includes('chapters/001.md'), '正文照常入存档')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
