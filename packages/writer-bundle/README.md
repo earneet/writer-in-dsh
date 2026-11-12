@@ -13,7 +13,7 @@ dsh plugin --profile <name> add "@deepseek-ai/dsh-headless@0.2.2-rc.1"   # 或 d
 
 ## 启动
 
-从含 `novel/` 子目录的项目目录启动 dsh（创作与工作文件全部收在 `novel/`：`principles.md` / `outline.md` / `chapters/` 等）——projectRoot 默认取启动目录的 `novel/` 子目录，可用配置显式覆盖。
+从含 `novel/` 子目录的项目目录启动 dsh（创作与工作文件全部收在 `novel/`：`principles.md` / `outline.md` / `chapters/` 等）——projectRoot 默认取启动目录的 `novel/` 子目录；更高层（profile/home/overlay）patch 以 `- id: writer-store` + 完整 config 覆写即可改指（loader 方言：id 命中行的 config 整体替换，不深合并）。
 
 ## 许可
 

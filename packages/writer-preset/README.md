@@ -25,7 +25,8 @@
 
 ```sh
 # 在小说项目目录（含 novel/ 子目录）启动 dsh web（projectRoot 默认取宿主启动目录的 novel/，
-# 与 dsh-writer-bundle 同口径；Web 多工作区部署须从含 novel/ 的目录启动宿主或显式覆盖 projectRoot）
+# 与 dsh-writer-bundle 同口径；Web 多工作区部署须从含 novel/ 的目录启动宿主，
+# 或按「已知限制」的整段重述口径覆盖 projectRoot）
 dsh plugin add dsh-writer-preset        # 或本地路径 link: 安装
 dsh web
 # 新建会话 → 模式选择「写作模式」
@@ -42,7 +43,11 @@ preset 不生效——headless 请用 dsh-writer-bundle 全局挂载）。
 
 ## 已知限制
 
-- 引擎默认路由 deepseek-official/deepseek-chat，可在 profile patch 或 Web 预设编辑器覆盖。
+- 引擎默认路由 deepseek-official/deepseek-chat、projectRoot 等部署参数可在更高层（profile/home/overlay
+  patch）覆盖，但 loader 方言对 id 命中的行做**字段整体替换**（config 不深合并），且 preset 行
+  `config.plugins` 里的子行不可被外层 patch 按 id 直击——覆盖时必须以本包 `cordis.patch.yml` 为底稿
+  **整段重述 preset-writer 行的 config**（只写想改的字段会把 `id` 等必填项顶掉，preset 整行装载失败，
+  宿主报 `invalid config: $.id missing required value`，轮次 39 实证并修复）。
 - preset 声明的 `name/description` 为中文原样展示（用户自建预设保留自身元数据，不随界面语言本地化）。
 - 本包不携带 writer-bundle；两者同时安装时 preset 会话会在全局 writer 行之外再组合一组同 id 的
   writer 行（服务重复注册），未在此组合下验证——请按需二选一安装。

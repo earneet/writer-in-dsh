@@ -69,6 +69,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - **临时插件位置**：overlay 里挂载的临时 .ts 插件文件**必须放在有 package.json 的包目录内**（如 packages/ 下）；放仓库根目录会导致首次模型调用 REQUEST_EXTENSION 失败（插件清单解析需要包身份）。
 - **projectRoot**：writer-bundle/writer-preset 默认 `<启动目录>/novel/`（轮次 18 布局：创作与工作文件全收 novel/ 子目录），验证时从含 novel/ 的目录启动 dsh 或显式覆盖 projectRoot；writer.yaml 已废除（project → novel/project.md 可写实体）。
 - **构建先行（P6 起）**：包产物在 `lib/`（.gitignore），`npm test`/`npm run typecheck` 已自动串 build；overlay/profile 形态下修改 domain/core 等**被裸导入包**的源码后须 `npm run build` 才生效（overlay 入口指 src，但 src 内包间裸导入经 main 解析到 lib）。
+- **patch 覆盖方言（轮次 39 实证）**：`cordis.patch.yml` 对 id 命中行做**整字段替换**（config 不深合并）；非 group 行 config 内的子列表（如 preset 行 `config.plugins`）**不可被外层 patch 按 id 直击**——覆盖 preset 参数必须以包内 cordis.patch.yml 为底稿**整段重述**该行 config，否则 agent-preset 必填 `id` 被顶掉即 `$.id missing required value` 整行失败。桌面 profile（Electron 独占）诊断走宿主内 plugin_manager list_plugins（fiberPhase/diagnostic），CLI `--dump-config` 会被拒。
 
 ## 当前状态
 
@@ -95,7 +96,8 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 34（收敛验证轮）：两路子代理复审轮次 33 全部改动——代码线无新问题（八项修复逐项核对正确）；文档线仅 2 项 P3 同文件注释漏改（preset patch 内联注释、ui apply() doc），当场修复后复测 272/272。审计循环收敛收口；收尾将两条留档观察升级实施（告警行有界摘要 + 重复章号告警，computeSpineWarnings 纯函数 + 测试），273/273（详见 implementation-plan §8 轮次 34）。
 - 轮次 35-37（桌面适配 + UI 演进）：宿主钉版升 0.2.2-rc.1 适配桌面 profile；UI v7/v8 视觉重设计；「写作面板」入口从侧边栏迁至会话视图标签页（详见 implementation-plan §8 轮次 35/36/37）。
 - 轮次 38（架构评审修复）：依据 `docs/architecture-review.md`（4 P0 / 4 P1 / 12 P2）修复——①rag 测试 flake 根因（rankByEmbeddings 查询向量先行，错误优先序确定化，12 跑 5 败→0 败）；②pending.md 跨实例静默丢数据（写串行链提为 module 级按 projectRoot 共享 + 唯一 tmp 名，40 写落 40 节）；③maintenancePass TOCTOU 旧版待办混入（判据紧贴落盘 + 补跑轮不写 pending）；④WriterService 存储细节泄漏第一步（readMaintenance/writeMaintenance/deleteMaintenance 业务方法，'maintenance' 字面量收敛 store 一处）；⑤RAG 语义档降级可见披露（searchDetailed + degraded 标志，semanticCandidates=0 显式关闭）；⑥rag llm 档构造期校验宿主 llm 在场；⑦preset isolate 域契约测试；⑧projectRoot 相对路径构造期响亮失败；⑨纯净 lockfile（npm ci 全量可复现）+ GitHub Actions CI（测试×3）。285/285 全过（详见 implementation-plan §8 轮次 38）。
-- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 38 后单测 285/285（含 flake 重复运行验证）。
+- 轮次 39（桌面 preset 装载失败修复）：用户报「安装后 invalid config: $.id missing required value」——desktop profile 对 preset-writer 行做了部分 config 覆写，而 loader 方言是 id 命中行整字段替换（config 不深合并；preset 行 config.plugins 子行不可被外层 patch 按 id 直击），id 等必填字段被顶掉致整行 failed。修复：profile patch 以包内 cordis.patch.yml 为底稿整段重述 preset config（HMR 热生效转 active）；仓库侧 preset/bundle 覆盖指引勘误 + preset 契约测试补 config 完整性守卫（详见 implementation-plan §8 轮次 39）。
+- 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 39 后单测 286/286（含 flake 重复运行验证）。
 - 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/21/27/28/29/30/31/32/33 及 roadmap §7 留痕项。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。
