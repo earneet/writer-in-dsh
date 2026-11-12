@@ -1,0 +1,125 @@
+diff --git a/packages/writer-ui/src/client/load.ts b/packages/writer-ui/src/client/load.ts
+index b551bbf..397e574 100644
+--- a/packages/writer-ui/src/client/load.ts
++++ b/packages/writer-ui/src/client/load.ts
+@@ -209,15 +209,22 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
+     }
+   }
+   let worldbuildingTruncated = 0
++  // worldbuilding 总数（概况统计格数据源）：读取上限只限制条目读取，统计必须是全量数
++  let worldbuildingTotal = 0
+   for (const dirName of ['plots', 'characters', 'style', 'worldbuilding']) {
+     const entries = await listDir(sessionId, join(root, dirName), signal)
+     if (entries !== null) {
+       const names = mdFiles(entries).map(e => e.name)
+       // worldbuilding 读取上限保险丝（v8 审查 ④）：冷扫描无条件读全文，超长项目防读放大；
+       // 溢出部分不读（截断数随扫描返回，设定页如实披露）；其余目录无此面（量级天然有限）
+-      const capped = dirName === 'worldbuilding' ? names.slice(0, WORLDBUILDING_MAX) : names
+-      if (dirName === 'worldbuilding') worldbuildingTruncated = names.length - capped.length
+-      for (const name of capped) tasks.push({ dir: join(root, dirName), name })
++      if (dirName === 'worldbuilding') {
++        worldbuildingTotal = names.length
++        const capped = names.slice(0, WORLDBUILDING_MAX)
++        worldbuildingTruncated = names.length - capped.length
++        for (const name of capped) tasks.push({ dir: join(root, dirName), name })
++        continue
++      }
++      for (const name of names) tasks.push({ dir: join(root, dirName), name })
+     }
+   }
+   // 单文件实体与项目文件（根目录命中才读）。pending-archive.md 在项目根（轮次 42：归档是
+@@ -292,8 +299,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
+     } else singletons.set(task.key ?? task.name, parsed)
+   }
+ 
+-  // worldbuilding：全文读取（设定页卡片数据源；文件级失败进 failedFiles 不炸扫描）
+-  const worldbuildingNames = worldbuilding.map(e => String(e.name))
++  // worldbuilding：全文读取（设定页卡片数据源；文件级失败进 failedFiles 不炸扫描；总数见 worldbuildingTotal）
+ 
+   // 大纲/项目/待办/归档
+   const outline = singletons.get('outline.md') ?? null
+@@ -332,7 +338,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
+ 
+   const singleton = (name: string) => singletons.get(name)
+   return {
+-    root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingNames.length, pending,
++    root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingTotal, pending,
+     ...(singleton('principles.md') !== undefined ? { principles: singleton('principles.md')! } : {}),
+     ...(singleton('events.md') !== undefined ? { events: singleton('events.md')! } : {}),
+     ...(singleton('ideas.md') !== undefined ? { ideas: singleton('ideas.md')! } : {}),
+diff --git a/packages/writer-ui/src/client/project.ts b/packages/writer-ui/src/client/project.ts
+index 3926840..f9377f9 100644
+--- a/packages/writer-ui/src/client/project.ts
++++ b/packages/writer-ui/src/client/project.ts
+@@ -251,7 +251,8 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
+     chapterRows,
+     plotRows,
+     characterRows,
+-    worldbuildingCount: graph.worldEntries.length,
++    // 统计格用扫描总数：读取上限（WORLDBUILDING_MAX）只限制卡片条数，概况数字不得随截断缩水
++    worldbuildingCount: scan.worldbuildingCount,
+     pendingSections: pending,
+     pendingLineTotal: pending.reduce((sum, section) => sum + section.lines.length, 0),
+     riskSummary,
+diff --git a/packages/writer-ui/tests/project.test.ts b/packages/writer-ui/tests/project.test.ts
+index f4286a4..0d01a24 100644
+--- a/packages/writer-ui/tests/project.test.ts
++++ b/packages/writer-ui/tests/project.test.ts
+@@ -17,6 +17,19 @@ const baseScan: NovelScan = {
+   pending: [],
+ }
+ 
++test('概况统计格 worldbuildingCount 直通扫描总数（截断只影响卡片条数）', () => {
++  const entries = Array.from({ length: 3 }, (_, i) => ({ name: `w${i}.md`, frontmatter: {}, content: `# 条目${i}\n\n正文` }))
++  const overview = buildOverview({
++    ...baseScan,
++    worldbuildingCount: 25,
++    worldbuilding: entries,
++    worldbuildingTruncated: 22,
++  })
++  assert.equal(overview.worldbuildingCount, 25, '统计格 = 总数（修复前取已读取条数 3）')
++  assert.equal(overview.worldRows.length, 3, '卡片仍只含已读取条目')
++  assert.equal(overview.worldbuildingTruncated, 22, '截断披露透传')
++})
++
+ test('伏笔三色与风险排序：超期红 > 活跃黄 > 未种植灰 > 已收束；近的先看', () => {
+   const overview = buildOverview({
+     ...baseScan,
+diff --git a/packages/writer-ui/tests/watch.test.ts b/packages/writer-ui/tests/watch.test.ts
+index f6e1afd..0a5960f 100644
+--- a/packages/writer-ui/tests/watch.test.ts
++++ b/packages/writer-ui/tests/watch.test.ts
+@@ -5,7 +5,7 @@
+  */
+ import test from 'node:test'
+ import assert from 'node:assert/strict'
+-import { mapPool, scanNovel, setBrowserContext, watchProject } from '../src/client/load.ts'
++import { mapPool, scanNovel, setBrowserContext, watchProject, WORLDBUILDING_MAX } from '../src/client/load.ts'
+ import { publishScan, readBus, resetBus } from '../src/client/bus.ts'
+ 
+ /** 可控 changes 流：外部 push 帧 / 结束 / 抛错。 */
+@@ -202,6 +202,24 @@ test('scanNovel（轮次 42）：归档双来源——根下 pending-archive.md
+   setBrowserContext(null)
+ })
+ 
++test('scanNovel：worldbuilding 超读取上限——总数与截断数如实返回（统计格用总数而非已读数）', async () => {
++  const fs = minimalProject()
++  const wbEntries: unknown[] = []
++  for (let i = 1; i <= WORLDBUILDING_MAX + 1; i++) {
++    const name = `entry-${String(i).padStart(2, '0')}.md`
++    wbEntries.push({ name, type: 'file' })
++    fs.set(`novel/worldbuilding/${name}`, `---\n---\n设定条目 ${i}\n`)
++  }
++  fs.set('novel/worldbuilding', wbEntries)
++  setBrowserContext({ remote: mockRemote(fs) as never })
++  // 修复前：worldbuildingCount 取已读取记录数（≤上限），概况统计格把 25 条项目显示成 24
++  const scan = await scanNovel('s1', new AbortController().signal)
++  assert.equal(scan.worldbuildingCount, WORLDBUILDING_MAX + 1, '总数（非已读取条数）')
++  assert.equal(scan.worldbuilding?.length, WORLDBUILDING_MAX, '读取上限仍生效（防读放大）')
++  assert.equal(scan.worldbuildingTruncated, 1, '截断数如实披露')
++  setBrowserContext(null)
++})
++
+ test('环路（函数级接线）：工具落盘→变更帧→重扫→总线新值（实体变更达页签）', async () => {
+   resetBus()
+   const fs = minimalProject()
