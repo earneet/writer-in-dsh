@@ -4,7 +4,7 @@ title: 'writer-core: 删除 deprecated 的 readDerived/writeDerived/deleteDerive
 module: writer-core
 audit_type: shrink
 created_at: '2026-11-12T10:36:30+08:00'
-updated_at: '2026-11-13T04:31:07.348Z'
+updated_at: '2026-11-13T08:40:37.894Z'
 owner: cxs
 tags:
   - core
@@ -38,6 +38,14 @@ comments:
     content: 确认一下，这确实是过时代码吗？
     status: unresolved
     created_at: '2026-11-13T04:31:07.348Z'
+  - id: cmweq8hzalgf3
+    revision: 1
+    file: ''
+    line: 0
+    author: cxs
+    content: 执行
+    status: unresolved
+    created_at: '2026-11-13T08:40:37.894Z'
 human_decisions: []
 approval: null
 rejection: null
