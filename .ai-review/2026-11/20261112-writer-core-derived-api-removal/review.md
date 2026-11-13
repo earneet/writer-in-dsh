@@ -4,7 +4,7 @@ title: 'writer-core: 删除 deprecated 的 readDerived/writeDerived/deleteDerive
 module: writer-core
 audit_type: shrink
 created_at: '2026-11-12T10:36:30+08:00'
-updated_at: '2026-11-12T10:36:30+08:00'
+updated_at: '2026-11-13T04:31:07.348Z'
 owner: cxs
 tags:
   - core
@@ -12,7 +12,7 @@ tags:
   - api-cleanup
   - deprecated-removal
 ticket: null
-status: pending
+status: changes_requested
 target_files:
   - packages/writer-core/src/index.ts
   - packages/writer-engine/tests/p3-integration.test.ts
@@ -29,7 +29,15 @@ revisions:
 gate_checks:
   - npm run typecheck
   - npm test
-comments: []
+comments:
+  - id: cmwehbmmsmprd
+    revision: 1
+    file: ''
+    line: 0
+    author: cxs
+    content: 确认一下，这确实是过时代码吗？
+    status: unresolved
+    created_at: '2026-11-13T04:31:07.348Z'
 human_decisions: []
 approval: null
 rejection: null
