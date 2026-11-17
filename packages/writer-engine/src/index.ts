@@ -270,7 +270,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       ...(rejected !== undefined ? { partial: true, rejected } : {}),
       ...(changedDuringRun ? { superseded: true } : {}),
     }
-    this.ctx.emit('writer/maintenance-pass', result)
+    this.ctx.emit(this, 'writer/maintenance-pass', result)
     return result
   }
 
@@ -293,17 +293,33 @@ export default class WriterEngineServiceImpl extends EngineService {
       if (scope?.to !== undefined && c.id > scope.to) return false
       return true
     })
-    if (inScope.length === 0) throw new Error('范围内没有已写章节，无法执行一致性检查')
-    // 基准材料：principles 全量 + 大纲（预算内截断保头）+ 伏笔/事件摘要（码点安全截断）
+        const settingsOnly = chapters.length === 0 && scope?.from === undefined && scope?.to === undefined && worldbuilding.length > 0
+        if (inScope.length === 0 && !settingsOnly) throw new Error('范围内没有已写章节，无法执行一致性检查')
     const brief = (entities: readonly WriterEntity[], max: number): string =>
       entities.map((e) => `- ${e.id}（${String(e.frontmatter['status'] ?? '')}）：${truncateCodePoints(e.content.replace(/\s+/g, ' ').trim(), max)}`).join('\n')
-    const baselineChars = Math.floor(this.genParams.contextBudgetChars / 2)
-    const baseline = {
-      principles: principles?.content,
-      outline: outline !== undefined ? truncateCodePoints(outline.content, baselineChars) : undefined,
-      plotsBrief: plots.length > 0 ? brief(plots, 120) : undefined,
-      eventsBrief: events !== undefined ? truncateCodePoints(events.content, Math.floor(baselineChars / 2)) : undefined,
-    }
+        const baseline: Parameters<typeof buildConsistencyUserPrompt>[0] = { principles: principles?.content }
+        const materials = ([
+            ['outline', '大纲', outline?.content ?? ''],
+            ['plotsBrief', '伏笔档案', brief(plots, 120)],
+            ['eventsBrief', '关键事件', events?.content ?? ''],
+            ['charactersBrief', '人物设定与状态时间线', characters.map(character =>
+                `### character/${character.id}\n${character.content}\ntimeline: ${String(character.frontmatter['timeline'] ?? '（未提供）')}`).join('\n\n')],
+            ['worldbuildingBrief', '世界观', worldbuilding.map(item => `### worldbuilding/${item.id}\n${item.content}`).join('\n\n')],
+        ] as const).filter(([, , body]) => body.trim().length > 0)
+        let remainingBaseline = Math.max(0, Math.floor(this.genParams.contextBudgetChars / 2) - (principles?.content.length ?? 0))
+        const truncatedBaseline: string[] = []
+        for (const [index, [key, label, body]] of materials.entries()) {
+            const cap = Math.floor(remainingBaseline / (materials.length - index))
+            const points = Array.from(body)
+            const truncated = points.length > cap
+            const text = truncated ? (cap > 0 ? `${points.slice(0, cap - 1).join('')}…` : '') : body
+            baseline[key] = text
+            remainingBaseline -= Array.from(text).length
+            if (truncated) truncatedBaseline.push(label)
+        }
+        if (truncatedBaseline.length > 0) {
+            baseline.coverageNotice = `基准材料因预算截断：${truncatedBaseline.join('、')}；未提供部分不在检查覆盖内。`
+        }
     const baselineUsed = Object.values(baseline).reduce((sum, s) => sum + (s?.length ?? 0), 0)
     const batchBudget = Math.max(1000, this.genParams.contextBudgetChars - baselineUsed)
     // 分批输入：派生摘要新鲜（sourceHash 锚定）则用摘要，否则用正文
@@ -312,7 +328,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       const fresh = derived !== undefined && derived.sourceHash === chapter.hash
       return { id: chapter.id, content: chapter.content, summary: fresh === true ? derived.summary : undefined }
     }))
-    const batches = planConsistencyBatches(inputs, batchBudget)
+        const batches: ConsistencyReport['batches'] = settingsOnly ? [{ chapters: [], truncated: false }] : planConsistencyBatches(inputs, batchBudget)
     // 引用存在性集合：裸 id 与 kind/id 两种形态都认；基准材料与全部实体 kind 一并纳入。
     // 章节引用取全集而非 in-scope：带 scope 检查时模型引用更早章作证据是正常形态，
     // 只认 in-scope 会把合法越界引用当幻觉静默丢弃。
@@ -328,12 +344,14 @@ export default class WriterEngineServiceImpl extends EngineService {
     let truncatedChapterCount = 0
     for (const batch of batches) {
       signal?.throwIfAborted()
+            const batchLabel = batch.chapters.length > 0 ? `${batch.chapters[0]}-${batch.chapters[batch.chapters.length - 1]}` : '世界观设定'
       const batchChapters = batch.chapters.map((id) => {
         const chapter = inScope.find((c) => c.id === id)!
         const input = inputs.find((i) => i.id === id)!
         const title = typeof chapter.frontmatter['title'] === 'string' ? chapter.frontmatter['title'] : undefined
-        const body = input.summary !== undefined && input.summary.length > 0 ? input.summary : chapter.content
-        return { id, number: typeof chapter.frontmatter['number'] === 'number' ? chapter.frontmatter['number'] : Number(id), title, body }
+                const bodySource = input.summary !== undefined && input.summary.trim().length > 0 ? 'summary' as const : 'content' as const
+                const body = bodySource === 'summary' ? input.summary! : chapter.content
+                return { id, number: typeof chapter.frontmatter['number'] === 'number' ? chapter.frontmatter['number'] : Number(id), title, body, bodySource }
       })
       // 分批截断落地：批次正文总量超预算时水fill 截断（truncated 标记与实际截断一致，不超发）；
       // 截断口径如实透传给模型（章头标注）与报告（summary 覆盖后缀），不制造「已审全文」错觉
@@ -354,20 +372,23 @@ export default class WriterEngineServiceImpl extends EngineService {
       // 单批输出无法解析：降级占位而非整次丢弃——已成功批次的报告照常产出，
       // 失败批次以「检查覆盖」issue 显式标注可重试（对齐上游 BIZ-04 partialFailed 口径）
       if (parsed === undefined) {
-        failedBatches.push(batch.chapters.join('、'))
+                failedBatches.push(batchLabel)
         issues.push({
           dimension: '检查覆盖',
           severity: 'medium',
-          refs: batch.chapters.map((id) => `chapter/${id}`),
-          description: `本批次（章节 ${batch.chapters.join('、')}）输出无法解析，结论缺失——可重新执行一致性检查重试；原始输出前 200 字：${raw.slice(0, 200)}`,
+                    refs: settingsOnly ? worldbuilding.map(item => `worldbuilding/${item.id}`) : batch.chapters.map((id) => `chapter/${id}`),
+                    description: `本批次（${batchLabel}）输出无法解析，结论缺失——可重新执行一致性检查重试；原始输出前 200 字：${raw.slice(0, 200)}`,
         })
         continue
       }
       issues.push(...parsed.issues)
-      if (parsed.summary.length > 0) summaries.push(`【${batch.chapters[0]}-${batch.chapters[batch.chapters.length - 1]}】${parsed.summary}`)
+            if (parsed.summary.length > 0) summaries.push(`【${batchLabel}】${parsed.summary}`)
     }
     // 覆盖口径如实披露：截断/失败批次在 summary 后缀标注（全量覆盖时不加噪音）
     const coverageParts: string[] = []
+        if (baseline.coverageNotice !== undefined) coverageParts.push(baseline.coverageNotice)
+        const summarizedCount = inputs.filter(input => input.summary !== undefined && input.summary.trim().length > 0).length
+        if (summarizedCount > 0) coverageParts.push(`${summarizedCount} 章使用新鲜派生摘要检查，未审正文`)
     if (failedBatches.length > 0) coverageParts.push(`${failedBatches.length} 个批次输出无法解析已跳过（章节：${failedBatches.join('；')}），报告未覆盖这些批次`)
     if (truncatedChapterCount > 0) coverageParts.push(`${truncatedChapterCount} 章因批次预算截断仅审前段`)
     if (coverageParts.length > 0) summaries.push(`（注：${coverageParts.join('；')}）`)
@@ -519,7 +540,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       existing?.hash,
     )
     const result: ChapterWriteResult = { chapter, mode: 'full' }
-    this.ctx.emit('writer/chapter-written', result)
+    this.ctx.emit(this, 'writer/chapter-written', result)
     return result
   }
 
@@ -542,15 +563,25 @@ export default class WriterEngineServiceImpl extends EngineService {
     )
     const result: ChapterWriteResult = { chapter: saved, mode: 'assist' }
     if (guarded.removedCount > 0) result.repetitionStripped = guarded.removedCount
-    this.ctx.emit('writer/chapter-written', result)
+    this.ctx.emit(this, 'writer/chapter-written', result)
     return result
   }
 
   // —— rewrite：补丁协议优先；决策树见 logic.decideRewritePath；全文路径跑丢句守卫 + JSON 形守卫 ——
 
   private async writeRewrite(request: ChapterWriteRequest, chapter: WriterEntity): Promise<ChapterWriteResult> {
+        const [principles, styles] = await Promise.all([
+            this.ctx.writer.get('principles', 'principles'),
+            this.ctx.writer.list('style'),
+        ])
+        const styleReferences = styles.map(style => `style/${style.id}\n${style.content}`).join('\n\n')
     const system = buildRewriteSystemPrompt()
-    const user = buildRewriteUserPrompt(chapter, request.instruction ?? '', request.selection)
+        const user = buildRewriteUserPrompt(chapter, request.instruction ?? '', request.selection, {
+            principles: principles?.content,
+            styleReferences: styleReferences.length > 0
+                ? truncateCodePoints(styleReferences, Math.floor(this.genParams.contextBudgetChars / 4))
+                : undefined,
+        })
     const raw = await this.generate(system, user, request.signal)
     const parsed = parseRewriteModelOutput(raw)
     const applied = parsed.kind === 'patches' && parsed.patches.length > 0
@@ -574,19 +605,18 @@ export default class WriterEngineServiceImpl extends EngineService {
           skippedReasons: decision.patch.skipped.map((s) => `${s.reason}: ${s.find.slice(0, 50)}`),
         },
       }
-      this.ctx.emit('writer/chapter-written', result)
+      this.ctx.emit(this, 'writer/chapter-written', result)
       return result
     }
-    return this.rewriteFullText(request, chapter)
+    return this.rewriteFullText(request, chapter, user)
   }
 
   /** 全文改写路径（大改输出 / 补丁降级共用）：JSON 形守卫 + 替换全文 + 丢句守卫告警。 */
-  private async rewriteFullText(request: ChapterWriteRequest, chapter: WriterEntity): Promise<ChapterWriteResult> {
+    private async rewriteFullText(request: ChapterWriteRequest, chapter: WriterEntity, user: string): Promise<ChapterWriteResult> {
     const system = [
       buildRewriteSystemPrompt(),
       '本次为大改：忽略补丁协议，直接输出改写后的整章正文全文。',
     ].join('\n')
-    const user = buildRewriteUserPrompt(chapter, request.instruction ?? '', request.selection)
     const rewritten = await this.generate(system, user, request.signal)
     assertRewriteFullTextPlausible(rewritten)
     const guard = detectDroppedSentences(chapter.content, rewritten)
@@ -598,13 +628,22 @@ export default class WriterEngineServiceImpl extends EngineService {
       mode: 'rewrite-full',
       ...(guard.dropped.length > 0 ? { droppedSentences: guard.dropped } : {}),
     }
-    this.ctx.emit('writer/chapter-written', result)
+    this.ctx.emit(this, 'writer/chapter-written', result)
     return result
   }
 
   // —— 上下文组装（委托 domain 组装器；assist 用精简预算）——
 
   private async assemble(request: ChapterWriteRequest, chapter: WriterEntity | undefined) {
+        const budgetChars = request.mode === 'assist' ? Math.floor(this.genParams.contextBudgetChars / 2) : this.genParams.contextBudgetChars
+        const existingText = chapter?.content.trimEnd() ?? ''
+        const continuation = request.mode === 'assist' ? {
+            title: '本章已有正文（末尾，续写起点）',
+            body: existingText.length > 0
+                ? Array.from(existingText).slice(-Math.max(1, Math.floor(budgetChars / 2))).join('')
+                : '（本章尚无正文，请从本章开头开始写作。）',
+            truncated: Array.from(existingText).length > Math.floor(budgetChars / 2),
+        } : undefined
     const [principles, outline, chapters, characters, plots, events, styleRefs] = await Promise.all([
       this.ctx.writer.get('principles', 'principles'),
       this.ctx.writer.get('outline', 'outline'),
@@ -632,10 +671,14 @@ export default class WriterEngineServiceImpl extends EngineService {
       events,
       styleRefs,
       chapterSummaries,
-      budgetChars: request.mode === 'assist' ? Math.floor(this.genParams.contextBudgetChars / 2) : this.genParams.contextBudgetChars,
+            budgetChars: budgetChars - (continuation === undefined ? 0 : continuation.title.length + continuation.body.length + 2),
       instruction: request.instruction,
     })
-    return this.augmentByRag(assembled, request, outline)
+        if (continuation !== undefined) {
+            assembled.sections.push(continuation)
+            assembled.usageChars += continuation.title.length + continuation.body.length + 2
+        }
+        return this.augmentByRag(assembled, request, outline)
   }
 
   /**

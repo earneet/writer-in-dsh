@@ -202,6 +202,56 @@ test('archive_point：零提交仓库（无 HEAD）首存档不把 .writer/expor
   }
 })
 
+for (const initialCommit of [false, true]) {
+    test(`archive_point：父仓范围与既有暂存保留（已有提交=${initialCommit}）`, async () => {
+        const root = await mkdtemp(join(tmpdir(), 'writer-archive-scope-'))
+        const run = promisify(execFile)
+        const git = (...args: string[]) => run('git', args, { cwd: root })
+        try {
+            await git('init', '-q')
+            await git('config', 'user.email', 'test@example.com')
+            await git('config', 'user.name', 'test')
+            await writeFile(join(root, 'application.txt'), '基线')
+            if (initialCommit) {
+                await git('add', 'application.txt')
+                await git('commit', '-qm', 'initial')
+            }
+            const novel = join(root, 'novel')
+            await mkdir(join(novel, '.writer'), { recursive: true })
+            await mkdir(join(novel, 'exports'), { recursive: true })
+            await writeFile(join(root, 'application.txt'), '已暂存外部修改')
+            await writeFile(join(root, 'unstaged.txt'), '未暂存外部文件')
+            await writeFile(join(novel, 'project.md'), '小说项目')
+            await writeFile(join(novel, '.writer', 'cache.json'), '{}')
+            await writeFile(join(novel, 'exports', 'book.epub'), 'epub')
+            await git('add', 'application.txt', 'novel/.writer', 'novel/exports')
+            const stagedBefore = (await git('diff', '--cached', '--binary')).stdout
+            const { tools } = makeCtx({ list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应到达') }, root: novel })
+            const archive = tools.get('archive_point')!
+            assert.match(await archive.execute({}, exec), /已创建存档点/)
+            const committed = (await git('diff-tree', '--root', '--no-commit-id', '--name-only', '-r', 'HEAD')).stdout.trim().split(/\r?\n/)
+            assert.deepEqual(committed, ['novel/project.md'])
+            assert.equal((await git('diff', '--cached', '--binary')).stdout, stagedBefore)
+            assert.match((await git('status', '--porcelain', '--', 'unstaged.txt')).stdout, /^\?\?/)
+            assert.match(await archive.execute({}, exec), /没有可存档的变更/)
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+}
+
+test('consistency_check：无章节批次明确显示世界观设定', async () => {
+    const { tools } = makeCtx({
+        list: async () => [], get: async () => undefined,
+        save: async () => { throw new Error('不应到达') }, root: '.',
+    }, {
+        consistencyCheck: async () => ({ issues: [], batches: [{ chapters: [], truncated: false }], summary: '世界观条目检查完成' }),
+    })
+    const output = await tools.get('consistency_check')!.execute({}, exec)
+    assert.match(output, /1 批：世界观设定/)
+    assert.ok(!output.includes('undefined'))
+})
+
 test('pending_cleanup：按章归档 + 无待办幂等 + 脏章锚拒绝', async () => {
   let pendingText = '## [维护 pass] chapter/001（t）待人工确认\n- 建议 A\n\n## [维护 pass] chapter/002（t）待人工确认\n- 建议 B\n'
   const archived: string[] = []

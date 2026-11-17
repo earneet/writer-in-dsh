@@ -67,7 +67,8 @@ function withWriteChain<T>(projectRoot: string, resource: string, task: () => Pr
   // 否则 F:\a 与 f:\a\ 会同根异键，双链并行使保护失效。
   // 已知边界（留痕）：Linux 大小写敏感文件系统上仅大小写不同的两个项目根会共链——
   // 后果只是多余的跨项目串行（保守方向，绝不会漏保护）；小说场景 projectRoot 来自同一配置源，实际不可达。
-  const key = `${resolve(projectRoot).toLowerCase()}\u0000${resource}`
+    const resourceKey = process.platform === 'win32' ? resource.toLowerCase() : resource
+    const key = `${resolve(projectRoot).toLowerCase()}\u0000${resourceKey}`
   const prev = WRITE_CHAINS.get(key) ?? Promise.resolve()
   const run = prev.then(task, task)
   const tail = run.then(() => undefined, () => undefined)
@@ -88,6 +89,15 @@ function uniqueTmpPath(absPath: string): string {
 
 /** rename 瞬时占用（Windows 杀软/索引器短暂锁目标文件）的可重试错误码。 */
 const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY'])
+
+async function readOptionalText(path: string): Promise<string> {
+    try {
+        return await readFile(path, 'utf8')
+    } catch (err) {
+        if ((err as { code?: string }).code === 'ENOENT') return ''
+        throw new Error(`项目文件读取失败：${path}：${String(err)}`)
+    }
+}
 
 /**
  * 原子 rename + 有界重试（轮次 38 收口）：串行化已消除自撞，但 Windows 上对同一文件的高频
@@ -236,7 +246,7 @@ export default class WriterStoreService extends WriterService {
       mtimeMs: writtenInfo.mtimeMs, size: writtenInfo.size,
       ctimeMs: writtenInfo.ctimeMs, ino: Number(writtenInfo.ino), entity,
     })
-    this.ctx.emit('writer/entity-saved', entity)
+    this.ctx.emit(this, 'writer/entity-saved', entity)
     return entity
   }
 
@@ -327,12 +337,7 @@ export default class WriterStoreService extends WriterService {
   /** 串行化保护下的实际追加（读 → 拼接 → 原子写）。 */
   private async appendPendingLocked(section: string): Promise<void> {
     const abs = join(this.projectRoot, 'pending.md')
-    let existing = ''
-    try {
-      existing = await readFile(abs, 'utf8')
-    } catch {
-      // 首次创建
-    }
+    const existing = await readOptionalText(abs)
     const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
     const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, next, 'utf8')
@@ -355,12 +360,7 @@ export default class WriterStoreService extends WriterService {
 
   private async archivePendingLocked(mutator: (text: string) => { next: string; extracted: string }): Promise<string> {
     const abs = join(this.projectRoot, 'pending.md')
-    let existing = ''
-    try {
-      existing = await readFile(abs, 'utf8')
-    } catch {
-      // 文件不存在按空文本处理（空清单归档是合法 no-op）
-    }
+    const existing = await readOptionalText(abs)
     const { next, extracted } = mutator(existing)
     if (extracted.trim().length === 0) return extracted
     // 先归档后改清单（顺序即安全语义，见方法注释；extracted 由调用方包装好归档头）。
@@ -417,12 +417,7 @@ export default class WriterStoreService extends WriterService {
     }
     const targetPath = join(this.projectRoot, 'pending-archive.md')
     // 已并入检测：上次「拼接成功、删旧失败」的重试不再重复拼接（旧文件全文已在新文件中）
-    let existing = ''
-    try {
-      existing = await readFile(targetPath, 'utf8')
-    } catch {
-      // 首次创建
-    }
+    const existing = await readOptionalText(targetPath)
     if (!existing.includes(legacy.trim())) {
       await this.appendFileAtomic(targetPath, legacy)
     }
@@ -436,12 +431,7 @@ export default class WriterStoreService extends WriterService {
   /** 通用原子追加（建父目录；跨调用方串行由调用方的链保证）。 */
   private async appendFileAtomic(abs: string, section: string): Promise<void> {
     await mkdir(dirname(abs), { recursive: true })
-    let existing = ''
-    try {
-      existing = await readFile(abs, 'utf8')
-    } catch {
-      // 首次创建
-    }
+    const existing = await readOptionalText(abs)
     const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
     const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, next, 'utf8')

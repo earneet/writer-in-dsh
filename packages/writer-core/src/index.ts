@@ -28,19 +28,19 @@ declare module '@deepseek-ai/cordis' {
      * 实体保存成功后发出（emit；Markdown SoT 落盘 + 索引更新之后）。
      * @param entity - 保存后的完整实体（含新 hash）。
      */
-    'writer/entity-saved'(entity: WriterEntity): void
+    'writer/entity-saved'(this: WriterService, entity: WriterEntity): void
     /**
      * 引擎完成一次章节写作并落盘后发出（emit；在 writer/entity-saved 之后）。
      * @param result - 写作结果（实体 + 实际模式 + 补丁统计/丢句告警）。
      * @mode event
      */
-    'writer/chapter-written'(result: ChapterWriteResult): void
+    'writer/chapter-written'(this: EngineService, result: ChapterWriteResult): void
     /**
      * 维护 pass 完成一次章节的派生数据写回后发出（emit；hash 锚定命中的 up-to-date 跳过不 emit）。
      * @param result - 维护结果（章节 id + 锚定 hash + 状态）。
      * @mode event
      */
-    'writer/maintenance-pass'(result: MaintenancePassResult): void
+    'writer/maintenance-pass'(this: EngineService, result: MaintenancePassResult): void
   }
 }
 

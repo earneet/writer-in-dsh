@@ -152,17 +152,18 @@ test('轮次 42（归档位置迁移）：新旧并存（迁移中断态）拼�
   }
 })
 
-test('轮次 42（对抗审查 #2）：store 装载即迁移——构造期 fire-and-forget，无需等待归档写入', async () => {
+test('轮次 42（对抗审查 #2）：store 装载即迁移——构造期 fire-and-forget，无需等待归档写入', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'writer-store-'))
   try {
     await mkdir(join(root, '.writer'), { recursive: true })
     await writeFile(join(root, '.writer', 'pending-archive.md'), '# 归档\n\n## [已归档] chapter/001（t）\n\n- 旧建议\n', 'utf8')
     // @ts-expect-error 测试桩：真实 Context 由 loader 提供
     new WriterStoreService(new Context(), { projectRoot: root }) // eslint-disable-line no-new -- 构造期副作用即被测行为
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    const migrated = await readFile(join(root, 'pending-archive.md'), 'utf8')
-    assert.match(migrated, /chapter\/001/, '旧归档已并入根下')
-    await assert.rejects(() => readFile(join(root, '.writer', 'pending-archive.md'), 'utf8'), { code: 'ENOENT' }, '旧文件已删')
+        await t.waitFor(async () => {
+            const migrated = await readFile(join(root, 'pending-archive.md'), 'utf8')
+            assert.match(migrated, /chapter\/001/, '旧归档已并入根下')
+            await assert.rejects(() => readFile(join(root, '.writer', 'pending-archive.md'), 'utf8'), { code: 'ENOENT' }, '旧文件已删')
+        })
   } finally {
     await rm(root, { recursive: true, force: true })
   }

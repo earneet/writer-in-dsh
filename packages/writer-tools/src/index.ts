@@ -219,7 +219,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'consistency_check',
-    description: '全书一致性检查：以创作准则/大纲/伏笔档案/关键事件为基准审读已写章节，输出结构化矛盾报告（只报告不自动改稿）。按上下文预算自动分批覆盖全部章节（无章数/字数硬截断）；scope 可选 "001-003" 限定章节区间，缺省全书。',
+    description: '全书一致性检查：以创作准则/大纲/伏笔档案/关键事件/人物设定与状态时间线/世界观为基准审读已写章节；无章节时可检查世界观条目间矛盾。输出结构化报告，不自动改稿。按预算分批，披露材料裁剪与摘要检查范围；scope 可选 "001-003" 限定章节区间，缺省全书。',
     parameters: {
       scope: { type: 'string', description: '章节区间（"002" 单章或 "001-003"；缺省全书已写章节）' },
     },
@@ -233,8 +233,12 @@ export function apply(ctx: Context): void {
       if ('unavailable' in engine) return engine.unavailable
       const scope = args.scope !== undefined ? parseScope(args.scope) : undefined
       const report = await engine.consistencyCheck(scope, exec.signal)
+            const batches = report.batches.map(batch => {
+                const range = batch.chapters.length > 0 ? `${batch.chapters[0]}-${batch.chapters[batch.chapters.length - 1]}` : '世界观设定'
+                return batch.truncated ? range + '（材料截断）' : range
+            })
       const lines = [
-        `一致性检查完成（${report.batches.length} 批：${report.batches.map((b) => `${b.chapters[0]}-${b.chapters[b.chapters.length - 1]}${b.truncated ? '（材料截断）' : ''}`).join('、')}），发现 ${report.issues.length} 条矛盾。`,
+                `一致性检查完成（${report.batches.length} 批：${batches.join('、')}），发现 ${report.issues.length} 条矛盾。`,
       ]
       if (report.summary.length > 0) lines.push('', `总评：${report.summary}`)
       for (const [i, issue] of report.issues.entries()) {
@@ -332,7 +336,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'archive_point',
-    description: '显式存档点：在小说项目目录执行 git add -A + git commit（默认任何写入路径都不自动提交，只有本工具显式存档）。message 缺省为 "archive point <时间戳>"。项目目录不是 git 仓库时返回错误指引。',
+    description: '显式存档点：只提交小说项目目录内的变更，排除 .writer/exports，保留父仓其他暂存内容（默认任何写入路径都不自动提交，只有本工具显式存档）。message 缺省为 "archive point <时间戳>"。项目目录不是 git 仓库时返回错误指引。',
     parameters: {
       message: { type: 'string', description: '提交信息（缺省自动生成）' },
     },
@@ -355,22 +359,15 @@ export function apply(ctx: Context): void {
         }
         return `项目目录不是 git 仓库：${root}。请先在项目目录执行 git init 后再使用存档点。`
       }
-      await execFileAsync('git', ['add', '-A'], { cwd: root })
-      // 派生缓存与导出产物不入存档（.writer/derived 可弃、exports 含整本 epub 会让仓库快速膨胀）；
-      // 未 gitignore 的项目由这里显式取消暂存，已 gitignore 的项目该命令是空操作。
-      // `git reset -- <paths>` 隐式依赖 HEAD 存在：零提交仓库（git init 后未 commit）会
-      // "Failed to resolve 'HEAD'" 被 .catch 吞掉——回退 `git rm --cached`（纯索引操作，
-      // 不需要 HEAD）兜底，否则首个存档点会把 exports 整本 epub 与派生缓存一起提交
-      await execFileAsync('git', ['reset', '--', '.writer', 'exports'], { cwd: root }).catch(() =>
-        execFileAsync('git', ['rm', '--cached', '-r', '--ignore-unmatch', '--', '.writer', 'exports'], { cwd: root }).catch(() => {}),
-      )
+        const paths = ['.', ':(exclude).writer', ':(exclude)exports']
+        await execFileAsync('git', ['add', '-A', '--', ...paths], { cwd: root })
       // 无变更预检：git commit 在工作区干净时以非零退出且提示走 stdout——预检避免把正常空存档当错误
-      const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: root })
+        const status = await execFileAsync('git', ['status', '--porcelain', '--', ...paths], { cwd: root })
       if (status.stdout.trim().length === 0) {
         return '没有可存档的变更（工作区干净）。'
       }
       try {
-        const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: root })
+        const { stdout } = await execFileAsync('git', ['commit', '--only', '-m', message, '--', ...paths], { cwd: root })
         const hash = (await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root })).stdout.trim()
         return `已创建存档点 ${hash}：${firstLine(stdout).length > 0 ? firstLine(stdout) : message}`
       } catch (err) {

@@ -46,11 +46,18 @@ export function buildWriteUserPrompt(assembled: AssembledWritingContext, mode: '
 }
 
 /** rewrite user 提示词：现有正文全量 + 选区锚（可选）+ 改写指令。 */
-export function buildRewriteUserPrompt(chapter: WriterEntity, instruction: string, selection?: string): string {
+export function buildRewriteUserPrompt(
+    chapter: WriterEntity,
+    instruction: string,
+    selection?: string,
+    context?: { principles?: string; styleReferences?: string },
+): string {
   const anchor = selection !== undefined && selection.trim().length > 0
     ? `\n\n## 改写范围\n只围绕以下选区前后改动（其余内容尽量走补丁协议保持原样）：\n${selection}`
     : ''
   return [
+    ...(context?.principles !== undefined ? [`## 创作准则（全量）\n${context.principles}`] : []),
+    ...(context?.styleReferences !== undefined ? [`## 风格示范（节选）\n${context.styleReferences}`] : []),
     `## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）`,
     chapter.content,
     anchor,
@@ -164,7 +171,8 @@ export function buildExtractionUserPrompt(
 export function buildConsistencySystemPrompt(): string {
   return [
     `你是一位严谨的中文小说连续性审校员。只检查以下维度：${['情节一致性', '人物一致性', '设定一致性', '时间线一致性'].join('、')}。`,
-    '以「基准材料」（创作准则/大纲/伏笔档案/关键事件）为准绳，审读本批章节，找出前后矛盾。',
+    '以「基准材料」（创作准则/大纲/伏笔档案/关键事件/人物设定与状态时间线/世界观）为准绳，审读本批章节，找出前后矛盾，并检查世界观条目之间是否矛盾。',
+    '人物状态按 timeline 的章节锚比较，不得用未来状态反推更早章节有错。没有章节时只检查基准条目之间的矛盾。',
     '只输出一个 JSON 对象（可被 JSON.parse），不要任何其他文字：',
     '{"summary":"本批总体评估（1-2 句）","issues":[{"dimension":"维度名","severity":"high|medium|low","refs":["涉及实体引用，如 chapter/003、plot/green-flame、character/elin"],"description":"矛盾描述（指明两侧冲突的内容）","evidence":"支撑判断的原文片段（可选）"}]}',
     'refs 必须只引用材料中出现的实体；条目的全部引用都不存在时该条目会被丢弃——请至少给出一个可定位实体引用。没有矛盾不要编造。',
@@ -174,22 +182,26 @@ export function buildConsistencySystemPrompt(): string {
 /** 一致性检查 user 提示词：基准材料 + 本批章节（摘要优先，无摘要用正文）。
  * `bodyTruncated` 提供时在章头如实标注截断口径（防「已审全文」错觉，对齐上游 BIZ-02）。 */
 export function buildConsistencyUserPrompt(
-  baseline: { principles?: string; outline?: string; plotsBrief?: string; eventsBrief?: string },
-  chapters: readonly { id: string; number: number; title?: string; body: string; bodyTruncated?: { kept: number; total: number } }[],
+  baseline: { principles?: string; outline?: string; plotsBrief?: string; eventsBrief?: string; charactersBrief?: string; worldbuildingBrief?: string; coverageNotice?: string },
+  chapters: readonly { id: string; number: number; title?: string; body: string; bodySource?: 'summary' | 'content'; bodyTruncated?: { kept: number; total: number } }[],
 ): string {
   const parts: string[] = []
   if (baseline.principles !== undefined) parts.push(`## 创作准则（基准）\n${baseline.principles}`)
   if (baseline.outline !== undefined) parts.push(`## 大纲（基准）\n${baseline.outline}`)
   if (baseline.plotsBrief !== undefined) parts.push(`## 伏笔档案（基准）\n${baseline.plotsBrief}`)
   if (baseline.eventsBrief !== undefined) parts.push(`## 关键事件（基准）\n${baseline.eventsBrief}`)
+    if (baseline.charactersBrief !== undefined) parts.push(`## 人物设定与权威状态时间线（基准）\n${baseline.charactersBrief}`)
+    if (baseline.worldbuildingBrief !== undefined) parts.push(`## 世界观（基准）\n${baseline.worldbuildingBrief}`)
+    if (baseline.coverageNotice !== undefined) parts.push(`## 检查覆盖\n${baseline.coverageNotice}`)
   const chapterBlocks = chapters.map((c) => {
     const head = `### 第 ${c.number} 章（chapter/${c.id}）${c.title !== undefined ? ` ${c.title}` : ''}`
     const note = c.bodyTruncated !== undefined
       ? `\n（注：本章仅截取前 ${c.bodyTruncated.kept} 字符，全章共 ${c.bodyTruncated.total} 字符，超出部分未提供——结论仅覆盖前段）`
       : ''
-    return `${head}${note}\n${c.body}`
+        const source = c.bodySource === 'summary' ? '\n（本章使用新鲜派生摘要，未提供正文；结论仅覆盖摘要保留的信息）' : ''
+        return `${head}${source}${note}\n${c.body}`
   })
-  parts.push(`## 本批章节\n${chapterBlocks.join('\n\n')}`)
-  parts.push('## 任务\n对照基准材料逐章审读，输出矛盾报告 JSON。')
+    parts.push(`## 本批章节\n${chapterBlocks.length > 0 ? chapterBlocks.join('\n\n') : '（无章节，本次检查世界观及基准条目间的一致性）'}`)
+    parts.push('## 任务\n对照基准材料及其覆盖说明审读，输出矛盾报告 JSON。')
   return parts.join('\n\n')
 }
