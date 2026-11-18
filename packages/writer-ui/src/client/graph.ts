@@ -129,10 +129,12 @@ function buildPlot(source: PlotSource, warnings: string[]): PlotEntity {
     status: str(fm.status, 'unknown'),
     type: str(fm.type, fm.status !== undefined ? 'foreshadow' : ''),
     plannedChapter: coerceChapterAnchor(fm.planned_chapter),
+    resolveChapter: coerceChapterAnchor(fm.resolve_chapter),
     plantedChapter: coerceChapterAnchor(fm.planted_chapter),
     resolvedChapter: coerceChapterAnchor(fm.resolved_chapter),
     milestones,
     preview: preview(source.content),
+    content: source.content,
   }
 }
 

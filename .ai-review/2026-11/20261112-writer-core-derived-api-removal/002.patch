@@ -1,0 +1,314 @@
+diff --git a/packages/writer-core/src/index.ts b/packages/writer-core/src/index.ts
+index 2203e18..27b3cc4 100644
+--- a/packages/writer-core/src/index.ts
++++ b/packages/writer-core/src/index.ts
+@@ -71,19 +71,11 @@ export abstract class WriterService extends Service {
+   /** 项目根目录的绝对路径（导出/存档点等文件系统消费方使用）。 */
+   abstract get root(): string
+ 
+-  /**
+-   * 读取派生数据缓存（.writer/derived/<kind>/<id>.json）；不存在返回 undefined。
+-   * @param kind - 派生数据种类（如 "maintenance"）。
+-   * @param id - 实体 id（如章节三位序号）。
+-   * @deprecated 轮次 38（P0-3 第一步）：消费者不要再用它传磁盘 kind 字面量，改用下面的业务方法。
+-   *   磁盘布局是 Provider 的实现细节，不应成为跨包 ABI（对照 dsh-fs 的 Branded 不透明 id：
+-   *   "Consumers MUST NOT parse it or assume it is a local absolute path"）。第二步删除本方法。
+-   */
+-  abstract readDerived(kind: string, id: string): Promise<unknown | undefined>
+-
+   /**
+    * 读取某章的维护 pass 派生记录（摘要 + 抽取 + 锚定 hash）；不存在返回 undefined。
+    * 业务语义方法：调用方无需知道磁盘上叫 "maintenance"、按章 id 存、值是 MaintenanceDerived。
++   * （轮次 38 P0-3：磁盘派生存取已收敛为本组业务方法，旧的通用 readDerived/writeDerived/
++   * deleteDerived/listDerived 抽象已删除——磁盘布局是 Provider 的实现细节，不是跨包 ABI。）
+    */
+   abstract readMaintenance(chapterId: string): Promise<MaintenanceDerived | undefined>
+ 
+@@ -93,15 +85,6 @@ export abstract class WriterService extends Service {
+   /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除，重建走维护 pass）。 */
+   abstract deleteMaintenance(chapterId: string): Promise<void>
+ 
+-  /** 写入派生数据缓存（JSON 可序列化值；覆盖写）。@deprecated 轮次 38（P0-3 第一步）：消费者改用 writeMaintenance 等业务方法，本方法第二步删除。 */
+-  abstract writeDerived(kind: string, id: string, value: unknown): Promise<void>
+-
+-  /** 删除派生数据缓存（改稿期标记过期 = 删除，重建走维护 pass）。@deprecated 轮次 38（P0-3 第一步）：消费者改用 deleteMaintenance 等业务方法，本方法第二步删除。 */
+-  abstract deleteDerived(kind: string, id: string): Promise<void>
+-
+-  /** 列出某类派生数据的全部 id（统计派生覆盖率用）。@deprecated 轮次 38：生产代码零调用且会把磁盘 kind 字面量重新泄漏给消费者——第二步删除（fix-plan 已列入裁定清单）。 */
+-  abstract listDerived(kind: string): Promise<string[]>
+-
+   /** 向 pending.md 追加一节待办（维护 pass 产出，供人确认；原子写）。 */
+   abstract appendPending(section: string): Promise<void>
+ 
+diff --git a/packages/writer-engine/tests/p3-integration.test.ts b/packages/writer-engine/tests/p3-integration.test.ts
+index 3f0894b..9bac3e1 100644
+--- a/packages/writer-engine/tests/p3-integration.test.ts
++++ b/packages/writer-engine/tests/p3-integration.test.ts
+@@ -78,8 +78,8 @@ test('maintenancePass：done 落派生 + pending.md；二次调用 hash 锚定 u
+     const done = await setup.engine.maintenancePass('001')
+     assert.equal(done.status, 'done')
+     assert.equal(done.summary, '艾琳夜里巡查第七盏灯。')
+-    const derived = await setup.store.readDerived('maintenance', '001') as { sourceHash: string; summary: string }
+-    assert.equal(derived.summary, done.summary)
++    const derived = await setup.store.readMaintenance('001')
++    assert.equal(derived?.summary, done.summary)
+     const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
+     assert.match(pending, /chapter\/001/)
+     assert.match(pending, /人物状态建议.*timeline_update/)
+@@ -146,8 +146,8 @@ test('maintenancePass 重试耗尽：partial 标记 + 拒收原因入派生与 p
+     assert.ok((done.rejected ?? []).some((r) => r.includes('plot/ghost')))
+     assert.deepEqual(done.extraction!.facts, [{ description: '好事实' }], '通过节保留')
+     assert.deepEqual(done.extraction!.foreshadowEvents, [], '拒收节为空')
+-    const derived = await setup.store.readDerived('maintenance', '001') as { partial?: boolean }
+-    assert.equal(derived.partial, true)
++    const derived = await setup.store.readMaintenance('001')
++    assert.equal(derived?.partial, true)
+     const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
+     assert.match(pending, /部分抽取条目因引用校验未通过被拒收/)
+   } finally {
+@@ -228,8 +228,8 @@ test('consistencyCheck：新鲜派生摘要代正文（扩批容量）', async (
+     await seedChapter(setup, '001', '一'.repeat(1500))
+     await seedChapter(setup, '002', '二'.repeat(1500))
+     // 两章派生摘要新鲜 → 摘要代替正文 → 单批
+-    await setup.store.writeDerived('maintenance', '001', { sourceHash: (await setup.store.get('chapter', '001'))!.hash, summary: '短摘要一', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
+-    await setup.store.writeDerived('maintenance', '002', { sourceHash: (await setup.store.get('chapter', '002'))!.hash, summary: '短摘要二', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
++    await setup.store.writeMaintenance('001', { sourceHash: (await setup.store.get('chapter', '001'))!.hash, summary: '短摘要一', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
++    await setup.store.writeMaintenance('002', { sourceHash: (await setup.store.get('chapter', '002'))!.hash, summary: '短摘要二', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
+     setup.llm.reply(JSON.stringify({ summary: '', issues: [] }))
+     const report = await setup.engine.consistencyCheck()
+     assert.equal(report.batches.length, 1, '摘要使两章同批')
+@@ -295,7 +295,7 @@ test('recomputeDerived：no-chapter / up-to-date / mark（pending 作废提示
+     // mark → 删派生 + pending 作废提示
+     const marked = await setup.engine.recomputeDerived('001', { mode: 'mark' })
+     assert.equal(marked[0].status, 'marked')
+-    assert.equal(await setup.store.readDerived('maintenance', '001'), undefined)
++    assert.equal(await setup.store.readMaintenance('001'), undefined)
+     const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
+     assert.match(pending, /recompute mark.*chapter\/001.*作废/s)
+   } finally {
+@@ -336,8 +336,8 @@ test('maintenancePass TOCTOU：执行期间章节被改写 → 跳过旧版 pend
+     const result = await setup.engine.maintenancePass('001')
+     // 补跑后派生锚定最新 hash
+     const latest = await setup.store.get('chapter', '001')
+-    const derived = await setup.store.readDerived('maintenance', '001') as { sourceHash: string }
+-    assert.equal(derived.sourceHash, latest!.hash, '补跑覆盖为最新版本的派生')
++    const derived = await setup.store.readMaintenance('001')
++    assert.equal(derived!.sourceHash, latest!.hash, '补跑覆盖为最新版本的派生')
+     assert.equal(result.sourceHash, latest!.hash)
+     // 轮次 38（P0-2）：旧版本建议不得混入人工确认清单，最新版待办恰好一条。
+     // 修复前：补跑轮 appendPending 旧版本记录，同一章在 pending.md 留下两条互相矛盾的待办；
+diff --git a/packages/writer-engine/tests/p4.test.ts b/packages/writer-engine/tests/p4.test.ts
+index 9532f9d..432286d 100644
+--- a/packages/writer-engine/tests/p4.test.ts
++++ b/packages/writer-engine/tests/p4.test.ts
+@@ -79,8 +79,8 @@ test('recoverySnapshot：真实落盘 + git 时间锚 + 新鲜摘要优先（ran
+     await store.save('character', 'elin', { content: '守灯人' })
+     await store.save('plot', 'green-flame', { content: '绿焰', frontmatter: { status: 'planted' } })
+     // 仅第一章有新鲜摘要（第二章派生过期）
+-    await store.writeDerived('maintenance', '001', { sourceHash: c1.hash, summary: '第一章新鲜摘要' })
+-    await store.writeDerived('maintenance', '002', { sourceHash: 'stale', summary: '过期摘要不应出现' })
++    await store.writeMaintenance('001', { sourceHash: c1.hash, summary: '第一章新鲜摘要', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
++    await store.writeMaintenance('002', { sourceHash: 'stale', summary: '过期摘要不应出现', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
+     // git 仓库 + 章节提交（时间锚来源）
+     await execFileAsync('git', ['init', '-q'], { cwd: root })
+     await execFileAsync('git', ['add', '-A'], { cwd: root })
+diff --git a/packages/writer-rag/tests/rag-service.test.ts b/packages/writer-rag/tests/rag-service.test.ts
+index c9355fe..bc00414 100644
+--- a/packages/writer-rag/tests/rag-service.test.ts
++++ b/packages/writer-rag/tests/rag-service.test.ts
+@@ -28,7 +28,7 @@ async function makeFixture(): Promise<{ rag: WriterRagService; store: WriterStor
+   await writeFile(join(root, 'worldbuilding/flame.md'), `---\n---\n绿焰是北方冻土的古神残火。`, 'utf8')
+   // 第一章新鲜派生摘要
+   const ch1 = await store.get('chapter', '001')
+-  await store.writeDerived('maintenance', '001', { sourceHash: ch1!.hash, summary: '第一章：绿焰初现的雨夜。' })
++  await store.writeMaintenance('001', { sourceHash: ch1!.hash, summary: '第一章：绿焰初现的雨夜。', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't' })
+   const rag = new WriterRagService(ctx, {
+     embeddingBackend: 'none', llmProvider: '', llmModel: '', externalBaseUrl: '', externalModel: '',
+     externalApiKeyEnv: 'WRITER_RAG_API_KEY', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,
+diff --git a/packages/writer-store/src/index.ts b/packages/writer-store/src/index.ts
+index 2cfb992..de48658 100644
+--- a/packages/writer-store/src/index.ts
++++ b/packages/writer-store/src/index.ts
+@@ -79,7 +79,7 @@ function withWriteChain<T>(projectRoot: string, resource: string, task: () => Pr
+   return run
+ }
+ 
+-/** 唯一临时文件名（并发写者不共用固定 tmp 互踩；与 writeDerived 同范式）。 */
++/** 唯一临时文件名（并发写者不共用固定 tmp 互踩；与 recoverySnapshot 同范式）。 */
+ let tmpCounter = 0
+ function uniqueTmpPath(absPath: string): string {
+   tmpCounter += 1
+@@ -253,25 +253,12 @@ export default class WriterStoreService extends WriterService {
+   }
+ 
+   /**
+-   * 读取某章的维护 pass 派生记录（轮次 38 P0-3 第一步：业务方法上提）。
+-   * `'maintenance'` 这个磁盘 kind 字面量只允许出现在本文件，消费者一律走本方法。
++   * 读取某章的维护 pass 派生记录（轮次 38 P0-3 第二步：业务方法自包含，通用派生存取
++   * 抽象已删除）。`'maintenance'` 这个磁盘 kind 字面量只允许出现在本文件，
++   * 消费者一律走本组业务方法。
+    */
+   async readMaintenance(chapterId: string): Promise<MaintenanceDerived | undefined> {
+-    return await this.readDerived(MAINTENANCE_KIND, chapterId) as MaintenanceDerived | undefined
+-  }
+-
+-  /** 写入某章的维护 pass 派生记录（覆盖写；业务语义方法，见 readMaintenance）。 */
+-  async writeMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void> {
+-    await this.writeDerived(MAINTENANCE_KIND, chapterId, record)
+-  }
+-
+-  /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除）。 */
+-  async deleteMaintenance(chapterId: string): Promise<void> {
+-    await this.deleteDerived(MAINTENANCE_KIND, chapterId)
+-  }
+-
+-  async readDerived(kind: string, id: string): Promise<unknown | undefined> {
+-    const abs = this.derivedPath(kind, id)
++    const abs = this.derivedPath(chapterId)
+     let raw: string
+     try {
+       raw = await readFile(abs, 'utf8')
+@@ -282,7 +269,7 @@ export default class WriterStoreService extends WriterService {
+       throw new Error(`派生数据读取失败：${relativePathOf(this.projectRoot, abs)}：${String(err)}`)
+     }
+     try {
+-      return JSON.parse(raw) as unknown
++      return JSON.parse(raw) as MaintenanceDerived
+     } catch (err) {
+       // 派生缓存是纯缓存：坏文件按缺失处理（删除后维护 pass 重建），不阻塞读取方
+       this.warnSkipped(relativePathOf(this.projectRoot, abs), err)
+@@ -290,12 +277,13 @@ export default class WriterStoreService extends WriterService {
+     }
+   }
+ 
+-  async writeDerived(kind: string, id: string, value: unknown): Promise<void> {
+-    const abs = this.derivedPath(kind, id)
++  /** 写入某章的维护 pass 派生记录（覆盖写；业务语义方法，见 readMaintenance）。 */
++  async writeMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void> {
++    const abs = this.derivedPath(chapterId)
+     await mkdir(dirname(abs), { recursive: true })
+     // 唯一 tmp 名（与 engine recoverySnapshot 同范式）：无串行化链时并发写者不共用 tmp 互踩
+     const tmpPath = uniqueTmpPath(abs)
+-    await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf8')
++    await writeFile(tmpPath, JSON.stringify(record, null, 2), 'utf8')
+     try {
+       await renameWithRetry(tmpPath, abs)
+     } catch (err) {
+@@ -304,19 +292,9 @@ export default class WriterStoreService extends WriterService {
+     }
+   }
+ 
+-  async deleteDerived(kind: string, id: string): Promise<void> {
+-    await rm(this.derivedPath(kind, id), { force: true })
+-  }
+-
+-  async listDerived(kind: string): Promise<string[]> {
+-    const dirAbs = join(this.projectRoot, '.writer', 'derived', kind)
+-    let names: string[]
+-    try {
+-      names = await readdir(dirAbs)
+-    } catch {
+-      return []
+-    }
+-    return names.filter((n) => n.endsWith('.json')).map((n) => n.replace(/\.json$/, '')).sort()
++  /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除）。 */
++  async deleteMaintenance(chapterId: string): Promise<void> {
++    await rm(this.derivedPath(chapterId), { force: true })
+   }
+ 
+   async appendPending(section: string): Promise<void> {
+@@ -453,15 +431,15 @@ export default class WriterStoreService extends WriterService {
+     }
+   }
+ 
+-  /** 派生数据路径：.writer/derived/<kind>/<id>.json（kind/id 做路径安全校验）。 */
+-  private derivedPath(kind: string, id: string): string {
+-    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind)) {
+-      throw new Error(`派生数据 kind 非法：${JSON.stringify(kind)}（小写字母开头，仅小写字母/数字/下划线/连字符）`)
+-    }
++  /**
++   * 维护 pass 派生记录路径：.writer/derived/maintenance/<id>.json（id 做路径安全校验）。
++   * kind 由常量固定（P0-3 第二步后无外部调用方传入，故不再做 kind 校验）。
++   */
++  private derivedPath(id: string): string {
+     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(id) || WINDOWS_RESERVED.has(id.toLowerCase())) {
+       throw new Error(`派生数据 id 非法：${JSON.stringify(id)}`)
+     }
+-    return join(this.projectRoot, '.writer', 'derived', kind, `${id}.json`)
++    return join(this.projectRoot, '.writer', 'derived', MAINTENANCE_KIND, `${id}.json`)
+   }
+ 
+   private indexPromise: Promise<void> | undefined
+@@ -565,7 +543,7 @@ export default class WriterStoreService extends WriterService {
+     try {
+       raw = await readFile(absPath, 'utf8')
+     } catch (err) {
+-      // 与 readDerived 同口径：ENOENT = 实体缺席（create 路径合法）；
++      // 与 readMaintenance 同口径：ENOENT = 实体缺席（create 路径合法）；
+       // 其他 IO 错（EACCES/EBUSY 等）静默当缺席会让 get 误报「实体不存在」、create 覆盖暂时不可读的文件——响亮失败
+       if ((err as { code?: string }).code === 'ENOENT') return undefined
+       throw new Error(`实体文件读取失败：${relPath}：${String(err)}`)
+diff --git a/packages/writer-store/tests/derived.test.ts b/packages/writer-store/tests/derived.test.ts
+index dca0c32..759f077 100644
+--- a/packages/writer-store/tests/derived.test.ts
++++ b/packages/writer-store/tests/derived.test.ts
+@@ -18,33 +18,34 @@ async function makeStore(): Promise<{ store: WriterStoreService; root: string }>
+   return { store, root }
+ }
+ 
+-test('派生数据：写入 → 读取 → 删除 → 清单', async () => {
++/** 种子记录构造（MaintenanceDerived 全字段；轮次 38 P0-3 第二步后测试走业务方法）。 */
++const maintenanceRecord = (sourceHash: string, summary: string) => ({
++  sourceHash, summary, extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 't',
++})
++
++test('派生数据：写入 → 读取 → 删除（业务方法 readMaintenance/writeMaintenance/deleteMaintenance）', async () => {
+   const { store, root } = await makeStore()
+   try {
+-    await store.writeDerived('maintenance', '001', { sourceHash: 'abc', summary: '摘要' })
+-    const got = await store.readDerived('maintenance', '001')
+-    assert.deepEqual(got, { sourceHash: 'abc', summary: '摘要' })
+-    assert.deepEqual(await store.listDerived('maintenance'), ['001'])
+-    await store.writeDerived('maintenance', '002', { sourceHash: 'def' })
+-    assert.deepEqual(await store.listDerived('maintenance'), ['001', '002'])
+-    await store.deleteDerived('maintenance', '001')
+-    assert.equal(await store.readDerived('maintenance', '001'), undefined)
+-    assert.deepEqual(await store.listDerived('maintenance'), ['002'])
++    await store.writeMaintenance('001', maintenanceRecord('abc', '摘要'))
++    assert.deepEqual(await store.readMaintenance('001'), maintenanceRecord('abc', '摘要'))
++    await store.writeMaintenance('002', maintenanceRecord('def', '另一章'))
++    await store.deleteMaintenance('001')
++    assert.equal(await store.readMaintenance('001'), undefined)
++    assert.deepEqual(await store.readMaintenance('002'), maintenanceRecord('def', '另一章'))
+   } finally {
+     await rm(root, { recursive: true, force: true })
+   }
+ })
+ 
+-test('派生数据：不存在/坏 JSON 按缺失处理；kind 与 id 做路径安全校验', async () => {
++test('派生数据：不存在/坏 JSON 按缺失处理；id 做路径安全校验', async () => {
+   const { store, root } = await makeStore()
+   try {
+-    assert.equal(await store.readDerived('maintenance', '404'), undefined)
++    assert.equal(await store.readMaintenance('404'), undefined)
+     await mkdir(join(root, '.writer/derived/maintenance'), { recursive: true })
+     await writeFile(join(root, '.writer/derived/maintenance/bad.json'), '{broken', 'utf8')
+-    assert.equal(await store.readDerived('maintenance', 'bad'), undefined, '坏 JSON 不抛错按缺失处理')
+-    await assert.rejects(() => store.writeDerived('Maintenance', '001', {}), /kind 非法/)
+-    await assert.rejects(() => store.writeDerived('maintenance', '../evil', {}), /id 非法/)
+-    await assert.rejects(() => store.writeDerived('maintenance', 'con', {}), /id 非法/)
++    assert.equal(await store.readMaintenance('bad'), undefined, '坏 JSON 不抛错按缺失处理')
++    await assert.rejects(() => store.writeMaintenance('../evil', maintenanceRecord('h', 's')), /id 非法/)
++    await assert.rejects(() => store.writeMaintenance('con', maintenanceRecord('h', 's')), /id 非法/)
+   } finally {
+     await rm(root, { recursive: true, force: true })
+   }
+@@ -55,7 +56,7 @@ test('派生数据：ENOENT 按缺失、其他 IO 错（路径被目录占位）
+   try {
+     // 目录占位派生文件路径：readFile 得到 EISDIR（非 ENOENT 的 IO 错误）→ 修复前被静默当缺失
+     await mkdir(join(root, '.writer/derived/maintenance/dirblock.json'), { recursive: true })
+-    await assert.rejects(() => store.readDerived('maintenance', 'dirblock'), /派生数据读取失败/)
++    await assert.rejects(() => store.readMaintenance('dirblock'), /派生数据读取失败/)
+   } finally {
+     await rm(root, { recursive: true, force: true })
+   }

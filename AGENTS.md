@@ -1,5 +1,12 @@
 # AGENTS.md — writer-in-dsh
 
+> **任务来源**: 用户确认实施新工作目录的一键初始化和非空目录指引。
+> **任务内容**: 同步默认项目目录规则，保持后续开发与已实现行为一致。
+> **参考文档**:
+> - `docs/project-initialization-design-2026-11-17.md` — 初始化设计与验收。
+> - `docs/implementation-plan.md` — 历轮实施记录。
+> **生成日期**: 2026-11-17（本轮更新）
+
 以 DeepSeek Harness（dsh）插件形式复刻 novel-writer（AI 长篇小说写作工具）的功能。本仓库是插件的开发仓库。
 
 ## 目标与范围
@@ -67,7 +74,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - **profile 安装**：`dsh plugin --profile <name> add <绝对路径>` 逐包按依赖序安装（link: 形态，兄弟包依赖经本仓库根 node_modules 解析）；**新建 profile 只含 base+功能 bundle 时无 app 入口会无限空转**（进程空转无输出不报错），须另装 app bundle 且钉版本：`@deepseek-ai/dsh-headless@0.2.0-rc.2` 或 `@deepseek-ai/dsh-web-app@0.2.0-rc.2`（npm 源默认解析到不兼容旧版 0.0.1-rc.1）。
 - **本地功能验证**：overlay 方式跑 headless 即可——`npx @deepseek-ai/dsh --profile headless --patch ./dev.cordis.yml "<任务>"`；最终形态验证再走 profile 安装路径（`--dump-config` 核对组合树 + web/headless 启动）。
 - **临时插件位置**：overlay 里挂载的临时 .ts 插件文件**必须放在有 package.json 的包目录内**（如 packages/ 下）；放仓库根目录会导致首次模型调用 REQUEST_EXTENSION 失败（插件清单解析需要包身份）。
-- **projectRoot**：writer-bundle/writer-preset 默认 `<启动目录>/novel/`（轮次 18 布局：创作与工作文件全收 novel/ 子目录），验证时从含 novel/ 的目录启动 dsh 或显式覆盖 projectRoot；writer.yaml 已废除（project → novel/project.md 可写实体）。
+- **projectRoot**：轮次 48 起 writer-bundle/writer-preset 省略该配置，业务调用时按发起会话的 `header.cwd` 解析 `<会话工作目录>/novel/`；显式绝对路径仍固定项目，无会话目录且未固定路径时响亮失败。构造期不得读取 initiator（预设按 revision 共享服务树）；索引和在飞维护必须按项目根隔离。新作品在空工作目录的一键初始化入口创建结构；非空目录不自动合并或覆盖。writer.yaml 已废除（project → novel/project.md 可写实体）。
 - **构建先行（P6 起）**：包产物在 `lib/`（.gitignore），`npm test`/`npm run typecheck` 已自动串 build；overlay/profile 形态下修改 domain/core 等**被裸导入包**的源码后须 `npm run build` 才生效（overlay 入口指 src，但 src 内包间裸导入经 main 解析到 lib）。根 `build` 脚本必须先建 domain、core 再全量 workspaces——npm `--workspaces` 是字母序，干净树上 core 会先于 domain 构建而 TS2307（轮次 40 实证，此前 CI 从未绿过）；**每次推送后查看 GitHub Actions run 结果**（轮次 38 引入 CI 首跑即红、隔日才被发现）。
 - **patch 覆盖方言（轮次 39 实证）**：`cordis.patch.yml` 对 id 命中行做**整字段替换**（config 不深合并）；非 group 行 config 内的子列表（如 preset 行 `config.plugins`）**不可被外层 patch 按 id 直击**——覆盖 preset 参数必须以包内 cordis.patch.yml 为底稿**整段重述**该行 config，否则 agent-preset 必填 `id` 被顶掉即 `$.id missing required value` 整行失败。桌面 profile（Electron 独占）诊断走宿主内 plugin_manager list_plugins（fiberPhase/diagnostic），CLI `--dump-config` 会被拒。
 
@@ -101,5 +108,7 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 - 轮次 42（归档位置迁移）：pending-archive.md 从 .writer/ 迁至项目根（入 git，与 pending.md 同居——归档是不可重建史料；store 构造期即迁移 + 归档写入路径兜底，均幂等；UI 双路径兜底读，文案/契约白名单同步）；立起「.writer/ 整目录可删且无损」不变量（store 头注释 + README 数据布局段）；清偿架构评审 P2-2；projectRoot 默认与 exports/ 位置裁定维持。对抗审查 5 项发现（2 P2 + 3 P3）修复 4 裁定 1：构造期迁移关闭懒触发窗口、harness 假 PASS 修正 + CI 双来源单测补位、已并入检测防副本增长、失败方向 3 用例；中断态节序乱序裁定留痕（详见 implementation-plan §8 轮次 42）。
 - 已验证：typecheck/build 零错；overlay+headless 与 profile 双形态实测；历轮审查均收敛；轮次 42 后单测 292/292（含 flake 重复运行验证）。
 - 已知限制见 §8 轮次 2/6/7/8/9/10/11/12/13/14/18/21/27/28/29/30/31/32/33 及 roadmap §7 留痕项。
+
+- 轮次 48（新目录初始化）：空目录欢迎页与一键初始化、非空目录纠正指引、真实命令通道和会话项目根对齐；跨项目索引/维护隔离。两路对抗审查修复三项后收敛；typecheck/build、337/337 单测、初始化实际落盘浏览器流程及原工作台回归均通过。旧 profile 显式 projectRoot 仍优先；未改宿主配置，完整 Electron 端到端未测。详见 `docs/project-initialization-design-2026-11-17.md` 和 implementation-plan §8。
 
 **下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。

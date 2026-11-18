@@ -101,7 +101,7 @@ const fileSystem = {
   'novel/chapters/001.md': `---\nnumber: 1\ntitle: "守灯"\nvolume: "第一卷"\n---\n四个字。\n`,
   'novel/chapters/002.md': `---\nnumber: 2\ntitle: "夜航"\nvolume: "第一卷"\n---\n又是四个字。\n`,
   'novel/plots/p1.md': `---\nhint: "x"\nstatus: "planned"\nplanned_chapter: "009"\n---\n正文\n`,
-  'novel/plots/p2.md': `---\nhint: "绿焰"\nstatus: "planted"\nplanned_chapter: "001"\n---\n正文\n`,
+  'novel/plots/p2.md': `---\nhint: "绿焰"\nstatus: "planted"\nplanned_chapter: "001"\nresolve_chapter: "001"\n---\n正文\n`,
 }
 const remote = {
   workspaceFiles: {
@@ -151,7 +151,7 @@ if (Panel === undefined) {
   const html = renderToStaticMarkup(React.createElement(captured, { sessionId: 's1' }))
   console.log('--- panel html ---')
   console.log(html)
-  const noCrash = html.includes('写作面板') && html.includes('刷新')
+  const noCrash = html.includes('写作工作台') && html.includes('刷新')
   console.log('--- render verdict:', noCrash ? 'PASS（面板渲染不抛错）' : 'FAIL')
 
   // ② 冷启动扫描链路：直接驱动源码 scanNovel + buildOverview（renderToStaticMarkup 不跑 effect）

@@ -7,6 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mapPool, scanNovel, setBrowserContext, watchProject, WORLDBUILDING_MAX } from '../src/client/load.ts'
 import { publishScan, readBus, resetBus } from '../src/client/bus.ts'
+import { buildOverview } from '../src/client/project.ts'
 
 /** 可控 changes 流：外部 push 帧 / 结束 / 抛错。 */
 function controlledStream() {
@@ -168,6 +169,18 @@ function minimalProject(): Map<string, unknown> {
     ['novel/chapters/001.md', '---\nnumber: 1\n---\n初始正文四个字\n'],
   ])
 }
+
+test('工作台归档原文：保留完成项、重复项和非列表段落及来源路径', async () => {
+    const fs = minimalProject()
+    const raw = '# 归档\n\n## chapter/001\n\n人工说明段落。\n- [x] 已确认状态\n- 重复建议\n\n## chapter/002\n\n- 重复建议\n'
+    ;(fs.get('novel') as unknown[]).push({ name: 'pending-archive.md', type: 'file' })
+    fs.set('novel/pending-archive.md', raw)
+    setBrowserContext({ remote: mockRemote(fs) as never })
+    const scan = await scanNovel('s1', new AbortController().signal)
+    assert.deepEqual(scan.archiveSources, [{ path: 'novel/pending-archive.md', text: raw }])
+    assert.deepEqual(buildOverview(scan).archiveSources, scan.archiveSources)
+    setBrowserContext(null)
+})
 
 test('scanNovel：小分页拼接还原全文（页间换行契约）+ never-eof 触发保险丝入失败清单', async () => {
   const fs = minimalProject()

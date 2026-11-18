@@ -85,6 +85,7 @@ export interface NovelScan {
   staleChapters?: string[]
   /** 项目根 pending-archive.md 归档分节（倒序：最新归档在前；旧布局 .writer/ 兜底合并）。 */
   pendingArchive?: PendingSection[]
+  archiveSources?: { path: string; text: string }[]
 }
 
 /** 正文按 `## ` 标题切分小节（首个标题前的导语并入「简介」；开头的一级标题视为文件名头，剥离）。 */

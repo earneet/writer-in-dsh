@@ -1,5 +1,12 @@
 # dsh-writer-engine
 
+> **任务来源**: 用户要求新工作目录提供一键初始化，并指导非空目录的正确使用。
+> **任务内容**: 更新本包的默认项目目录说明，保持会话读写与初始化位置一致。
+> **参考文档**:
+> - `docs/project-initialization-design-2026-11-17.md` — 已确认的初始化设计与验收。
+> - `docs/implementation-plan.md` — 包职责与迭代记录。
+> **生成日期**: 2026-11-17
+
 dsh-writer 插件组合的一员：Provider：写作引擎——full/assist/rewrite 三模式、3+1 维审稿、维护 pass、一致性检查、断更恢复快照，发布 ctx.writerEngine。
 
 ## 安装
@@ -13,7 +20,7 @@ dsh plugin --profile <name> add "@deepseek-ai/dsh-headless@0.2.2-rc.1"   # 或 d
 
 ## 启动
 
-从含 `novel/` 子目录的项目目录启动 dsh（创作与工作文件全部收在 `novel/`：`principles.md` / `outline.md` / `chapters/` 等）——projectRoot 默认取启动目录的 `novel/` 子目录，可用配置显式覆盖。
+在小说工作目录中打开 dsh 会话（创作与工作文件全部收在 `novel/`：`principles.md` / `outline.md` / `chapters/` 等）——省略 projectRoot 时默认使用调用会话工作目录的 `novel/` 子目录，可用配置显式覆盖。
 
 ## 许可
 

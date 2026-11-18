@@ -30,6 +30,7 @@ interface Disclosure {
 
 /** tool.call.toolview 的本地 props 契约（宿主实际传入字段的子集）。 */
 export interface ToolViewPropsBase {
+  sessionId?: string
   toolName: string
   phase: 'preparing' | 'start' | 'result' | string
   /** 宿主工具调用 id（§1.5 公共 props；用于面板动态记录幂等去重）。 */
@@ -189,13 +190,13 @@ function parsersOf(kind: 'stats' | 'write' | 'review' | 'plain'): RecordParsers 
  * 重复 unshift 挤掉上限内真实历史；callId 幂等去重由总线承接，双调安全）。
  */
 function useRecordResult(props: ToolViewPropsBase, content: string, kind: 'stats' | 'write' | 'review' | 'plain', label?: string): void {
-  const { phase, toolName, callId } = props
+  const { phase, toolName, callId, sessionId } = props
   useEffect(() => {
     if (phase !== 'result') return
     // block 缺席的空结果不记动态行（避免空白行挤占时间线）
     if (content.length === 0 && label === undefined) return
-    recordToolResult(toolName, content, parsersOf(kind), { callId, label })
-  }, [phase, toolName, content, callId, kind, label])
+    recordToolResult(toolName, content, parsersOf(kind), { callId, label, sessionId: sessionId ?? '_anonymous' })
+  }, [phase, toolName, content, callId, kind, label, sessionId])
 }
 
 /** 通用错误/兜底展开体。 */

@@ -35,14 +35,14 @@ export interface PlotRiskInput {
   status: string
   /** 计划章锚（planned_chapter 的投影值；空串 = 无锚）。 */
   plannedChapter: string
+  resolveChapter?: string | null
   plantedChapter?: string | null
   milestones?: { chapter: string }[]
 }
 
 /**
  * 单个伏笔的风险档（纯函数；roadmap §4.1 M1b 口径）：
- * - 红 = planted 且超过 planned_chapter 仍未回收（planned_chapter 是种植计划锚，
- *   此处兼作整体预期锚——超出即「未回收超期」）；
+ * - 红 = planted 且超过 resolve_chapter 仍未回收；埋设与回收的计划不能混用。
  * - 黄 = planted 未红但停滞：距最后被触碰（max(planted_chapter, 最后 milestone 章)）
  *   超过 FORESHADOW_STALL_CHAPTERS 章；无任何可判锚的 planted 按活跃计黄（无法排除风险）；
  * - 灰 = planned（未种植；计划章已过 → overdue 逾期未种植）；
@@ -50,7 +50,8 @@ export interface PlotRiskInput {
  * current 为 null（无章/章号全不可判）时不做逾期与停滞判定，planted 无锚仍计黄。
  */
 export function plotRiskOf(plot: PlotRiskInput, current: number | null): { level: PlotRiskLevel; overdue: boolean; dueDelta: number | null } {
-  const planned = anchorNum(plot.plannedChapter.length > 0 ? plot.plannedChapter : null)
+  const anchor = plot.status === 'planted' ? plot.resolveChapter : plot.plannedChapter
+  const planned = anchorNum(anchor !== undefined && anchor !== null && anchor.length > 0 ? anchor : null)
   const dueDelta = planned !== null && current !== null ? planned - current : null
   if (plot.status === 'planned') {
     return { level: 'gray', overdue: dueDelta !== null && dueDelta < 0, dueDelta }
@@ -147,7 +148,7 @@ export function buildOutlineTree(graph: EntityGraph): { tree: OutlineTreeNode[];
 /** ChapterEntity → ChapterRow 公共映射（chapterRows 与大纲树 written 共用，防双份漂移）。 */
 function toChapterRow(ch: ChapterEntity): ChapterRow {
   return {
-    id: ch.id, title: ch.title, volume: ch.volume, chars: ch.chars,
+    id: ch.id, number: ch.number, path: ch.path, title: ch.title, volume: ch.volume, chars: ch.chars,
     status: ch.status, storyline: ch.storyline, preview: ch.preview, content: ch.content,
   }
 }
@@ -161,6 +162,7 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
   const plotRows: PlotRow[] = graph.plots.map(p => {
     const risk = plotRiskOf({
       status: p.status, plannedChapter: p.plannedChapter ?? '',
+      resolveChapter: p.resolveChapter,
       plantedChapter: p.plantedChapter, milestones: p.milestones,
     }, current)
     return {
@@ -169,10 +171,12 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
       status: p.status,
       type: p.type,
       plannedChapter: p.plannedChapter ?? p.plantedChapter ?? '',
+      resolveChapter: p.resolveChapter ?? '',
       plantedChapter: p.plantedChapter ?? '',
       resolvedChapter: p.resolvedChapter ?? '',
       milestones: p.milestones,
       preview: p.preview,
+      content: p.content,
       risk: risk.level,
       overdue: risk.overdue,
       dueDelta: risk.dueDelta,
@@ -260,6 +264,7 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
     staleChapters: scan.staleChapters ?? [],
     failedFiles: scan.failedFiles ?? [],
     pendingArchive: scan.pendingArchive ?? [],
+    archiveSources: scan.archiveSources ?? [],
     // —— v8 设定面投影 ——
     outlineTree: outlineTreeResult.tree,
     unanchoredChapters: outlineTreeResult.unanchored,

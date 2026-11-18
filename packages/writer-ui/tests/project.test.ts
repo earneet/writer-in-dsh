@@ -39,7 +39,7 @@ test('伏笔三色与风险排序：超期红 > 活跃黄 > 未种植灰 > 已�
       { name: 'resolved-p.md', frontmatter: { status: 'resolved' }, content: '' },
       { name: 'future-p.md', frontmatter: { status: 'planned', planned_chapter: '009' }, content: '' },
       { name: 'active-p.md', frontmatter: { status: 'planted', planned_chapter: '005' }, content: '' },
-      { name: 'late-p.md', frontmatter: { status: 'planted', planned_chapter: '001' }, content: '' },
+      { name: 'late-p.md', frontmatter: { status: 'planted', planned_chapter: '001', resolve_chapter: '001' }, content: '' },
       { name: 'overdue-gray.md', frontmatter: { status: 'planned', planned_chapter: '002' }, content: '' },
     ],
   })

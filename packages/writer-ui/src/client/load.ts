@@ -12,6 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { extractPendingSections, splitSource, type NovelScan, type PendingSection } from './overview.ts'
 import { contentHashClient } from './hash.ts'
+import type { WorkspaceProjectState } from 'dsh-writer-core'
 
 /** workspaceFiles remote 的本地最小契约（第一方同款调用面）。 */
 interface WorkspaceFilesApi {
@@ -30,7 +31,9 @@ interface SessionsApi {
 }
 
 type BrowserContext = Context & {
-  remote?: { workspaceFiles?: WorkspaceFilesApi }
+  remote?: { workspaceFiles?: WorkspaceFilesApi; commands?: {
+      execute(sessionId: string, line: string, attachments: readonly unknown[], signal?: AbortSignal): Promise<any>
+  } }
   sessions?: SessionsApi
 }
 
@@ -67,6 +70,24 @@ export function subscribeSessions(listener: () => void): { dispose: () => void; 
 
 function remote(): WorkspaceFilesApi | null {
   return browserCtx?.remote?.workspaceFiles ?? null
+}
+
+export class ProjectCommandUnavailableError extends Error {}
+
+export async function projectCommand(sessionId: string, action: 'status' | 'init', signal: AbortSignal): Promise<WorkspaceProjectState> {
+    const commands = browserCtx?.remote?.commands
+    if (!commands) throw new ProjectCommandUnavailableError('当前会话没有项目初始化服务，请选择“写作模式”，并确认已更新 writer-store 插件。')
+    const result = await commands.execute(sessionId, `/writer-project-${action}`, [], signal)
+    signal.throwIfAborted()
+    if (!result?.ok) throw new Error(`无法${action === 'init' ? '初始化' : '检查'}项目：${result?.error?.message ?? result?.error?.code ?? '宿主连接或权限异常，请重新连接后重试。'}`)
+    if (!result.value) throw new ProjectCommandUnavailableError('当前会话未启用写作项目服务，请在此工作目录中新建“写作模式”会话。')
+    const outcome = result.value.result
+    if (outcome?.kind !== 'success') throw new Error(outcome?.text ?? '项目操作未成功，请检查宿主返回的信息。')
+    let state: WorkspaceProjectState
+    try { state = JSON.parse(outcome.text ?? '') } catch { throw new Error('项目服务返回了无法识别的结果，请更新写作插件后重试。') }
+    if (!state || !['ready', 'empty', 'blocked', 'mismatch'].includes(state.status) || typeof state.workspaceRoot !== 'string' || typeof state.projectRoot !== 'string' || !['novel', '.'].includes(state.scanRoot) || !Array.isArray(state.entries)) throw new Error('项目服务返回了不完整的目录状态，请更新写作插件后重试。')
+    if (action === 'init' && state.status !== 'ready') throw new Error(state.message ?? '初始化尚未完成，请检查目录状态。')
+    return state
 }
 
 // —— readText 保险丝（协议异常/超巨文件防 OOM；上限放宽到正常长篇单文件远不可及；
@@ -148,7 +169,7 @@ const STRONG_MARKERS = new Set(['project.md', 'principles.md', 'outline.md', 'id
 
 /** 候选根是否判定为小说项目：强标记单命中，或弱标记（目录名）≥2 命中。 */
 function looksLikeProject(entries: any[], lenient: boolean): boolean {
-  const names = new Set(entries.map(e => e.name))
+  const names = new Set(entries.filter(e => STRONG_MARKERS.has(e.name) ? e.type === 'file' : e.type === 'directory' || e.type === 'dir').map(e => e.name))
   const hits = ROOT_MARKERS.filter(marker => names.has(marker))
   if (lenient) return hits.length > 0
   const strong = hits.some(marker => STRONG_MARKERS.has(marker))
@@ -170,10 +191,10 @@ export type ScanProgress = (done: number, total: number) => void
  * 扫描 novel/ 项目：定位根目录，收集章/情节/人物/世界观/四单文件实体/待办/归档/派生新鲜度。
  * 单文件读取失败不使整扫描失败——计入 failedFiles 清单呈现（M1b 正确性修复包④）。
  */
-export async function scanNovel(sessionId: string, signal: AbortSignal, onProgress?: ScanProgress): Promise<NovelScan> {
+export async function scanNovel(sessionId: string, signal: AbortSignal, onProgress?: ScanProgress, preferredRoot?: 'novel' | '.'): Promise<NovelScan> {
   // 根目录探测：优先 novel/ 子目录（轮次 18 布局；子目录名即强语境，宽松判定）；
   // '.'/' 为工作区根本身（旧布局直铺——目录名泛化，从严判定防误认普通工作区）。
-  const rootCandidates = ['novel', '.', '']
+  const rootCandidates = preferredRoot ? [preferredRoot] : ['novel', '.', '']
   let root = ''
   let rootEntries: any[] | null = null
   for (const candidate of rootCandidates) {
@@ -318,6 +339,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     ...(singletons.has('pending-archive.md') ? extractPendingSections(singletons.get('pending-archive.md')!.content) : []),
     ...(singletons.has('pending-archive-legacy.md') ? extractPendingSections(singletons.get('pending-archive-legacy.md')!.content) : []),
   ]
+  const archiveSources = readResults.filter(item => item.raw !== null && item.task.name === 'pending-archive.md').map(item => ({ path: join(item.task.dir, item.task.name), text: item.raw! }))
 
   // —— 派生新鲜度（维护徽章数据源）：client 内容哈希与 derived sourceHash 同口径比对 ——
   // 章节缺失派生或哈希不一致 = 待维护 pass（与服务端 writer_stats staleChapters 同语义；
@@ -348,6 +370,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     ...(failedFiles.length > 0 ? { failedFiles } : {}),
     ...(staleChapters.length > 0 ? { staleChapters } : {}),
     ...(pendingArchive.length > 0 ? { pendingArchive } : {}),
+    ...(archiveSources.length > 0 ? { archiveSources } : {}),
   }
 }
 

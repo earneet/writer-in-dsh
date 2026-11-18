@@ -16,14 +16,18 @@ import {
   type EntityKind, type Frontmatter, type MaintenanceDerived, type WriterEntity,
 } from 'dsh-writer-domain'
 import { WriterService, type EntityPatch } from 'dsh-writer-core'
+import type { WorkspaceProjectState } from 'dsh-writer-core'
+import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-commands'
+import { inspectProject, initializeProject } from './project.ts'
 
-/** 插件配置。projectRoot 为小说项目根目录（含 principles.md/outline.md/chapters/ 等）。 */
+/** projectRoot 显式配置固定项目；省略时按调用会话目录解析。 */
 export interface Config {
-  projectRoot: string
+  projectRoot?: string
 }
 
 export const Config: Schema<Config> = Schema.object({
-  projectRoot: Schema.string().required().description('小说项目根目录的绝对路径'),
+  projectRoot: Schema.string().description('固定小说项目的绝对路径；省略时使用当前会话工作目录的 novel/'),
 })
 
 /** 实体扫描表：kind → 目录/文件约定与 id 派生。 */
@@ -149,26 +153,76 @@ export default class WriterStoreService extends WriterService {
   static inject = []
   static Config = Config
 
-  private readonly projectRoot: string
+    private readonly configuredRoot: string | undefined
+    private readonly indexes = new Map<string, Map<EntityKind, Map<string, WriterEntity>>>()
+    private readonly indexPromises = new Map<string, Promise<void>>()
+    private readonly migrations = new Map<string, Promise<void>>()
   /** 派生索引：内存态，save 时增量更新；缺失时由 ensureIndex 全量重建。 */
-  private index: Map<EntityKind, Map<string, WriterEntity>> | undefined
+    private get index(): Map<EntityKind, Map<string, WriterEntity>> | undefined {
+        return this.indexes.get(this.projectRoot)
+    }
+
+    private set index(value: Map<EntityKind, Map<string, WriterEntity>> | undefined) {
+        if (value) this.indexes.set(this.projectRoot, value)
+    }
+
+    private get projectRoot(): string {
+        if (this.configuredRoot !== undefined) return this.configuredRoot
+        const cwd = this.ctx.get('agents')?.currentInitiator()?.session.header.cwd
+        if (!cwd) throw new Error('当前会话没有工作目录，请在小说工作目录中打开写作会话，或显式配置 projectRoot。')
+        return join(cwd, 'novel')
+    }
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
     // 轮次 38（P2-5）：相对路径按 process.cwd() 解析极其隐蔽（错一个字符要到首次 save 才以
     // 「实体不存在」间接暴露）——配置错误在构造期响亮失败，给出当前值与建议。
-    if (!isAbsolute(config.projectRoot)) {
+    if (config.projectRoot !== undefined && !isAbsolute(config.projectRoot)) {
       throw new Error(`projectRoot 必须为绝对路径：${JSON.stringify(config.projectRoot)}（相对路径会按宿主进程启动目录解析；请改为绝对路径，如 preset 的 !!js join(process.cwd(), 'novel') 形式）`)
     }
-    this.projectRoot = config.projectRoot
-    // 轮次 42（对抗审查 #2）：装载时即触发一次旧布局归档迁移（fire-and-forget，失败仅 warn 不
-    // 阻断装载）——关闭「纯读/完结项目永不产生归档写入 → 旧归档无限期滞留 .writer/」的窗口：
+    this.configuredRoot = config.projectRoot
+    // 固定项目装载时、会话项目首次访问时迁移；失败仅告警，避免损坏归档阻断正常稿件读取。
+    // 关闭「纯读/完结项目永不产生归档写入 → 旧归档无限期滞留 .writer/」的窗口：
     // 窗口内「.writer/ 整目录可删且无损」不变量不成立，archive_point 也会把它挡在存档外。
-    void this.runPendingArchiveMigration().catch((err) => {
-      const logger = (this.ctx as { logger?: (name: string) => { warn: (msg: string) => void } }).logger?.('writer-store')
-      logger?.warn(`旧归档迁移未完成（将在下次归档写入时重试）：${err instanceof Error ? err.message : String(err)}`)
+    if (this.configuredRoot !== undefined) void this.ensureMigration()
+    ctx.inject(['commands', 'agents'], child => {
+        for (const action of ['status', 'init'] as const) child.commands.register({
+            name: `writer-project-${action}`,
+            description: action === 'init' ? '在空工作目录初始化小说项目' : '检查当前工作目录的小说项目状态',
+            handler: ({ agent, signal, rawInput }) => {
+                if (rawInput.trim()) return { kind: 'error', text: '此命令不接受参数，请直接使用写作面板的初始化入口。' }
+                const cwd = agent.session.header.cwd
+                if (!cwd) return { kind: 'error', text: '当前会话没有工作目录，请先打开一个工作目录。' }
+                return child.agents.withInitiator(agent, async () => {
+                    const state = action === 'init' ? await this.initializeProject(cwd, signal) : await this.inspectProject(cwd)
+                    return { kind: 'success' as const, text: JSON.stringify(state) }
+                })
+            },
+        })
     })
   }
+
+    private ensureMigration(): Promise<void> {
+        const root = this.projectRoot
+        let task = this.migrations.get(root)
+        if (!task) {
+            task = this.runPendingArchiveMigration().catch(error => {
+                this.migrations.delete(root)
+                const logger = (this.ctx as { logger?: (name: string) => { warn: (message: string) => void } }).logger?.('writer-store')
+                logger?.warn(`旧归档迁移未完成（将在下次访问时重试）：${error instanceof Error ? error.message : String(error)}`)
+            })
+            this.migrations.set(root, task)
+        }
+        return task
+    }
+
+    inspectProject(workspaceRoot: string): Promise<WorkspaceProjectState> {
+        return inspectProject(workspaceRoot, this.projectRoot)
+    }
+
+    initializeProject(workspaceRoot: string, signal?: AbortSignal): Promise<WorkspaceProjectState> {
+        return withWriteChain(workspaceRoot, 'initialize', () => initializeProject(workspaceRoot, this.projectRoot, signal))
+    }
 
   /** 触发一次旧布局归档迁移（幂等；走归档串行链，与归档写入互斥；构造期与归档写入共用）。 */
   private runPendingArchiveMigration(): Promise<void> {
@@ -183,6 +237,7 @@ export default class WriterStoreService extends WriterService {
   }
 
   async get(kind: EntityKind, id: string): Promise<WriterEntity | undefined> {
+    await this.ensureMigration()
     // 直读磁盘（被动新鲜度：外部编辑器修改后立即可见；内存索引仅服务 list 清单）
     assertSafeId(kind, id)
     return this.readFromDisk(kind, id)
@@ -252,10 +307,13 @@ export default class WriterStoreService extends WriterService {
 
   /** 全量重建派生索引（公开入口与内部缺省触发共享同一次 in-flight 重建，防并发互踩）。 */
   rebuildIndex(): Promise<void> {
-    this.indexPromise ??= this.doRebuildIndex().finally(() => {
-      this.indexPromise = undefined
-    })
-    return this.indexPromise
+    const root = this.projectRoot
+    let task = this.indexPromises.get(root)
+    if (!task) {
+        task = this.ensureMigration().then(() => this.doRebuildIndex()).finally(() => this.indexPromises.delete(root))
+        this.indexPromises.set(root, task)
+    }
+    return task
   }
 
   get root(): string {
@@ -453,8 +511,6 @@ export default class WriterStoreService extends WriterService {
     }
     return join(this.projectRoot, '.writer', 'derived', kind, `${id}.json`)
   }
-
-  private indexPromise: Promise<void> | undefined
 
   /**
    * 解析快照缓存（P4 关闭轮次 8 限制②）：absPath → (mtimeMs,size,ctimeMs,ino) 锚定的已解析实体。

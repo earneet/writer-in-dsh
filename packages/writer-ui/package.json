@@ -12,7 +12,7 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node build-client.mjs",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.client.json && node build-client.mjs",
     "prepublishOnly": "npm run build"
   },
   "dsh": {
@@ -24,6 +24,7 @@
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-rc.1",
     "@types/react": "19.2.2",
     "dsh-writer-domain": "0.1.0",
+    "dsh-writer-core": "0.1.0",
     "esbuild": "0.25.12"
   },
   "engines": {

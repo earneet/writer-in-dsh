@@ -1,5 +1,12 @@
 # writer-in-dsh
 
+> **任务来源**: 用户要求空工作目录提供一键初始化，非空目录提供正确使用指引。
+> **任务内容**: 说明新作品起步、项目目录解析及已有文件保护。
+> **参考文档**:
+> - `docs/project-initialization-design-2026-11-17.md` — 初始化方案与验证。
+> - `docs/implementation-plan.md` — 架构约定和实施记录。
+> **生成日期**: 2026-11-17
+
 以 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）插件形式复刻
 [novel-writer](https://github.com/earneet/novel-writer)（AI 长篇小说写作工具）的领域层：
 写作引擎、伏笔状态机、人物时间线、一致性检查、防剧透混合检索与成书导出。
@@ -39,6 +46,10 @@ dsh headless "写第二章"
 `principles.md`（创作准则）、`outline.md`、`chapters/{NNN}.md`、`characters/`、`plots/`、
 `pending.md`（人工待办）、`exports/`（导出产物）、`.writer/`（派生缓存）。
 `example-project/` 是完整示例（novel/ 布局）。
+
+**新作品起步**：在宿主中新建或打开一个空工作目录，创建“写作模式”会话，进入“写作面板”点击“一键初始化”。插件会创建 `novel/` 目录及基础中文模板，完成后自动打开工作台，无需模型调用。非空且没有小说项目的目录会显示纠正指引，隐藏文件也计入非空判断；已有内容不会被覆盖。
+
+省略 `writer-store.projectRoot` 时，写作服务使用**发起操作的会话工作目录**下的 `novel/`，与面板保持一致。显式绝对路径仍可用于固定项目或旧式平铺布局；固定路径与当前会话不一致时，面板展示实际路径和修正办法。更新前已在 profile 中钉死示例目录的配置会继续生效，需按配置指引移除固定值才能跟随新会话。
 
 ## 文档
 

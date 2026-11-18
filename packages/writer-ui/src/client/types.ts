@@ -68,10 +68,12 @@ export interface PlotEntity {
   status: string
   /** coerce 为字符串的章锚（"066" / 66 → "66"）；缺失为 null。 */
   plannedChapter: string | null
+  resolveChapter: string | null
   plantedChapter: string | null
   resolvedChapter: string | null
   milestones: PlotMilestone[]
   preview: string
+  content: string
 }
 
 /** 人物实体。 */
@@ -185,6 +187,8 @@ export interface Page<T> {
 /** 章节行（章节页签 + 概况最近章节；preview 为展开预览文本，content 为正文全文——阅读面）。 */
 export interface ChapterRow {
   id: string
+  number: number | null
+  path: string
   title: string
   volume: string
   chars: number
@@ -206,10 +210,12 @@ export interface PlotRow {
   status: string
   type: string
   plannedChapter: string
+  resolveChapter: string
   plantedChapter: string
   resolvedChapter: string
   milestones: PlotMilestone[]
   preview: string
+  content: string
   risk: 'red' | 'yellow' | 'gray' | 'none'
   overdue: boolean
   dueDelta: number | null
@@ -300,6 +306,7 @@ export interface NovelOverview {
   failedFiles: string[]
   /** 归档分节（项目根 pending-archive.md；含旧布局 .writer/ 兜底合并，倒序）。 */
   pendingArchive: PendingSection[]
+  archiveSources: { path: string; text: string }[]
   /** 下一步情境卡。 */
   nextStep: NextStep
   // —— 设定面（灵感/准则/世界观/事件/风格示范；v8 大纲树 + 设定页数据源）——

@@ -40,12 +40,12 @@ function mockSessions() {
 test('会话桶隔离：写作动态按活跃会话分桶，切回不串台', () => {
   resetBus()
   const sessions = mockSessions()
-  recordToolResult('writer_stats', STATS, { stats: parseWriterStats })
+  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { sessionId: 's1' })
   assert.equal(readBus().live.activities.length, 1)
   // 切换活跃会话：新桶为空（旧桶数据保留待切回）
   sessions.switchTo('s2')
   assert.equal(readBus().live.activities.length, 0)
-  recordToolResult('writer_stats', STATS, { stats: parseWriterStats })
+  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { sessionId: 's2' })
   assert.equal(readBus().live.activities.length, 1)
   // 切回 s1：仍只有最初一条
   sessions.switchTo('s1')
@@ -57,10 +57,10 @@ test('会话桶隔离：写作动态按活跃会话分桶，切回不串台', ()
 test('callId 幂等：重复渲染双调不重复记录', () => {
   resetBus()
   mockSessions()
-  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { callId: 'c1' })
-  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { callId: 'c1' })
+  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { callId: 'c1', sessionId: 's1' })
+  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { callId: 'c1', sessionId: 's1' })
   assert.equal(readBus().live.activities.length, 1)
-  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { callId: 'c2' })
+  recordToolResult('writer_stats', STATS, { stats: parseWriterStats }, { callId: 'c2', sessionId: 's1' })
   assert.equal(readBus().live.activities.length, 2)
   resetBus()
   setBrowserContext(null)

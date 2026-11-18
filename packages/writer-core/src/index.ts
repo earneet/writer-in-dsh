@@ -16,6 +16,15 @@ export interface EntityPatch {
   content?: string
 }
 
+export interface WorkspaceProjectState {
+    status: 'ready' | 'empty' | 'blocked' | 'mismatch'
+    workspaceRoot: string
+    projectRoot: string
+    scanRoot: 'novel' | '.'
+    entries: string[]
+    message?: string
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     writer: WriterService
@@ -52,6 +61,14 @@ export abstract class WriterService extends Service {
   protected constructor(ctx: Context) {
     super(ctx, 'writer')
   }
+
+    inspectProject(_workspaceRoot: string): Promise<WorkspaceProjectState> {
+        return Promise.reject(new Error('当前存储插件不支持项目初始化，请更新写作插件。'))
+    }
+
+    initializeProject(_workspaceRoot: string, _signal?: AbortSignal): Promise<WorkspaceProjectState> {
+        return Promise.reject(new Error('当前存储插件不支持项目初始化，请更新写作插件。'))
+    }
 
   /** 列出某类实体（从派生索引读取，索引缺失时触发全量重建）。 */
   abstract list(kind: EntityKind): Promise<readonly WriterEntity[]>

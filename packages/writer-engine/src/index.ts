@@ -138,26 +138,27 @@ export default class WriterEngineServiceImpl extends EngineService {
   // —— 维护 pass（保存后异步，默认两次调用；inflight 去重 + 完成 hash 锚定）——
 
   async maintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }, depth = 0): Promise<MaintenancePassResult> {
+    const key = `${this.ctx.writer.root}\u0000${chapterId}`
     if (!CHAPTER_ID_RE.test(chapterId)) throw new Error(`章节 id 必须为三位序号：${JSON.stringify(chapterId)}`)
     // 同章 inflight 去重：并发触发共享同一次执行（返回同一 Promise，不重复调用模型）。
     // force 请求不共享非 force 执行（否则 up-to-date 短路会吞掉强制语义）：先等 inflight 结束再单独跑。
-    const inflight = this.maintenanceInflight.get(chapterId)
+    const inflight = this.maintenanceInflight.get(key)
     if (inflight !== undefined && opts?.force !== true) return inflight
     if (inflight !== undefined) await inflight.catch(() => {})
     // 等待期间可能已有新 pass 入表（保存触发）：force 不得覆盖它——覆盖会击穿去重致同章双跑
     // （双倍模型调用、派生互相覆盖）。重新进入等待最新 inflight，force 语义不变（最终单独跑一次）。
     // 重入链同样受 depth 上限约束（轮次 33）：保存持续触发新 inflight 时不得无限等待重入（活锁），
     // 达上限时改为直接等待当前 inflight 后返回（用户下次保存自会再触发，不丢语义）。
-    const current = this.maintenanceInflight.get(chapterId)
+    const current = this.maintenanceInflight.get(key)
     if (current !== undefined && current !== inflight) {
       if (depth >= 4) return current
       return this.maintenancePass(chapterId, opts, depth + 1)
     }
     const run = this.doMaintenancePass(chapterId, opts).finally(() => {
       // 身份校验清理：只删自己入表的 entry，防误删并发后继 pass 的登记（否则 drainMaintenance 漏计漏等）
-      if (this.maintenanceInflight.get(chapterId) === run) this.maintenanceInflight.delete(chapterId)
+      if (this.maintenanceInflight.get(key) === run) this.maintenanceInflight.delete(key)
     })
-    this.maintenanceInflight.set(chapterId, run)
+    this.maintenanceInflight.set(key, run)
     const result = await run
     // TOCTOU 兜底：执行期间章节又被改写（inflight 去重吞掉了新保存触发的 pass）→ 补跑一次（仅一层，防递归放大）
     if (depth < 1) {
@@ -514,7 +515,8 @@ export default class WriterEngineServiceImpl extends EngineService {
 
   /** 当前在飞维护 pass 数（含自动触发；0 = 无在飞，drain 立即返回）。 */
   pendingMaintenanceCount(): number {
-    return this.maintenanceInflight.size
+    const prefix = `${this.ctx.writer.root}\u0000`
+    return [...this.maintenanceInflight.keys()].filter(key => key.startsWith(prefix)).length
   }
 
   /**
@@ -523,7 +525,8 @@ export default class WriterEngineServiceImpl extends EngineService {
    * 保存触发覆盖（连续 flush 两次可收敛）。失败只吞错：排空语义是「等到不在飞」，不是「保证成功」。
    */
   async drainMaintenance(): Promise<void> {
-    await Promise.allSettled([...this.maintenanceInflight.values()])
+    const prefix = `${this.ctx.writer.root}\u0000`
+    await Promise.allSettled([...this.maintenanceInflight].filter(([key]) => key.startsWith(prefix)).map(([, task]) => task))
   }
 
   // —— full：整章生成，一次调用，创建或整体替换 ——

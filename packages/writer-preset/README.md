@@ -1,5 +1,12 @@
 # dsh-writer-preset
 
+> **任务来源**: 用户要求新工作目录支持一键初始化，并指导非空目录的正确使用。
+> **任务内容**: 更新写作模式的默认项目目录与初始化指引。
+> **参考文档**:
+> - `docs/project-initialization-design-2026-11-17.md` — 初始化设计与验收。
+> - `packages/writer-preset/cordis.patch.yml` — 预设配置底稿。
+> **生成日期**: 2026-11-17
+
 「写作模式」agent preset（预制模式）：安装后，DeepSeek Harness Web 客户端「新建会话」的
 模式选择器中会出现「写作模式」，与内置的标准模式 / PTC 模式并列。选中该模式的会话按本包
 声明组合插件；其他会话不受任何影响。
@@ -24,13 +31,15 @@
 ## 安装（需含 Web 应用的 profile）
 
 ```sh
-# 在小说项目目录（含 novel/ 子目录）启动 dsh web（projectRoot 默认取宿主启动目录的 novel/，
-# 与 dsh-writer-bundle 同口径；Web 多工作区部署须从含 novel/ 的目录启动宿主，
-# 或按「已知限制」的整段重述口径覆盖 projectRoot）
+# projectRoot 缺省时跟随调用会话的工作目录，小说放在其 novel/ 子目录。
 dsh plugin add dsh-writer-preset        # 或本地路径 link: 安装
 dsh web
 # 新建会话 → 模式选择「写作模式」
 ```
+
+新作品请选择空工作目录，在写作面板点击“一键初始化”，直接创建基础资料和目录。非空且没有小说项目时会显示使用指引；已有项目正常打开。隐藏文件也计入非空判断。操作不消耗模型调用，也不修改对话草稿。
+
+如果此前 profile patch 显式设置了示例项目的 projectRoot，该值仍优先生效。要让目录随会话变化，按下方整段重述规则更新底稿，并省略 writer-store 行的 projectRoot；不要只删除 preset-writer 的必填字段。
 
 要求：profile 已含 `dsh-web-app`（它提供 agent-preset-registry；headless 部署无模式选择器，
 preset 不生效——headless 请用 dsh-writer-bundle 全局挂载）。

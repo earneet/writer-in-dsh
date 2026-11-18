@@ -6,7 +6,9 @@
   "types": "lib/index.d.ts",
   "dependencies": {
     "dsh-writer-domain": "0.1.0",
-    "dsh-writer-core": "0.1.0"
+    "dsh-writer-core": "0.1.0",
+    "@deepseek-ai/dsh-agent": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-commands": "0.2.2-rc.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.1.0",

@@ -25,6 +25,8 @@ import {
   IconFolderOpenOutlineRegular, IconRefreshOutlineRegular, IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { setBrowserContext } from './load.ts'
+import { setActionContext } from './actions.ts'
+import type { WriterPanelProps } from './Panel.tsx'
 
 /** 浏览器侧 slots 服务的本地最小契约（第三方不做 ui-slots 类型依赖；运行时由模块表供给同源实现）。 */
 interface SlotsService {
@@ -36,7 +38,7 @@ type BrowserContext = Context & { slots: SlotsService }
 export const name = 'dsh-writer-ui'
 // remote 命名空间按属性粒度授权（与第一方 dsh-client-ui-sidebar-files 同款声明）；
 // sessions 用于活跃会话探测（workspaceFiles 的 scope 是会话工作区根）。
-export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'sessions']
+export const inject = ['slots', 'remote', 'remote.workspaceFiles', 'remote.commands', 'sessions', 'conversation']
 
 /** 注册全部 UI 面：会话视图标签页 + 14 张工具卡片（8 语义富卡片 + 6 治理通用卡）。 */
 export function apply(context: Context): void {
@@ -45,6 +47,7 @@ export function apply(context: Context): void {
     // 运行时同源实现供给 remote/sessions（load.ts 本地契约）；随 effect 生命周期安装/清空，
     // 卸载或热重载后不再持有已销毁 fiber 的引用。跨包 Context 结构不可静态对齐，走 never 断言
     setBrowserContext(ctx as never)
+    setActionContext(ctx as never)
     const disposers: Array<() => void> = []
 
     // 会话视图标签页「写作面板」（conversation.view 槽，session 作用域）：与「对话」「轨迹」
@@ -53,7 +56,7 @@ export function apply(context: Context): void {
     disposers.push(ctx.slots.inject('conversation.view', () =>
       ctx.slots.register(
         { name: 'conversation.view', id: 'writer-panel', order: 20, label: '写作面板' },
-        (props: { sessionId?: string }) => <WriterPanel sessionId={props.sessionId} />,
+        (props: WriterPanelProps) => <WriterPanel {...props} />,
       )))
 
     // 写作工具富卡片（keyed toolview：任意工具名可注册，未注册工具落通用卡片）
@@ -80,6 +83,7 @@ export function apply(context: Context): void {
     return () => {
       for (const dispose of disposers) dispose()
       setBrowserContext(null)
+      setActionContext(null)
     }
   }, 'dsh-writer-ui: panel + toolviews')
 }
