@@ -15,7 +15,7 @@ import {
   contentHash, parseFrontmatter, serializeEntity,
   type EntityKind, type Frontmatter, type MaintenanceDerived, type WriterEntity,
 } from 'dsh-writer-domain'
-import { WriterService, type EntityPatch } from 'dsh-writer-core'
+import { WriterService, type EntityPatch, type PendingAppendOptions } from 'dsh-writer-core'
 import type { WorkspaceProjectState } from 'dsh-writer-core'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
@@ -29,6 +29,25 @@ export interface Config {
 export const Config: Schema<Config> = Schema.object({
   projectRoot: Schema.string().description('固定小说项目的绝对路径；省略时使用当前会话工作目录的 novel/'),
 })
+
+function isMaintenanceDerived(value: unknown): value is MaintenanceDerived {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    const record = value as Record<string, unknown>
+    if (typeof record.sourceHash !== 'string' || typeof record.summary !== 'string' || typeof record.updatedAt !== 'string') return false
+    if (record.partial !== undefined && typeof record.partial !== 'boolean') return false
+    const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === 'string')
+    if (record.rejected !== undefined && !strings(record.rejected)) return false
+    if (typeof record.extraction !== 'object' || record.extraction === null || Array.isArray(record.extraction)) return false
+    const extraction = record.extraction as Record<string, unknown>
+    const entries = (items: unknown, valid: (item: Record<string, unknown>) => boolean) =>
+        Array.isArray(items) && items.every(item => typeof item === 'object' && item !== null && !Array.isArray(item) && valid(item))
+    return entries(extraction.facts, item => typeof item.description === 'string'
+        && (item.characters === undefined || strings(item.characters)) && (item.plots === undefined || strings(item.plots)))
+        && entries(extraction.foreshadowEvents, item => typeof item.plot === 'string'
+            && ['planted', 'reinforcement', 'partial_reveal', 'callback', 'red_herring', 'resolved'].includes(String(item.action))
+            && (item.note === undefined || typeof item.note === 'string'))
+        && entries(extraction.characterStates, item => typeof item.character === 'string' && typeof item.state === 'string')
+}
 
 /** 实体扫描表：kind → 目录/文件约定与 id 派生。 */
 const KIND_LAYOUT: Readonly<Record<EntityKind, { dir: string } | { file: string }>> = {
@@ -325,12 +344,21 @@ export default class WriterStoreService extends WriterService {
    * `'maintenance'` 这个磁盘 kind 字面量只允许出现在本文件，消费者一律走本方法。
    */
   async readMaintenance(chapterId: string): Promise<MaintenanceDerived | undefined> {
-    return await this.readDerived(MAINTENANCE_KIND, chapterId) as MaintenanceDerived | undefined
+        const record = await this.readDerived(MAINTENANCE_KIND, chapterId)
+        if (record === undefined) return undefined
+        if (isMaintenanceDerived(record)) return record
+        this.warnSkipped(relativePathOf(this.projectRoot, this.derivedPath(MAINTENANCE_KIND, chapterId)), new Error('维护缓存形状非法，按缺失重建'))
+        return undefined
   }
 
-  /** 写入某章的维护 pass 派生记录（覆盖写；业务语义方法，见 readMaintenance）。 */
-  async writeMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void> {
-    await this.writeDerived(MAINTENANCE_KIND, chapterId, record)
+  /** 写维护缓存与章节保存共用锁，避免旧版本或迟到partial覆盖有效完整记录。 */
+  async writeMaintenance(chapterId: string, record: MaintenanceDerived, expectedChapterHash?: string): Promise<void> {
+        await withWriteChain(this.projectRoot, `entity:chapter/${chapterId}`, async () => {
+            if (expectedChapterHash !== undefined && (await this.readFromDisk('chapter', chapterId))?.hash !== expectedChapterHash) return
+            const current = await this.readMaintenance(chapterId)
+            if (record.partial && current?.sourceHash === record.sourceHash && !current.partial) return
+            await this.writeDerived(MAINTENANCE_KIND, chapterId, record)
+        })
   }
 
   /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除）。 */
@@ -387,16 +415,45 @@ export default class WriterStoreService extends WriterService {
     return names.filter((n) => n.endsWith('.json')).map((n) => n.replace(/\.json$/, '')).sort()
   }
 
-  async appendPending(section: string): Promise<void> {
+  async appendPending(section: string, options?: PendingAppendOptions): Promise<void> {
     // 读-改-写跨并发维护 pass 必须串行：共享链按项目根取键，跨 store 实例仍是单写者（P0-1）
-    return withWriteChain(this.projectRoot, 'pending.md', () => this.appendPendingLocked(section))
+        return withWriteChain(this.projectRoot, 'pending.md', async () => {
+            if (!options?.chapter) return this.appendPendingLocked(section, options)
+            const chapter = options.chapter
+            await withWriteChain(this.projectRoot, `entity:chapter/${chapter.id}`, async () => {
+                if ((await this.readFromDisk('chapter', chapter.id))?.hash !== chapter.hash) return
+                if (chapter.maintenanceHash !== undefined) {
+                    const current = await this.readMaintenance(chapter.id)
+                    if (current === undefined || contentHash({}, JSON.stringify(current)) !== chapter.maintenanceHash) return
+                }
+                await this.appendPendingLocked(section, options)
+            })
+        })
   }
 
   /** 串行化保护下的实际追加（读 → 拼接 → 原子写）。 */
-  private async appendPendingLocked(section: string): Promise<void> {
+  private async appendPendingLocked(section: string, options?: PendingAppendOptions): Promise<void> {
     const abs = join(this.projectRoot, 'pending.md')
     const existing = await readOptionalText(abs)
-    const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${section.trim()}\n`
+        let body = section.trim()
+        const sectionKind = /^## \[(维护 pass|recompute mark)\] chapter\/(\d{3})/.exec(body)
+        if (options?.dedupKey !== undefined || sectionKind?.[1] === 'recompute mark') {
+            const archived = await withWriteChain(this.projectRoot, 'pending-archive.md', async () =>
+                `${await readOptionalText(join(this.projectRoot, 'pending-archive.md'))}\n${await readOptionalText(join(this.projectRoot, '.writer/pending-archive.md'))}`)
+            let epoch = 0
+            for (const match of `${existing}\n${archived}`.matchAll(/^<!-- writer-maintenance-epoch:(\d{3}):(\d+) -->$/gm)) {
+                if (match[1] === sectionKind?.[2]) epoch = Math.max(epoch, Number(match[2]))
+            }
+            if (sectionKind?.[1] === 'recompute mark') {
+                body = `${body}\n<!-- writer-maintenance-epoch:${sectionKind[2]}:${epoch + 1} -->`
+            } else if (options?.dedupKey !== undefined) {
+                const marker = (key: string) => `<!-- writer-pending:${key}${epoch ? `:${epoch}` : ''} -->`
+                const markers = [marker(options.dedupKey), ...(options.supersedingKey ? [marker(options.supersedingKey)] : [])]
+                if ([existing, archived].some(text => markers.some(value => text.includes(value)) || (!epoch && text.includes(body)))) return
+                body = `${body}\n${markers[0]}`
+            }
+        }
+    const next = `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${body}\n`
     const tmpPath = uniqueTmpPath(abs)
     await writeFile(tmpPath, next, 'utf8')
     try {

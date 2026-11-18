@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import {
-  applyRewritePatches, assembleWritingContext, detectDroppedSentences, detectTimeAnchorInversions, inspectTimelines,
+  applyRewritePatches, assembleWritingContext, contentHash, detectDroppedSentences, detectTimeAnchorInversions, inspectTimelines,
   extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, guardContinuation, parseConsistencyBatchOutput,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
   renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
@@ -70,6 +70,7 @@ export default class WriterEngineServiceImpl extends EngineService {
   private readonly extractionRetries: number
   /** 同章维护 pass in-flight 去重（保存后自动触发与显式调用并发时共享同一次执行）。 */
   private readonly maintenanceInflight = new Map<string, Promise<MaintenancePassResult>>()
+    private readonly maintenanceTasks = new Map<string, Set<Promise<MaintenancePassResult>>>()
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -137,7 +138,19 @@ export default class WriterEngineServiceImpl extends EngineService {
 
   // —— 维护 pass（保存后异步，默认两次调用；inflight 去重 + 完成 hash 锚定）——
 
-  async maintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }, depth = 0): Promise<MaintenancePassResult> {
+    maintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }, depth = 0): Promise<MaintenancePassResult> {
+        const key = `${this.ctx.writer.root}\u0000${chapterId}`
+        const tasks = this.maintenanceTasks.get(key) ?? new Set<Promise<MaintenancePassResult>>()
+        this.maintenanceTasks.set(key, tasks)
+        const task = this.runMaintenancePass(chapterId, opts, depth).finally(() => {
+            tasks.delete(task)
+            if (tasks.size === 0 && this.maintenanceTasks.get(key) === tasks) this.maintenanceTasks.delete(key)
+        })
+        tasks.add(task)
+        return task
+    }
+
+  private async runMaintenancePass(chapterId: string, opts?: { force?: boolean; signal?: AbortSignal }, depth = 0): Promise<MaintenancePassResult> {
     const key = `${this.ctx.writer.root}\u0000${chapterId}`
     if (!CHAPTER_ID_RE.test(chapterId)) throw new Error(`章节 id 必须为三位序号：${JSON.stringify(chapterId)}`)
     // 同章 inflight 去重：并发触发共享同一次执行（返回同一 Promise，不重复调用模型）。
@@ -154,23 +167,19 @@ export default class WriterEngineServiceImpl extends EngineService {
       if (depth >= 4) return current
       return this.maintenancePass(chapterId, opts, depth + 1)
     }
-    const run = this.doMaintenancePass(chapterId, opts).finally(() => {
+    const run = (async () => {
+        let result = await this.doMaintenancePass(chapterId, opts)
+        for (;;) {
+            const latest = await this.ctx.writer.get('chapter', chapterId)
+            if (latest === undefined || latest.hash === result.sourceHash) return result
+            result = await this.doMaintenancePass(chapterId, { signal: opts?.signal })
+        }
+    })().finally(() => {
       // 身份校验清理：只删自己入表的 entry，防误删并发后继 pass 的登记（否则 drainMaintenance 漏计漏等）
       if (this.maintenanceInflight.get(key) === run) this.maintenanceInflight.delete(key)
     })
     this.maintenanceInflight.set(key, run)
-    const result = await run
-    // TOCTOU 兜底：执行期间章节又被改写（inflight 去重吞掉了新保存触发的 pass）→ 补跑一次（仅一层，防递归放大）
-    if (depth < 1) {
-      const [latest, derived] = await Promise.all([
-        this.ctx.writer.get('chapter', chapterId),
-        this.ctx.writer.readMaintenance(chapterId),
-      ])
-      if (latest !== undefined && derived !== undefined && derived.sourceHash !== latest.hash) {
-        return this.maintenancePass(chapterId, { force: true, signal: opts?.signal }, depth + 1)
-      }
-    }
-    return result
+    return run
   }
 
   private async doMaintenancePass(chapterId: string, opts: { force?: boolean; signal?: AbortSignal } | undefined): Promise<MaintenancePassResult> {
@@ -179,7 +188,8 @@ export default class WriterEngineServiceImpl extends EngineService {
     if (chapter === undefined) throw new Error(`章节不存在：chapter/${chapterId}`)
     const derived = await this.ctx.writer.readMaintenance(chapterId)
     // 完成 hash 锚定：派生与当前章节内容一致即跳过（防重复触发读己之写）
-    if (derived !== undefined && derived.sourceHash === chapter.hash && opts?.force !== true) {
+    if (derived !== undefined && derived.sourceHash === chapter.hash && !derived.partial && opts?.force !== true) {
+        await this.deliverMaintenance(chapterId, derived)
       return { chapterId, status: 'up-to-date', sourceHash: derived.sourceHash }
     }
     const [characters, plots] = await Promise.all([
@@ -188,7 +198,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     ])
     const refs = { chapters: [chapterId], characters: characters.map((c) => c.id), plots: plots.map((p) => p.id) }
     // 既有抽取记录（防重参考）：derived 即使 sourceHash 过期（改稿链）仍是改稿前的有效基线
-    const existingForDedup = derived === undefined ? undefined : {
+    const existingForDedup = derived === undefined || derived.sourceHash === chapter.hash ? undefined : {
       facts: derived.extraction.facts.slice(0, 12).map((f) => truncateCodePoints(f.description.replace(/\s+/g, ' ').trim(), 80)),
       foreshadowEvents: derived.extraction.foreshadowEvents.slice(0, 12)
         .map((e) => truncateCodePoints(`${e.plot} ${e.action}${e.note !== undefined ? `：${e.note}` : ''}`.replace(/\s+/g, ' ').trim(), 80)),
@@ -250,7 +260,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       updatedAt: new Date().toISOString(),
       ...(rejected !== undefined ? { partial: true, rejected } : {}),
     }
-    await this.ctx.writer.writeMaintenance(chapterId, record)
+    await this.ctx.writer.writeMaintenance(chapterId, record, chapter.hash)
     // 重读判据紧贴 appendPending（轮次 38 修复 P0-2）：原先在 writeDerived **之前**判定，
     // 中间隔着一次 IO；判定与写入之间的窗口越小，「旧版本待办混进人工确认环」的概率越低。
     // changedDuringRun 是唯一判据：本轮锚定的版本若已被改写则不写 pending（旧版本建议会误导
@@ -259,7 +269,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     // 最新版待办永久不落 pending.md——自动触发丢弃返回值且后续 pass 命中 up-to-date 短路）。
     const changedDuringRun = (await this.ctx.writer.get('chapter', chapterId))?.hash !== chapter.hash
     if (!changedDuringRun) {
-      await this.ctx.writer.appendPending(renderPendingSection(chapterId, record))
+      await this.deliverMaintenance(chapterId, record)
     }
     const result: MaintenancePassResult = {
       chapterId,
@@ -274,6 +284,17 @@ export default class WriterEngineServiceImpl extends EngineService {
     this.ctx.emit(this, 'writer/maintenance-pass', result)
     return result
   }
+
+    private async deliverMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void> {
+        const latest = await this.ctx.writer.get('chapter', chapterId)
+        if (latest?.hash !== record.sourceHash) return
+        const completeKey = contentHash({}, JSON.stringify({ chapterId, sourceHash: record.sourceHash, partial: false }))
+        const key = contentHash({}, JSON.stringify({ chapterId, sourceHash: record.sourceHash, partial: record.partial ?? false }))
+        await this.ctx.writer.appendPending(renderPendingSection(chapterId, record), {
+            dedupKey: key, supersedingKey: record.partial ? completeKey : undefined,
+            chapter: { id: chapterId, hash: record.sourceHash, maintenanceHash: contentHash({}, JSON.stringify(record)) },
+        })
+    }
 
   // —— 一致性检查（全书、按预算分批、维度与 schema 对齐；报告预览不自动持久化）——
 
@@ -447,7 +468,8 @@ export default class WriterEngineServiceImpl extends EngineService {
       }
       const derived = await this.ctx.writer.readMaintenance(id)
       const fresh = derived !== undefined && derived.sourceHash === chapter.hash
-      if (fresh && mode === 'recompute') {
+      if (fresh && !derived.partial && mode === 'recompute') {
+        await this.maintenancePass(id, { signal: opts?.signal })
         results.push({ chapterId: id, status: 'up-to-date' })
         continue
       }
@@ -516,17 +538,27 @@ export default class WriterEngineServiceImpl extends EngineService {
   /** 当前在飞维护 pass 数（含自动触发；0 = 无在飞，drain 立即返回）。 */
   pendingMaintenanceCount(): number {
     const prefix = `${this.ctx.writer.root}\u0000`
-    return [...this.maintenanceInflight.keys()].filter(key => key.startsWith(prefix)).length
+    return [...this.maintenanceTasks.keys()].filter(key => key.startsWith(prefix)).length
   }
 
   /**
-   * 排空在飞维护 pass。**快照语义**：等待调用瞬间的 inflight 快照；快照后新进的 pass、以及
-   * maintenancePass TOCTOU 补跑（原 run settle 后才重新入表）不被本次等待——由下次 flush/
-   * 保存触发覆盖（连续 flush 两次可收敛）。失败只吞错：排空语义是「等到不在飞」，不是「保证成功」。
+   * 等待完整维护生命周期及版本补跑；持续保存时等待其收敛。取消只终止当前等待者，
+   * 不影响共享后台任务。失败由发起方处理，排空仅保证本项目没有在飞任务。
    */
-  async drainMaintenance(): Promise<void> {
+  async drainMaintenance(signal?: AbortSignal): Promise<void> {
     const prefix = `${this.ctx.writer.root}\u0000`
-    await Promise.allSettled([...this.maintenanceInflight].filter(([key]) => key.startsWith(prefix)).map(([, task]) => task))
+        for (;;) {
+            signal?.throwIfAborted()
+            const tasks = [...this.maintenanceTasks].filter(([key]) => key.startsWith(prefix)).flatMap(([, tasks]) => [...tasks])
+            if (tasks.length === 0) return
+            const settled = Promise.allSettled(tasks)
+            if (!signal) { await settled; continue }
+            await new Promise<void>((resolve, reject) => {
+                const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+                signal.addEventListener('abort', abort, { once: true })
+                void settled.then(() => { signal.removeEventListener('abort', abort); resolve() })
+            })
+        }
   }
 
   // —— full：整章生成，一次调用，创建或整体替换 ——

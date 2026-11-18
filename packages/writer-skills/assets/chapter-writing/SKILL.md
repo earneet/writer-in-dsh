@@ -27,6 +27,7 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 ## 防剧透纪律
 
 - 上下文只注入**已写章节**（序号小于本章）；未来章节的大纲情节、事件、伏笔回收方式不得出现在正文或提示里。
+- `events.md` 的章节事件使用 `## 第 N 章` 标题（允许零填充和空格），子标题继承该章；引擎保留本章及更早事件。首个章标题前只放全局已确认事实，未来事件必须放在对应章标题下。
 - 悬念信息按「当前视角人物所知」过滤：读者与角色不知道的事，正文不能泄露。
 
 ## 伏笔指令格式
@@ -64,7 +65,7 @@ write_chapter 保存后引擎会**异步**跑维护 pass（摘要 + 事实/伏�
 1. **读 pending.md**（项目根的 `pending.md`，用宿主文件读取工具；它不是 writer 实体）：本章建议节含伏笔事件与人物状态升级建议（附可直接提交的 JSON）。
 2. **确认落实**：人物状态建议用 `timeline_update` 升格到权威时间线；伏笔建议用 `foreshadow_update`；不同意的留在清单或口头说明作废。
 3. **归档清理**：该章建议全部处理后 `pending_cleanup(chapter)` 归档清空。
-4. **收尾排空**：任务结束前 `maintenance_flush()` 等待在飞维护 pass 落盘（headless 进程退出会截断在飞任务；输出提示可能补跑时可再 flush 一次）。
+4. **收尾排空**：任务结束前 `maintenance_flush()` 等待本项目的完整维护任务和版本补跑收敛；停止等待不取消共享后台维护，headless 进程退出仍会截断未完成任务。
 5. **存档点**：重要节点（一卷写完、大改后）用 `archive_point(message)` 建 git 存档点。
 
 改稿后（write_chapter rewrite 大改或手工 writer_update 章节）：`recompute_derived(chapter_range)` 重算下游派生。跨章矛盾怀疑时用 `consistency_check(scope?)` 全书检查。查证设定细节用 `writer_search(query, chapter_limit=当前章号)`。

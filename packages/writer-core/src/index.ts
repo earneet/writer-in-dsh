@@ -16,6 +16,12 @@ export interface EntityPatch {
   content?: string
 }
 
+export interface PendingAppendOptions {
+    dedupKey?: string
+    supersedingKey?: string
+    chapter?: { id: string; hash: string; maintenanceHash?: string }
+}
+
 export interface WorkspaceProjectState {
     status: 'ready' | 'empty' | 'blocked' | 'mismatch'
     workspaceRoot: string
@@ -104,8 +110,8 @@ export abstract class WriterService extends Service {
    */
   abstract readMaintenance(chapterId: string): Promise<MaintenanceDerived | undefined>
 
-  /** 写入某章的维护 pass 派生记录（覆盖写）。业务语义方法，与 readMaintenance 配对。 */
-  abstract writeMaintenance(chapterId: string, record: MaintenanceDerived): Promise<void>
+  /** 写维护记录；可校验预期章节hash，同版完整结果优先于迟到的partial。 */
+  abstract writeMaintenance(chapterId: string, record: MaintenanceDerived, expectedChapterHash?: string): Promise<void>
 
   /** 删除某章的维护 pass 派生记录（改稿期标记过期 = 删除，重建走维护 pass）。 */
   abstract deleteMaintenance(chapterId: string): Promise<void>
@@ -119,8 +125,8 @@ export abstract class WriterService extends Service {
   /** 列出某类派生数据的全部 id（统计派生覆盖率用）。@deprecated 轮次 38：生产代码零调用且会把磁盘 kind 字面量重新泄漏给消费者——第二步删除（fix-plan 已列入裁定清单）。 */
   abstract listDerived(kind: string): Promise<string[]>
 
-  /** 向 pending.md 追加一节待办（维护 pass 产出，供人确认；原子写）。 */
-  abstract appendPending(section: string): Promise<void>
+  /** 向 pending.md 原子追加待办；有 dedupKey 时核对活跃清单及归档，避免失败重试或缓存重建重复投递。 */
+  abstract appendPending(section: string, options?: PendingAppendOptions): Promise<void>
 
   /**
    * 归档式变更 pending.md（P7 归档语义）：在 pending.md 串行链的锁定区内执行——
@@ -136,7 +142,7 @@ export abstract class WriterService extends Service {
 }
 
 /**
- * 维护 pass 结果：done = 本次完成两次调用并写回；up-to-date = hash 锚定命中跳过（防读己之写重复触发）。
+ * 维护 pass 结果：done = 本次生成并写回；up-to-date = 完整新鲜且已核对待办投递，不重复调用模型。
  */
 export interface MaintenancePassResult {
   chapterId: string
@@ -193,7 +199,7 @@ export abstract class EngineService extends Service {
 
   /**
    * 维护 pass（保存后异步，默认两次调用）：①章节摘要 ②事实/伏笔/人物状态抽取（分节校验 + 按节重试）。
-   * 同章 inflight 去重；完成 hash 锚定（派生与当前章节一致时返回 up-to-date 不再调用）。
+   * 同章 inflight 去重；新鲜完整的派生补齐待办投递后返回 up-to-date，不再调用模型。
    * @param chapterId - 三位序号章节 id。
    * @param opts - force=true 忽略 hash 锚定强制重算；signal 取消。
    */
@@ -221,10 +227,10 @@ export abstract class EngineService extends Service {
 
   /**
    * 排空在飞的维护 pass（P7：缓解轮次 8 限制①——headless 任务结束进程退出时在飞 pass 被截断）。
-   * 等待全部 inflight 维护 pass 结束（失败只吞错不抛——排空语义是「等到不在飞」，不是「保证成功」）。
+   * 等待完整维护生命周期及版本补跑收敛；失败由发起方处理，取消仅终止等待者，不中止共享后台任务。
    * 模型可在结束前调 maintenance_flush 工具触发；非协作退出（进程被杀）仍无法覆盖，派生由下次补齐。
    */
-  abstract drainMaintenance(): Promise<void>
+  abstract drainMaintenance(signal?: AbortSignal): Promise<void>
 
   /** 当前在飞维护 pass 数（0 = 无在飞；maintenance_flush 的状态展示用）。 */
   abstract pendingMaintenanceCount(): number

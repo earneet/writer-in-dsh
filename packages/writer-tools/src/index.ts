@@ -297,7 +297,7 @@ export function apply(ctx: Context): void {
       // 覆盖率按新鲜度计：派生存在且 sourceHash 与当前章节 hash 一致才算覆盖（过期派生 = 待维护）
       const derivedEntries = await Promise.all(chapters.map(async (c) => {
         const derived = await ctx.writer.readMaintenance(c.id)
-        return derived !== undefined && derived.sourceHash === c.hash
+        return derived !== undefined && derived.sourceHash === c.hash && !derived.partial
       }))
       const stale = chapters.filter((_, i) => !derivedEntries[i]).map((c) => c.id)
       const volumes = new Map<string, number>()
@@ -418,7 +418,8 @@ export function apply(ctx: Context): void {
       const engine = getEngine(ctx)
       if ('unavailable' in engine) return engine.unavailable
       const before = engine.pendingMaintenanceCount()
-      await engine.drainMaintenance()
+      await engine.drainMaintenance(exec.signal)
+      exec.signal.throwIfAborted()
       return before > 0
         ? `已排空 ${before} 个在飞维护 pass（派生数据已落盘或已失败告警）。`
         : '当前没有在飞的维护 pass。'

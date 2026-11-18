@@ -79,8 +79,8 @@ test('recoverySnapshot：真实落盘 + git 时间锚 + 新鲜摘要优先（ran
     await store.save('character', 'elin', { content: '守灯人' })
     await store.save('plot', 'green-flame', { content: '绿焰', frontmatter: { status: 'planted' } })
     // 仅第一章有新鲜摘要（第二章派生过期）
-    await store.writeDerived('maintenance', '001', { sourceHash: c1.hash, summary: '第一章新鲜摘要' })
-    await store.writeDerived('maintenance', '002', { sourceHash: 'stale', summary: '过期摘要不应出现' })
+    await store.writeMaintenance('001', { sourceHash: c1.hash, summary: '第一章新鲜摘要', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: '2026-11-18T00:00:00Z' })
+    await store.writeMaintenance('002', { sourceHash: 'stale', summary: '过期摘要不应出现', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: '2026-11-18T00:00:00Z' })
     // git 仓库 + 章节提交（时间锚来源）
     await execFileAsync('git', ['init', '-q'], { cwd: root })
     await execFileAsync('git', ['add', '-A'], { cwd: root })

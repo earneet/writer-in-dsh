@@ -28,7 +28,7 @@ async function makeFixture(): Promise<{ rag: WriterRagService; store: WriterStor
   await writeFile(join(root, 'worldbuilding/flame.md'), `---\n---\n绿焰是北方冻土的古神残火。`, 'utf8')
   // 第一章新鲜派生摘要
   const ch1 = await store.get('chapter', '001')
-  await store.writeDerived('maintenance', '001', { sourceHash: ch1!.hash, summary: '第一章：绿焰初现的雨夜。' })
+  await store.writeMaintenance('001', { sourceHash: ch1!.hash, summary: '第一章：绿焰初现的雨夜。', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: '2026-11-18T00:00:00Z' })
   const rag = new WriterRagService(ctx, {
     embeddingBackend: 'none', llmProvider: '', llmModel: '', externalBaseUrl: '', externalModel: '',
     externalApiKeyEnv: 'WRITER_RAG_API_KEY', semanticCandidates: 15, chunkChars: 600, chunkOverlap: 80,

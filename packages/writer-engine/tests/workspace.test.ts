@@ -35,11 +35,11 @@ test('共享引擎按项目隔离同章号维护、计数与排空', async t => 
         await run(root!, async () => { await store.initializeProject(root!); await store.save('chapter', '001', { content }) })
     }
     const passA = run(a, () => engine.maintenancePass('001'))
-    await t.waitFor(() => calls === 1)
+    await t.waitFor(() => assert.equal(calls, 1))
     assert.equal(run(b, () => engine.pendingMaintenanceCount()), 0)
     await run(b, () => engine.drainMaintenance())
     const passB = run(b, () => engine.maintenancePass('001'))
-    await t.waitFor(() => calls === 2)
+    await t.waitFor(() => assert.equal(calls, 2))
     release()
     await Promise.all([passA, passB])
     const [derivedA, derivedB] = await Promise.all([run(a, () => store.readMaintenance('001')), run(b, () => store.readMaintenance('001'))])

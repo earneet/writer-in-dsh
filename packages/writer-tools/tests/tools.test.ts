@@ -96,6 +96,28 @@ test('writer_stats：章节/卷/伏笔/弧线/派生覆盖各分支', async () =
   assert.match(out, /维护派生覆盖：1\/2（待维护 pass：002）/)
 })
 
+test('writer_stats：hash 新鲜但 partial 的章节仍列为待维护', async () => {
+    const { tools } = makeCtx({
+        root: '.',
+        list: async kind => kind === 'chapter' ? [{ id: '001', content: '正文', frontmatter: {}, hash: 'current' }] : [],
+        get: async () => undefined,
+        save: async () => { throw new Error('不应保存') },
+        readMaintenance: async () => ({ sourceHash: 'current', summary: '摘要', extraction: { facts: [], foreshadowEvents: [], characterStates: [] }, updatedAt: 'now', partial: true }),
+    } as unknown as WriterStub)
+    assert.match(await tools.get('writer_stats')!.execute({}), /维护派生覆盖：0\/1（待维护 pass：001）/)
+})
+
+test('maintenance_flush：透传等待者信号，取消后不返回成功', async () => {
+    const controller = new AbortController()
+    let observed: AbortSignal | undefined
+    const { tools } = makeCtx({ root: '.', list: async () => [], get: async () => undefined, save: async () => { throw new Error('不应保存') } }, {
+        pendingMaintenanceCount: () => 1,
+        drainMaintenance: async (signal?: AbortSignal) => { observed = signal; controller.abort(); signal?.throwIfAborted() },
+    })
+    await assert.rejects(() => tools.get('maintenance_flush')!.execute({}, { signal: controller.signal }), { name: 'AbortError' })
+    assert.equal(observed, controller.signal)
+})
+
 test('foreshadow_update：plant/resolve/abandon/milestone 状态机与校验', async () => {
   const states = new Map<string, { status?: string; milestones?: string }>([['gf', { status: 'planned' }]])
   const saved: { frontmatter: Record<string, unknown> }[] = []
