@@ -1,11 +1,12 @@
 # AGENTS.md — writer-in-dsh
 
-> **任务来源**: 用户确认实施新工作目录的一键初始化和非空目录指引。
-> **任务内容**: 同步默认项目目录规则，保持后续开发与已实现行为一致。
+> **任务来源**: 用户确认新工作目录初始化，随后要求更新审查、先提交恢复点并修复审查发现。
+> **任务内容**: 同步项目目录、维护恢复和当前验证状态，保持后续开发与实现一致。
 > **参考文档**:
 > - `docs/project-initialization-design-2026-11-17.md` — 初始化设计与验收。
 > - `docs/implementation-plan.md` — 历轮实施记录。
-> **生成日期**: 2026-11-17（本轮更新）
+> - `docs/review-fixes-plan-2026-11-18.md` — R1–R10修复裁定与验收。
+> **生成日期**: 2026-11-18（本轮更新）
 
 以 DeepSeek Harness（dsh）插件形式复刻 novel-writer（AI 长篇小说写作工具）的功能。本仓库是插件的开发仓库。
 
@@ -111,4 +112,6 @@ docs/                # 本项目设计文档（落地规划、审查裁定）
 
 - 轮次 48（新目录初始化）：空目录欢迎页与一键初始化、非空目录纠正指引、真实命令通道和会话项目根对齐；跨项目索引/维护隔离。两路对抗审查修复三项后收敛；typecheck/build、337/337 单测、初始化实际落盘浏览器流程及原工作台回归均通过。旧 profile 显式 projectRoot 仍优先；未改宿主配置，完整 Electron 端到端未测。详见 `docs/project-initialization-design-2026-11-17.md` 和 implementation-plan §8。
 
-**下一步**：真实 npm publish（需凭据/2FA，按 `docs/release-checklist.md` §5 执行）；external embedding 档效果实测（待有 key 环境，代码路径已由 stub 测试锁定）；export_book 真人 Web UI 审批（seam 级已复验）。
+- 轮次 50（审查修复收口，2026-11-18）：恢复点 `56bd030` 后修复 R1–R10：事件按章过滤、首轮前Hero初始化、空目录监听、维护补投/partial/坏缓存/排空取消、元数据键与导出及发布矩阵。待办以章hash/阶段幂等，显式mark开启持久新轮次；持锁复核章节和维护记录指纹，旧任务不占新轮次、不覆盖新版或完整结果。独立对抗审查及逐条复核收敛；typecheck/build、366/366、十二包打包及客户端专项通过。详见 `docs/review-fixes-plan-2026-11-18.md` 和 implementation-plan §8。
+
+**下一步**：按审查批次C补改稿影响核对、新伏笔候选与灵感整理技能；真实Electron/干净profile、模型及embedding效果、export_book真人审批验收后，再按 `docs/release-checklist.md` 发布。宿主升级独立安排，当前依赖仍为0.2.2-rc.1。

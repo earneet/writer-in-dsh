@@ -1,13 +1,14 @@
 # writer-in-dsh 实现规划：插件划分、职责与依赖
 
-> **任务来源**: 项目领域层复刻与历轮实施；2026-11-17 用户要求审查修复、工作台重设计与新目录初始化；2026-11-18 要求更新主仓和参考项目，再次审查实现情况及优化安排。
-> **任务内容**: 记录插件职责、实施阶段、关键裁定和验证结果；完成工作台及初始化后，更新参考源码并复核领域功能、宿主集成和后续优先级。
+> **任务来源**: 项目领域层复刻与历轮实施；2026-11-17 用户要求审查修复、工作台重设计与新目录初始化；2026-11-18 要求更新并审查，随后要求先提交恢复点，再按审查建议修复。
+> **任务内容**: 记录插件职责、实施阶段、关键裁定和验证结果；保存恢复点并修复R1–R10，维持领域与宿主职责边界。
 > **参考文档**:
 > - `references/novel-writer-analysis.md` — 领域功能与 dsh 复刻映射。
 > - `references/dsh-plugin-research.md` — 宿主能力缝和插件定义约定。
 > - `references/novel-writer/`、`references/deepseek-harness/` — 原项目设计及宿主源码。
 > - `docs/current-state-review-2026-11-17.md` — 本轮版本基线、复核结论与优化建议。
 > - `docs/current-state-review-2026-11-18.md` — 最新 Git 基线、当前工作区复核、故障证据与优化安排。
+> - `docs/review-fixes-plan-2026-11-18.md` — R1–R10修复范围、裁定、红绿证据与审查记录。
 > - `docs/ui-redesign-2026-11-17.md` — 写作工作台 UI 重设计、宿主接线边界、预览及待确认的实施范围。
 > - `docs/ui-implementation-2026-11-17.md` — 工作台实施步骤、审查修复和最终验证边界。
 > - `docs/project-initialization-design-2026-11-17.md` — 已确认初始化方案、实现与验收证据。
@@ -259,3 +260,5 @@ default-export `WriterRagService` 发布 `ctx.writerRag`（`inject: ['writer']`�
 - 轮次 48（完成·新目录一键初始化，2026-11-17）：用户确认 `docs/project-initialization-design-2026-11-17.md` 后实施。空工作目录显示欢迎页与“一键初始化”，确定性创建 novel/ 基础目录及中文模板并自动进入工作台；非空且没有项目时提供内容摘要与使用指引，隐藏文件计入判断，标记需匹配文件/目录类型。已有项目正常打开，读取/连接/服务缺席/固定根不匹配分别提示。复用宿主人类命令 writer-project-status/init，使用已验证会话 header.cwd 并显式 withInitiator，不调用模型、不修改草稿。projectRoot 改可选，bundle/preset 移除宿主 cwd 默认固定值，实际业务调用按会话解析 cwd/novel；显式绝对路径保留。安装版 preset 按 revision 共享服务树，store 索引/重建任务/迁移与 engine 维护 inflight/计数/排空均按项目根隔离。初始化独占创建、拒绝覆盖、同根串行，写入前后复查；失败保留文件及 .initializing 标记。两路对抗审查与逐条复核修复三项 P2（链接父目录 canonical、迁移故障阻断读取、检查失败保留陈旧 empty），新增失败回归后复审均无新问题。验证：npm run typecheck/build 零错；npm test 337/337（基线324，新增13项）；Node client-harness 四项 PASS；--init 浏览器验证真实 CommandRuntime/AgentRegistry/SessionStore+临时磁盘目录，从空目录到工作台、实际文件落盘、跨会话、非空/隐藏/变化保护、读取失败和陈旧 empty 清除均通过；四宽度无整页溢出。原 --shell 宿主外壳回归和七页×四宽度28组合、亮暗主题及无页面异常均通过；git diff --check 通过。日志 .tmp/project-init-*.log，截图 .tmp/ui-implementation/browser/project-init-*.png。已更新README、默认配置指引和初始化设计。边界：浏览器经本地HTTP测试桥与无Loop Agent句柄验证，未做真实Electron profile或模型端到端；旧profile显式钉死的projectRoot仍优先，需按提示调整，不自动改宿主配置。未提交推送、发布或修改参考子模块，保留此前用户改动。
 
 - 轮次 49（完成·更新参考项目并复审实现与优化安排，2026-11-18）：用户要求从 Git 更新主仓和引用项目，再审查领域功能复刻、架构合理性及后续优化，Agent Loop 继续复用宿主。主仓 fetch 后 HEAD=origin/main=a4f377c，无新增合并；novel-writer=f42c74a9 与远端一致；dsh 子模块从39163dd30f快进807提交至ca33fd6843，实际运行依赖仍为0.2.2-rc.1。保留现有未提交的工作台v10、初始化与审查材料，没有修改功能源码、升级依赖或改宿主profile。三线只读审查、主审逐条回查与独立复跑探针后，报告 docs/current-state-review-2026-11-18.md 保留2项P1（未来事件混入早章上下文、首轮前blank会话无法挂载初始化入口）、7项P2（待办补投恢复、partial完整性、坏形状缓存、frontmatter键往返、空实体目录首文件漏刷新、导出元数据错源、flush生命周期与取消）和1项P3（发布清单仍引用旧宿主版本）；旧七项P1修复未回退。共享动态store/engine跨会话异步维护隔离探针通过。功能主干及包切分合理；改稿影响分析、新伏笔发现、灵感整理和独立语义召回仍须区分部分承接与既定简化。建议按正确性/基础恢复→治理/使用闭环→领域技能增强→效果评测/独立宿主升级/发布验收安排，尚未执行优化代码。报告成稿后两路独立对抗复核，仅修正一处上游引用行号后收敛；guard block.info明确为升级适配风险，非当前rc.1故障。验证：npm run typecheck退出0，npm test 337/337，失败/取消/跳过均0；主审复跑未来事件、三格式导出、实际安装版blank视图函数、维护故障/partial/null缓存/键往返/flush补跑/跨根隔离及flush取消探针，证据在.tmp/current-state-review-2026-11-18/。本轮未验证真实LLM/embeddings、完整浏览器/Electron新会话、真人审批或registry发布安装；未提交推送。新增报告明确覆盖当前含未提交改动的工作区，不能等同远端已有全部功能。
+
+- 轮次 50（完成·提交恢复点并修复R1–R10，2026-11-18）：按用户要求先将当前工作区完整提交为恢复点56bd030，再在codex/fix-review-2026-11-18修复审查问题。领域：事件按二级章节锚过滤，支持合法缩进，子标题/围栏不误识别；frontmatter键不能往返则拒绝，writer_update保留JSON自有__proto__交领域拒绝，非法请求不改原文件。客户端：复用安装版conversation.hero.options在首轮前初始化，同会话换预设重检；按实际目录订阅，覆盖空实体/空卷首文件，修复卷文件读取路径；partial仍提示待维护。治理：坏形状缓存按缺失重建；partial可公开重算且同版本抽取保留完整条目；维护任务登记覆盖连续版本补跑，排空仅取消等待者。待办身份为章hash+partial/complete阶段，核对活跃及新旧归档，普通删缓存不回流；显式mark在SoT中开启新轮次。投递在待办→章节锁内复核正文及维护记录指纹，旧缓存不能占新轮次；缓存写入共用章节锁，旧版本或迟到partial不覆盖新版完整结果。导出三格式优先project元数据并回退旧outline；发布指引对齐实际0.2.2-rc.1/cordis4.1.0/schemastery3.19.0和Node≥24.9。各问题及审查边界先红后绿，独立对抗审查→逐条复核→修复→重测收敛；完整过程见docs/review-fixes-plan-2026-11-18.md，原报告§8已更新修复状态。最终typecheck/build退出0，366/366（净增29，失败/取消/跳过0），十二包pack dry-run入口、diff检查通过。UI79/79，首轮前初始化11项、目录监听23项，旧init/shell/普通七页×四宽度与Node harness均通过。真实Electron、干净profile重装、真人审批和真实LLM/embedding未在本轮复验。修复分主题提交4b95786/e0833dc/b6c18be/2ae9648/436a633；未推送、发布、升级依赖或修改参考/宿主配置。新增领域能力和宿主升级按后续批次安排。
