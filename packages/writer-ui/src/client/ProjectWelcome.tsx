@@ -1,5 +1,44 @@
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceProjectState } from 'dsh-writer-core'
+import { useProject } from './useProject.ts'
+
+type HeroSessionRow = { cwd?: string; projectionValues?: { agentPreset?: string } }
+
+export function ProjectHero({ sessionId, useSessions }: {
+    sessionId: string
+    useSessions: <T>(select: (sessions: { byId: Record<string, HeroSessionRow | undefined> }) => T) => T
+}) {
+    const identity = useSessions(sessions => {
+        const session = sessions.byId[sessionId]
+        return JSON.stringify([sessionId, session?.cwd, session?.projectionValues?.agentPreset])
+    })
+    return <ProjectHeroAction key={identity} sessionId={sessionId} />
+}
+
+function ProjectHeroAction({ sessionId }: { sessionId: string }) {
+    const { project, loading, initializing, error, initialize, refresh } = useProject(sessionId, false)
+    if (loading || (!project && !error)) return null
+    if (project?.status === 'ready') return <span role="status" title="发送第一条消息后可从写作面板打开项目。">项目已就绪</span>
+
+    const empty = project?.status === 'empty'
+    return <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {empty && <Button size="sm" variant="primary" disabled={initializing} onClick={() => { void initialize() }}>
+            {initializing ? '正在初始化…' : '一键初始化'}
+        </Button>}
+        {(!empty || error) && <details style={{ position: 'relative' }}>
+            <summary style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>目录指引</summary>
+            <div style={{
+                position: 'absolute', insetInlineEnd: 0, zIndex: 2, boxSizing: 'border-box',
+                width: 'min(20rem, calc(100vw - 32px))', padding: 12, overflowWrap: 'anywhere',
+                border: '1px solid var(--dsw-alias-border-l3)', borderRadius: 8,
+                background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)',
+            }}>
+                <p role={error ? 'alert' : undefined}>{error ?? project?.message}</p>
+                <Button size="sm" disabled={initializing} onClick={refresh}>重新检查</Button>
+            </div>
+        </details>}
+    </div>
+}
 
 export function ProjectWelcome({ project, loading, initializing, error, initialize, refresh }: {
     project: WorkspaceProjectState | null

@@ -12,7 +12,8 @@
 > - `packages/writer-store/src/index.ts`、`packages/writer-preset/cordis.patch.yml` — 服务根目录及部署约定。
 > - `node_modules/@deepseek-ai/dsh-commands/lib/types/index.d.ts`、`node_modules/@deepseek-ai/dsh-commands/lib/typert.remote-client.d.ts` — 安装版宿主确定性命令及客户端调用契约。
 > - `node_modules/@deepseek-ai/dsh-api-workspace-files/lib/types/index.d.ts` — 工作区文件接口只读，不能用于创建项目。
-> **生成日期**: 2026-11-17
+> - `docs/current-state-review-2026-11-18.md` — 首轮前工作台入口受宿主隐藏的复核证据。
+> **生成日期**: 2026-11-17（2026-11-18 补充）
 
 ## 1. 用户行为
 
@@ -95,3 +96,9 @@ novel/
 - `studio-browser-check.mjs --init` 使用真实客户端构建产物、安装版宿主 React/基元/主题，以及真实 `CommandRuntime`、`AgentRegistry`、`SessionStore` 与临时磁盘目录。验证空目录到工作台、实际作品文件落盘、草稿不变、非空与隐藏文件保护、目录变化拒绝、跨会话、读取失败和陈旧 empty 清除；1280/960/720/390px 无整页溢出。
 - 浏览器仍使用本地 HTTP 测试桥与无 Loop Agent 句柄；不能视作 Electron profile 的端到端验收。权限失败为受控故障注入，未调用真实模型或修改宿主 profile。旧 profile 中显式钉死的 projectRoot 仍优先，面板会提示路径不匹配；不能只更新代码就假定已移除部署覆盖。
 - 运行日志及截图位于 `.tmp/project-init-*.log`、`.tmp/ui-implementation/browser/project-init-*.png`。最终全仓检查结果追加在 `docs/implementation-plan.md` §8 轮次 48。
+
+## 8. 首轮前入口与增量刷新
+
+- 安装版宿主 0.2.2-rc.1 的 `conversation.hero.options` 是会话级列表槽，位于新会话的工作区和预设一行。首轮前用槽提供的 `sessionId` 检查目录，工作区或同一会话的预设变化后重新检查。空目录提供“一键初始化”，非空或路径不匹配显示目录指引，成功后留在原会话并提示就绪。宿主仍根据自己的会话状态决定何时显示写作面板标签。
+- 项目增量监听覆盖实际列举到的根目录、实体目录和一层卷目录。空目录可收到第一个文件的变更，移除目录或离开工作台时回收旧订阅。派生维护结果标记为部分完成时，面板继续提示待维护。
+- `studio-browser-check.mjs --blank-init` 运行安装版宿主的外壳、标题栏、会话视图链和空态槽，并接通真实的确定性命令及临时项目。 `--watch` 以深度为零的文件监听验证首文件出现、更新、删除和退订。

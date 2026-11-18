@@ -15,6 +15,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { WriterPanel } from './Panel.tsx'
+import { ProjectHero } from './ProjectWelcome.tsx'
 import type { ToolViewPropsBase } from './Cards.tsx'
 import {
   ConsistencyCheckCard, ExportBookCard, ForeshadowUpdateCard, ReviewCard,
@@ -58,6 +59,8 @@ export function apply(context: Context): void {
         { name: 'conversation.view', id: 'writer-panel', order: 20, label: '写作面板' },
         (props: WriterPanelProps) => <WriterPanel {...props} />,
       )))
+    disposers.push(ctx.slots.inject('conversation.hero.options', () =>
+      ctx.slots.register({ name: 'conversation.hero.options', id: 'writer-project' }, ProjectHero)))
 
     // 写作工具富卡片（keyed toolview：任意工具名可注册，未注册工具落通用卡片）
     const card = (key: string, Component: (props: never) => React.ReactElement): void => {

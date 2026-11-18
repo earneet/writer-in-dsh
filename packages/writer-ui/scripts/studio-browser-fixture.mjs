@@ -1,8 +1,10 @@
 import { build } from 'esbuild'
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, readdir, unlink } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { WebSocketServer } from 'ws'
+import { watch } from 'chokidar'
 import { commandHarness } from '../../writer-store/tests/command-harness.ts'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
@@ -21,7 +23,7 @@ await build({ entryPoints: [fileURLToPath(new URL('./studio-browser-entry.tsx', 
 const theme = await readFile(resolve(repo, 'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'), 'utf8')
 const conversation = await readFile(resolve(repo, 'node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js'), 'utf8')
 if (conversation.split('return module.exports;').length !== 2) throw new Error('宿主 Conversation 导出形态已变化')
-await writeFile(resolve(out, 'conversation-fixture.js'), conversation.replace('return module.exports;', 'exports.__writerShellFixture = { ConversationContent, DefaultConversationViews, css: ConversationRoot_module_css_default }; return module.exports;'))
+await writeFile(resolve(out, 'conversation-fixture.js'), conversation.replace('return module.exports;', 'exports.__writerShellFixture = { ConversationMainPanel, ConversationHeader, ConversationSessionHeader, ConversationContent, DefaultConversationViews }; return module.exports;'))
 let themeCss = ''
 for (const match of theme.matchAll(/var\s+[\w$]+\s*=\s*("(?:\\.|[^"\\])*");/g)) {
     const value = JSON.parse(match[1])
@@ -35,10 +37,15 @@ routes.set('/conversation-fixture.js', resolve(out, 'conversation-fixture.js'))
 const harness = process.argv.includes('--build-only') ? null : await commandHarness()
 const fixtureAgents = new Map()
 if (harness) {
-    for (const id of ['init-empty', 'init-other', 'init-nonempty', 'init-hidden', 'init-race', 'init-error']) {
+    for (const id of ['init-empty', 'init-blank', 'init-other', 'init-nonempty', 'init-hidden', 'init-race', 'init-error', 'init-watch']) {
         const agent = await harness.createAgent(id)
         fixtureAgents.set(id, agent)
         if (id === 'init-nonempty' || id === 'init-hidden') await writeFile(resolve(agent.session.header.cwd, id === 'init-hidden' ? '.hidden' : 'notes.txt'), '已有内容，必须保留')
+        if (id === 'init-watch') {
+            const cwd = agent.session.header.cwd
+            for (const dir of ['chapters/卷一', 'characters', 'plots', 'worldbuilding', 'style']) await mkdir(resolve(cwd, 'novel', dir), { recursive: true })
+            await writeFile(resolve(cwd, 'novel/project.md'), '---\ntitle: 监听验证\n---\n')
+        }
     }
 }
 const server = createServer(async (request, response) => {
@@ -71,6 +78,10 @@ const server = createServer(async (request, response) => {
             } else if (url.pathname === '/project-add-file') {
                 await writeFile(resolve(cwd, 'notes.txt'), '初始化前新放入的文件')
                 response.end(JSON.stringify({ ok: true }))
+            } else if (url.pathname === '/project-edit') {
+                if (args.text === null) await unlink(path)
+                else await writeFile(path, args.text)
+                response.end(JSON.stringify({ ok: true }))
             } else throw new Error('未知测试请求')
         } catch (error) { response.end(JSON.stringify({ ok: false, error: { message: error.message } })) }
         return
@@ -81,8 +92,25 @@ const server = createServer(async (request, response) => {
     try { const data = await readFile(path); response.writeHead(200, { 'Content-Type': path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'text/javascript' : 'text/html', 'Cache-Control': 'no-store' }); response.end(data) }
     catch { response.writeHead(500).end() }
 })
+const changes = new WebSocketServer({ server, path: '/project-changes' })
+changes.on('connection', async (socket, request) => {
+    try {
+        const args = new URL(request.url, 'http://127.0.0.1').searchParams
+        const cwd = fixtureAgents.get(args.get('sessionId')).session.header.cwd
+        const path = resolve(cwd, args.get('path') || '.')
+        if (path !== cwd && !path.startsWith(cwd + sep)) throw new Error('测试路径越界')
+        await readdir(path)
+        if (socket.readyState !== socket.OPEN) return
+        const watcher = watch(path, { depth: 0, ignoreInitial: true })
+        socket.on('close', () => watcher.close())
+        watcher.on('error', () => socket.close())
+        watcher.on('ready', () => socket.send('ready'))
+        watcher.on('all', () => socket.send('change'))
+    } catch { socket.close() }
+})
 if (!process.argv.includes('--build-only')) server.listen(63438, '127.0.0.1', () => console.log('http://127.0.0.1:63438/'))
 async function shutdown() {
+    for (const socket of changes.clients) socket.terminate()
     await new Promise(resolve => server.close(resolve))
     await harness?.dispose()
 }

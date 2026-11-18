@@ -3,7 +3,7 @@ import { clearScan, publishScan, publishWatchState, readBus, subscribeBus } from
 import { ProjectCommandUnavailableError, projectCommand, scanNovel, watchProject } from './load.ts'
 import type { WorkspaceProjectState } from 'dsh-writer-core'
 
-export function useProject(sessionId: string) {
+export function useProject(sessionId: string, scanEnabled = true) {
     const snapshot = useCallback(() => readBus(sessionId), [sessionId])
     const bus = useSyncExternalStore(subscribeBus, snapshot, snapshot)
     const [ui, setUi] = useState({ loading: false, error: null as string | null, progress: '', project: null as WorkspaceProjectState | null })
@@ -11,10 +11,14 @@ export function useProject(sessionId: string) {
     const initialization = useRef<AbortController | null>(null)
     const checked = useRef(false)
     const [nonce, setNonce] = useState(0)
-    const [watchRoot, setWatchRoot] = useState<string | null>(null)
+    const [watchDirectories, setWatchDirectories] = useState<string[]>([])
     const generation = useRef(0)
     const reload = useCallback(() => setNonce(value => value + 1), [])
-    const refresh = useCallback(() => { checked.current = false; reload() }, [reload])
+    const refresh = useCallback(() => {
+        checked.current = false
+        setUi(state => ({ ...state, error: null }))
+        reload()
+    }, [reload])
 
     useEffect(() => () => initialization.current?.abort(), [sessionId])
     const initialize = useCallback(async () => {
@@ -33,13 +37,13 @@ export function useProject(sessionId: string) {
             if (!controller.signal.aborted) {
                 checked.current = false
                 setUi(state => ({ ...state, error: error instanceof Error ? error.message : String(error) }))
-                refresh()
+                reload()
             }
         } finally {
             initialization.current = null
             if (!controller.signal.aborted) setInitializing(false)
         }
-    }, [sessionId, refresh])
+    }, [sessionId, refresh, reload])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -50,9 +54,13 @@ export function useProject(sessionId: string) {
         const inspect = async () => {
             const project = await projectCommand(sessionId, 'status', controller.signal)
             if (controller.signal.aborted || token !== generation.current) return null
+            if (!scanEnabled) {
+                setUi(state => ({ ...state, loading: false, project }))
+                return project
+            }
             if (project.status !== 'ready') {
                 clearScan(sessionId)
-                setWatchRoot(null)
+                setWatchDirectories([])
                 checked.current = false
                 setUi(state => ({ ...state, loading: false, project, progress: '' }))
                 return project
@@ -63,6 +71,10 @@ export function useProject(sessionId: string) {
             return project
         }
         void (async () => {
+            if (!scanEnabled) {
+                await inspect()
+                return
+            }
             if (!checked.current) {
                 try {
                     const project = await inspect()
@@ -78,10 +90,14 @@ export function useProject(sessionId: string) {
             if (!scan) return
             if (controller.signal.aborted || token !== generation.current) return
             publishScan(scan, sessionId)
-            setWatchRoot(scan.root === '.' ? '' : scan.root)
+            setWatchDirectories(previous => previous.length === scan.watchDirectories.length && previous.every((path, index) => path === scan.watchDirectories[index]) ? previous : scan.watchDirectories)
             setUi(state => ({ ...state, loading: false, error: null, progress: '' }))
         }).catch(async (error: unknown) => {
             if (controller.signal.aborted || token !== generation.current) return
+            if (!scanEnabled) {
+                setUi(state => ({ ...state, loading: false, project: null, error: error instanceof ProjectCommandUnavailableError ? null : error instanceof Error ? error.message : String(error) }))
+                return
+            }
             try {
                 const project = await inspect()
                 if (project && project.status !== 'ready') return
@@ -91,21 +107,11 @@ export function useProject(sessionId: string) {
             if (!controller.signal.aborted && token === generation.current) setUi(state => ({ ...state, loading: false, project: state.project?.status === 'ready' ? state.project : null, error: error instanceof Error ? error.message : String(error), progress: '' }))
         })
         return () => controller.abort()
-    }, [sessionId, nonce])
-
-    const paths = bus.scan === null ? '' : [...new Set([
-        ...bus.scan.graph.chapters.map(row => row.path.slice(0, row.path.lastIndexOf('/'))),
-        ...(bus.scan.graph.characters.length ? ['characters'] : []),
-        ...(bus.scan.graph.plots.length ? ['plots'] : []),
-        ...(bus.scan.graph.worldEntries.length ? ['worldbuilding'] : []),
-        ...(bus.scan.graph.styleRefs.length ? ['style'] : []),
-        '.writer/derived/maintenance',
-    ])].sort().join('\n')
+    }, [sessionId, nonce, scanEnabled])
 
     useEffect(() => {
-        if (watchRoot === null || !sessionId) return
+        if (!watchDirectories.length || !sessionId) return
         const controller = new AbortController()
-        const directories = [watchRoot, ...paths.split('\n').filter(Boolean).map(path => watchRoot ? `${watchRoot}/${path}` : path)]
         const ready = new Set<string>()
         let timer: ReturnType<typeof setTimeout> | undefined
         let unavailable = false
@@ -121,7 +127,7 @@ export function useProject(sessionId: string) {
                     if (controller.signal.aborted) return
                     connected = true
                     ready.add(path)
-                    if (!unavailable && ready.size === directories.length) publishWatchState(true, sessionId)
+                    if (!unavailable && ready.size === watchDirectories.length) publishWatchState(true, sessionId)
                     if (attempt > 0) invalidate()
                 })
                 if (controller.signal.aborted) return
@@ -135,9 +141,9 @@ export function useProject(sessionId: string) {
                 })
             }
         }
-        for (const path of directories) void run(path)
+        for (const path of watchDirectories) void run(path)
         return () => { controller.abort(); clearTimeout(timer) }
-    }, [sessionId, watchRoot, paths, reload])
+    }, [sessionId, watchDirectories, reload])
 
     return { ...ui, initializing, initialize, bus, refresh }
 }

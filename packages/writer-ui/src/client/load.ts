@@ -191,7 +191,7 @@ export type ScanProgress = (done: number, total: number) => void
  * 扫描 novel/ 项目：定位根目录，收集章/情节/人物/世界观/四单文件实体/待办/归档/派生新鲜度。
  * 单文件读取失败不使整扫描失败——计入 failedFiles 清单呈现（M1b 正确性修复包④）。
  */
-export async function scanNovel(sessionId: string, signal: AbortSignal, onProgress?: ScanProgress, preferredRoot?: 'novel' | '.'): Promise<NovelScan> {
+export async function scanNovel(sessionId: string, signal: AbortSignal, onProgress?: ScanProgress, preferredRoot?: 'novel' | '.'): Promise<NovelScan & { watchDirectories: string[] }> {
   // 根目录探测：优先 novel/ 子目录（轮次 18 布局；子目录名即强语境，宽松判定）；
   // '.'/' 为工作区根本身（旧布局直铺——目录名泛化，从严判定防误认普通工作区）。
   const rootCandidates = preferredRoot ? [preferredRoot] : ['novel', '.', '']
@@ -209,20 +209,26 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   if (rootEntries === null) throw new Error('未找到小说项目目录（novel/ 或工作区根需含 outline/chapters/characters/plots 等标记）')
   const join = (dir: string, name: string): string => dir === '' ? name : `${dir}/${name}`
   const projectEntries = rootEntries
+  const watchDirectories = [root]
+  const listWatchDirectory = async (path: string) => {
+    const entries = await listDir(sessionId, path, signal)
+    if (entries !== null) watchDirectories.push(path)
+    return entries
+  }
 
   // —— 阶段一：列目录，收集待读文件任务 ——
   const tasks: ReadTask[] = []
   const chaptersDir = join(root, 'chapters')
   {
-    const entries = await listDir(sessionId, chaptersDir, signal)
+    const entries = await listWatchDirectory(chaptersDir)
     if (entries !== null) {
       for (const entry of entries) {
         if (signal.aborted) throw new DOMException('aborted', 'AbortError')
         if (entry.type === 'file' && /\.md$/i.test(entry.name)) {
           tasks.push({ dir: chaptersDir, name: entry.name })
-        } else if (entry.type === 'dir') {
+        } else if (entry.type === 'directory' || entry.type === 'dir') {
           // 一层卷子目录（chapters/卷一/001.md 布局——M1a 裁定：支持一层，不深递归）
-          const subEntries = await listDir(sessionId, join(chaptersDir, entry.name), signal)
+          const subEntries = await listWatchDirectory(join(chaptersDir, entry.name))
           if (subEntries === null) continue
           for (const sub of mdFiles(subEntries)) tasks.push({ dir: chaptersDir, name: sub.name, subdir: entry.name })
         }
@@ -233,7 +239,8 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   // worldbuilding 总数（概况统计格数据源）：读取上限只限制条目读取，统计必须是全量数
   let worldbuildingTotal = 0
   for (const dirName of ['plots', 'characters', 'style', 'worldbuilding']) {
-    const entries = await listDir(sessionId, join(root, dirName), signal)
+    const dir = join(root, dirName)
+    const entries = await listWatchDirectory(dir)
     if (entries !== null) {
       const names = mdFiles(entries).map(e => e.name)
       // worldbuilding 读取上限保险丝（v8 审查 ④）：冷扫描无条件读全文，超长项目防读放大；
@@ -242,10 +249,10 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
         worldbuildingTotal = names.length
         const capped = names.slice(0, WORLDBUILDING_MAX)
         worldbuildingTruncated = names.length - capped.length
-        for (const name of capped) tasks.push({ dir: join(root, dirName), name })
+        for (const name of capped) tasks.push({ dir, name })
         continue
       }
-      for (const name of names) tasks.push({ dir: join(root, dirName), name })
+      for (const name of names) tasks.push({ dir, name })
     }
   }
   // 单文件实体与项目文件（根目录命中才读）。pending-archive.md 在项目根（轮次 42：归档是
@@ -260,14 +267,17 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   // 旧布局兜底：.writer/pending-archive.md（目录列举缺失时静默跳过——.writer 可能整体 gitignore 不可见）
   {
     const dir = join(root, '.writer')
-    const entries = await listDir(sessionId, dir, signal)
+    const entries = await listWatchDirectory(dir)
     if (entries !== null && entries.some(e => e.type === 'file' && e.name === 'pending-archive.md')) {
       tasks.push({ dir, name: 'pending-archive.md', key: 'pending-archive-legacy.md' })
+    }
+    if (entries?.some(e => e.name === 'derived' && (e.type === 'directory' || e.type === 'dir'))) {
+      await listWatchDirectory(join(dir, 'derived'))
     }
   }
   // 派生维护产物（.writer/derived/maintenance/<chapterId>.json）
   const maintenanceDir = join(root, '.writer/derived/maintenance')
-  const maintenanceEntries = await listDir(sessionId, maintenanceDir, signal)
+  const maintenanceEntries = await listWatchDirectory(maintenanceDir)
   if (maintenanceEntries !== null) {
     for (const entry of maintenanceEntries) {
       if (entry.type === 'file' && /\.json$/i.test(entry.name)) tasks.push({ dir: maintenanceDir, name: entry.name })
@@ -279,12 +289,13 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   let done = 0
   const readResults = await mapPool(tasks, READ_CONCURRENCY, async (task) => {
     if (signal.aborted) throw new DOMException('aborted', 'AbortError')
+    const path = join(task.subdir === undefined ? task.dir : join(task.dir, task.subdir), task.name)
     let raw: string | null
     try {
-      raw = await readText(sessionId, join(task.dir, task.name), signal)
+      raw = await readText(sessionId, path, signal)
     } catch (error) {
       if (signal.aborted) throw error
-      failedFiles.push(join(task.dir, task.name))
+      failedFiles.push(path)
       raw = null
     }
     done++
@@ -299,7 +310,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   const style: any[] = []
   const worldbuilding: any[] = []
   const singletons = new Map<string, { frontmatter: any; content: string }>()
-  const maintenance = new Map<string, { sourceHash?: string; updatedAt?: string }>()
+  const maintenance = new Map<string, { sourceHash?: string; partial?: boolean }>()
   for (const { task, raw } of readResults) {
     if (raw === null) continue
     const parsed = splitSource(raw)
@@ -311,11 +322,11 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     else if (task.dir === join(root, 'worldbuilding')) worldbuilding.push(record)
     else if (task.dir === maintenanceDir) {
       try {
-        const json = JSON.parse(raw) as { sourceHash?: string; updatedAt?: string }
+        const json = JSON.parse(raw) as { sourceHash?: string; partial?: boolean }
         // 键 = 章节文件名去 .json（与 store 派生落盘口径一致，扁平不分子目录）；
         // 跨卷同名章节共享同一条派生记录（store 侧同样按 id 扁平落盘）——比对结果
         // 逐章独立：内容哈希匹配者为新鲜，另一章计待维护（合理信号而非误报）
-        maintenance.set(task.name.replace(/\.json$/i, ''), { sourceHash: json.sourceHash, updatedAt: json.updatedAt })
+        maintenance.set(task.name.replace(/\.json$/i, ''), { sourceHash: json.sourceHash, partial: json.partial })
       } catch { /* 坏派生 JSON：按缺失处理（该章计待维护），不使扫描失败 */ }
     } else singletons.set(task.key ?? task.name, parsed)
   }
@@ -342,7 +353,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   const archiveSources = readResults.filter(item => item.raw !== null && item.task.name === 'pending-archive.md').map(item => ({ path: join(item.task.dir, item.task.name), text: item.raw! }))
 
   // —— 派生新鲜度（维护徽章数据源）：client 内容哈希与 derived sourceHash 同口径比对 ——
-  // 章节缺失派生或哈希不一致 = 待维护 pass（与服务端 writer_stats staleChapters 同语义；
+  // 章节缺失派生、部分完成或哈希不一致 = 待维护 pass（与服务端 writer_stats staleChapters 同语义；
   // 分歧留痕：remote 读取失败的章节不入本清单（计入 failedFiles），服务端按全量章节判）。
   const staleChapters: string[] = []
   {
@@ -350,7 +361,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
       if (signal.aborted) throw new DOMException('aborted', 'AbortError')
       const id = String(chapter.name).replace(/\.md$/, '')
       const derived = maintenance.get(id)
-      if (derived === undefined || derived.sourceHash === undefined) return id
+      if (derived === undefined || derived.sourceHash === undefined || derived.partial === true) return id
       const hash = await contentHashClient(chapter.frontmatter, chapter.content)
       return hash === derived.sourceHash ? null : id
     }, signal)
@@ -360,7 +371,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
 
   const singleton = (name: string) => singletons.get(name)
   return {
-    root: root === '' ? '.' : root, project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingTotal, pending,
+    root: root === '' ? '.' : root, watchDirectories: watchDirectories.sort(), project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingTotal, pending,
     ...(singleton('principles.md') !== undefined ? { principles: singleton('principles.md')! } : {}),
     ...(singleton('events.md') !== undefined ? { events: singleton('events.md')! } : {}),
     ...(singleton('ideas.md') !== undefined ? { ideas: singleton('ideas.md')! } : {}),

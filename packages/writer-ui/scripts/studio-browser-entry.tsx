@@ -39,15 +39,24 @@ const referenceChips = { a: ['existing-reference'], b: [] }
 const phases = { a: 'plain', b: 'plain' }
 const calls: unknown[] = []
 const statusFailures = new Set<string>()
+const watchPaths = new Set<string>()
+const watchAttempts: string[] = []
+const slotComponents = new Map<string, React.ComponentType<any>>()
+const presets: Record<string, string> = { 'init-blank': 'default' }
 const bindings = { a: { ctx: { id: 'a' } }, b: { ctx: { id: 'b' } } }
 const ctx = {
     effect: (fn: () => void) => fn(),
-    slots: { inject: (_name: string, fn: () => void) => fn(), register: (options: { id?: string }, component: React.ComponentType) => { if (options.id === 'writer-panel') Panel = component; return () => {} } },
+    slots: { inject: (_name: string, fn: () => void) => fn(), register: (options: { name: string; id?: string }, component: React.ComponentType<any>) => {
+        if (options.id === 'writer-panel') Panel = component
+        slotComponents.set(options.name + ':' + options.id, component)
+        return () => slotComponents.delete(options.name + ':' + options.id)
+    } },
     sessions: { binding: (id: 'a' | 'b') => bindings[id], list: { getSnapshot: () => ({ byId: {} }) } },
     remote: { commands: { execute: async (sessionId: string, line: string) => {
         if (!sessionId.startsWith('init-')) return { ok: true }
         if (statusFailures.has(sessionId)) return { ok: false, error: { message: '状态检查失败：连接已断开' } }
         calls.push(['command', sessionId, line])
+        if (presets[sessionId] === 'default') return { ok: true }
         return post('/project-command', { sessionId, line })
     } }, workspaceFiles: {
         list: async (id: string, path: string) => id.startsWith('init-') ? post('/project-list', { sessionId: id, path }) : directories.has(path) ? { ok: true, value: { path, entries: [...directories.get(path)!].map(([name, type]) => ({ name, type })) } } : { ok: false },
@@ -59,7 +68,34 @@ const ctx = {
             const lines = text.split('\n').slice((range.offset ?? 1) - 1)
             return { ok: true, value: { text: lines.join('\n'), lines: lines.length, eof: true } }
         },
-        changes: async function* (_id: string, _path: string, signal: AbortSignal) { yield { kind: 'ready' }; await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }) }) },
+        changes: async function* (id: string, path: string, signal: AbortSignal) {
+            if (id !== 'init-watch') {
+                yield { kind: 'ready' }
+                await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }) })
+                return
+            }
+            watchAttempts.push(path)
+            const params = new URLSearchParams({ sessionId: id, path })
+            const socket = new WebSocket(`ws://${location.host}/project-changes?${params}`)
+            const frames: string[] = []
+            let wake: () => void
+            const abort = () => { socket.close(); wake?.() }
+            signal.addEventListener('abort', abort, { once: true })
+            socket.onmessage = event => { frames.push(event.data); wake?.() }
+            socket.onclose = () => wake?.()
+            try {
+                while (!signal.aborted && socket.readyState < WebSocket.CLOSING) {
+                    const kind = frames.shift()
+                    if (kind === 'ready') watchPaths.add(path)
+                    if (kind) yield { kind }
+                    else await new Promise<void>(resolve => { wake = resolve })
+                }
+            } finally {
+                signal.removeEventListener('abort', abort)
+                socket.close()
+                watchPaths.delete(path)
+            }
+        },
     } },
     conversation: { input: {
         for: (actx: { id: 'a' | 'b' }) => ({ state: { getSnapshot: () => ({ phase: phases[actx.id] }) } }),
@@ -68,11 +104,13 @@ const ctx = {
 }
 let Panel: React.ComponentType<any>
 let hostShell: any
-let shellProps: any
+let renderSessionSlot: () => React.ReactElement
 let currentView = 'writer-panel'
-const shellMode = new URLSearchParams(location.search).has('shell')
+const params = new URLSearchParams(location.search)
+const shellMode = params.has('shell') || params.has('blank-init') || params.has('watch')
+let blank = params.has('blank-init')
 let client: { apply(ctx: unknown): void }
-let currentSession = new URLSearchParams(location.search).has('init') ? 'init-empty' : 'a'
+let currentSession = blank ? 'init-blank' : params.has('watch') ? 'init-watch' : params.has('init') ? 'init-empty' : 'a'
 drafts[currentSession] ??= '初始化前已有草稿'
 async function post(path: string, args: unknown) {
     return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args) }).then(response => response.json())
@@ -82,49 +120,57 @@ function render() {
     root.render(shellMode ? React.createElement(NativeShell) : React.createElement(Panel, { sessionId: currentSession, inputActions: { persistDraft: () => calls.push(['persist', currentSession]) }, openView: (view: string) => calls.push(['view', currentSession, view]) }))
 }
 function NativeSessionView() {
-    return shellProps.renderSlot('conversation.session')
+    return renderSessionSlot()
 }
 function NativeShell() {
-    const session = { id: currentSession, blank: false }
+    const session = { id: currentSession, blank, running: false, promptAttempted: false, awaitingFirstTurn: false, openState: 'open', subagent: null }
     const owner = {
         sessionId: currentSession,
         inputActions: { persistDraft: () => calls.push(['persist', currentSession]) },
         openView: (view: string) => { calls.push(['view', currentSession, view]); currentView = view; render() },
     }
     const props: any = {
-        ...owner, variant: 'main', phase: 'active', hero: false,
+        ...owner,
         useSession: (select: any) => select(session),
-        useSessions: (select: any) => select({ byId: { [currentSession]: { cwd: '/novel' } } }),
+        useSessions: (select: any) => select({ byId: { [currentSession]: { id: currentSession, blank, cwd: '/novel', displayTitle: '写作会话', projectionValues: { agentPreset: presets[currentSession] ?? 'writer' } } } }),
         useSessionStatus: (select: any) => select(new Map()),
         useWorkspaces: (select: any) => select({ phase: 'ready', items: [{ workspaceId: 'w', title: '小说', sessionIds: [currentSession] }] }),
         useInput: (select: any) => select({ phase: 'plain', draft: drafts[currentSession] }),
         useComposerBlock: (select: any) => select(undefined),
         useFactorySlot: (name: string, fallback: any) => name === 'views' ? NativeSessionView : fallback,
-        useConversation: (select: any) => select({}),
+        useConversation: (select: any) => select({ activeTargets: new Set() }),
         useConversationViews: (select: any) => select([{ id: 'chat', label: '对话' }, { id: 'writer-panel', label: '写作面板' }]),
         useInspectCall: (select: any) => select(undefined),
         useStore: (select: any) => select({ view: currentView, viewRequest: null }),
         actions: { setDraft: () => {}, completeViewRequest: () => {} },
         bindDraftPersistence: () => () => {},
         selectWorkspace: async () => {},
+        selectView: (view: string) => { currentView = view; render() },
+        useContextMenu: () => ({ getTriggerProps: () => ({}) }),
+        useEntryPins: (select: any) => select([]),
+        useEntryActions: (select: any) => select(false),
         t: (key: string) => key,
     }
+    renderSessionSlot = () => props.renderSlot('conversation.session')
     props.renderSlot = (name: string, slotOwner: any = {}, options: any = {}) => {
         let child = null
+        if (name === 'conversation.header') child = React.createElement(hostShell.ConversationHeader, props)
+        if (name === 'conversation.session.header') child = React.createElement(hostShell.ConversationSessionHeader, { ...props, ...slotOwner })
         if (name === 'conversation.session') child = React.createElement(hostShell.DefaultConversationViews, props)
         if (name === 'conversation.view') child = options.only === 'writer-panel' ? React.createElement(Panel, { ...owner, ...slotOwner }) : React.createElement('div', { 'data-chat-view': '' }, '宿主对话内容')
+        if (name === 'conversation.hero.options') child = [...slotComponents].filter(([key]) => key.startsWith(name + ':')).map(([key, Component]) => React.createElement(Component, { key, sessionId: currentSession, useSessions: props.useSessions, ...slotOwner }))
         if (name === 'conversation.input.dock') child = React.createElement('div', { 'data-native-todos': '' }, '宿主任务列表')
         if (name === 'conversation.composer.bar') child = React.createElement('textarea', { 'data-native-input': '', value: drafts[currentSession], onChange: (event: any) => { drafts[currentSession] = event.target.value; render() } })
         if (name === 'conversation.hero.frame') child = options.children
         return React.createElement('div', { 'data-slot': name, style: { display: 'contents' } }, child)
     }
+    props.renderFactorySlot = (_name: string, slotOwner: any) => React.createElement(hostShell.ConversationContent, { ...props, ...slotOwner })
     props.renderSlotChain = (_name: string, _owner: any, options: any) => React.createElement('div', { 'data-slot': 'conversation.composer', style: { display: 'contents' } }, options.fallback)
-    shellProps = props
-    return React.createElement('div', { className: hostShell.css.root, 'data-phase': 'active' }, React.createElement('div', { style: { display: 'flex', gap: 12, padding: 8 } }, ...['chat', 'writer-panel'].map(view => React.createElement('button', { key: view, type: 'button', 'data-shell-view': view, onClick: () => { currentView = view; render() } }, view === 'chat' ? '对话' : '写作面板'))), React.createElement(hostShell.ConversationContent, props))
+    return React.createElement(hostShell.ConversationMainPanel, props)
 }
 const modules: Record<string, unknown> = { ...hostModules, react: React, 'react/jsx-runtime': jsxRuntime, 'react-dom': ReactDOM, 'react-dom/client': { createRoot }, '@deepseek-ai/dsh-client-ui-primitives': primitives }
 ;(window as any).__ModuleLoader__ = { load: (module: { factory(require: (name: string) => unknown): typeof client }) => { const exported = module.factory(name => { if (!(name in modules)) throw new Error(`missing module ${name}`); return modules[name] }); if ((module as any).id === '@deepseek-ai/dsh-client-ui-conversation') { hostShell = (exported as any).__writerShellFixture } else { client = exported; client.apply(ctx); render() } } }
-;(window as any).writerFixture = { drafts, calls, referenceChips, phases, failStatus(sessionId: string) { statusFailures.add(sessionId) }, switchSession(id: string) { currentSession = id; drafts[id] ??= '初始化前已有草稿'; render() }, addFile(sessionId: string) { return post('/project-add-file', { sessionId }) }, readFile(sessionId: string, path: string) { return post('/project-read', { sessionId, path }) } }
+;(window as any).writerFixture = { drafts, calls, referenceChips, phases, watchPaths, watchAttempts, setPreset(preset: string) { presets[currentSession] = preset; render() }, failStatus(sessionId: string) { statusFailures.add(sessionId) }, switchSession(id: string) { currentSession = id; drafts[id] ??= '初始化前已有草稿'; render() }, endBlank() { blank = false; render() }, addFile(sessionId: string) { return post('/project-add-file', { sessionId }) }, readFile(sessionId: string, path: string) { return post('/project-read', { sessionId, path }) }, editFile(path: string, text: string | null) { return post('/project-edit', { sessionId: 'init-watch', path, text }) } }
 const script = document.createElement('script')
 script.src = shellMode ? '/conversation-fixture.js' : '/writer.js'
 script.onload = () => { if (shellMode) { const writer = document.createElement('script'); writer.src = '/writer.js'; document.head.append(writer) } }

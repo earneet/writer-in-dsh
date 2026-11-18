@@ -4,8 +4,10 @@ import { resolve } from 'node:path'
 const output = resolve('.tmp/ui-implementation/browser')
 const shellMode = process.argv.includes('--shell')
 const initMode = process.argv.includes('--init')
+const blankInitMode = process.argv.includes('--blank-init')
+const watchMode = process.argv.includes('--watch')
 await mkdir(output, { recursive: true })
-const pages = await fetch('http://127.0.0.1:9227/json/list').then(response => response.json())
+const pages = await fetch((process.env.WRITER_FIXTURE_CDP_ORIGIN ?? 'http://127.0.0.1:9227') + '/json/list').then(response => response.json())
 const socket = new WebSocket(pages.find(page => page.type === 'page').webSocketDebuggerUrl)
 await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }) })
 let nextId = 0
@@ -13,6 +15,7 @@ const pending = new Map()
 const errors = []
 socket.addEventListener('message', event => {
     const message = JSON.parse(event.data)
+    if (message.method === 'Runtime.executionContextsCleared') errors.length = 0
     if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text)
     if (!message.id || !pending.has(message.id)) return
     const task = pending.get(message.id)
@@ -38,6 +41,16 @@ const pause = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 async function check(expression, label) {
     if (!await evaluate('(async()=>(' + expression + '))()')) throw new Error('FAIL: ' + label)
     console.log('PASS:', label)
+}
+async function waitFor(expression, label) {
+    for (let attempt = 0; attempt < 80; attempt++) {
+        if (await evaluate('(async()=>(' + expression + '))()')) {
+            console.log('PASS:', label)
+            return
+        }
+        await pause(80)
+    }
+    throw new Error('FAIL: ' + label)
 }
 async function click(selector) {
     await evaluate('(() => { const element = document.querySelector(' + JSON.stringify(selector) + '); element.focus(); element.click(); })()')
@@ -65,7 +78,66 @@ try {
     await call('Page.enable')
     await call('Runtime.enable')
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false })
-    await call('Page.navigate', { url: 'http://127.0.0.1:63438/' + (shellMode ? '?shell=1' : initMode ? '?init=1' : '') })
+    await call('Page.navigate', { url: 'http://127.0.0.1:63438/' + (blankInitMode ? '?blank-init=1' : watchMode ? '?watch=1' : shellMode ? '?shell=1' : initMode ? '?init=1' : '') })
+    if (blankInitMode) {
+        const hero = '[data-slot="conversation.hero.options"]'
+        const heroText = 'document.querySelector(' + JSON.stringify(hero) + ')?.textContent'
+        await waitFor('!!document.querySelector("[data-content-phase=hero]") && !document.querySelector("[data-conversation-tabs], .writer-studio") && !!document.querySelector("[data-native-input]")', '首轮前宿主 Hero 和输入框可见，工作台标签和正文未挂载')
+        await pause(100)
+        await check('!' + heroText + '?.includes("一键初始化")', '未启用写作服务的会话不显示初始化入口')
+        await evaluate('writerFixture.setPreset("writer")')
+        await waitFor(heroText + '?.includes("一键初始化")', '首轮前通过宿主 Hero 槽提供一键初始化')
+        await textButton('一键初始化', hero)
+        await waitFor(heroText + '?.includes("项目已就绪")', '初始化成功后宿主仍停在首轮前 Hero')
+        await check('(await writerFixture.readFile("init-blank", "novel/project.md")).value.text.includes("未命名作品")', '首轮前创建的作品信息实际写入磁盘')
+        await check('document.querySelector("[data-native-input]").value === "初始化前已有草稿" && !document.querySelector("[data-conversation-tabs], .writer-studio") && writerFixture.calls.filter(call => call[0] === "command" && call[2] === "/writer-project-init").length === 1 && !writerFixture.calls.some(call => call[0] === "append" || call[0] === "view")', '初始化只执行一次命令，保留草稿和宿主 blank 状态')
+        for (const [id, name] of [['init-nonempty', 'notes.txt'], ['init-hidden', '.hidden']]) {
+            await evaluate('writerFixture.switchSession(' + JSON.stringify(id) + ')')
+            await waitFor(heroText + '?.includes("目录指引")', '非空目录在 Hero 显示使用指引：' + id)
+            await click(hero + ' summary')
+            await check('!' + heroText + '?.includes("一键初始化") && (await writerFixture.readFile(' + JSON.stringify(id) + ', ' + JSON.stringify(name) + ')).value.text.includes("已有内容")', '非空目录保留原文件且不显示初始化入口：' + id)
+        }
+        await evaluate('writerFixture.switchSession("init-blank"); writerFixture.endBlank()')
+        await waitFor('!!document.querySelector("[data-conversation-tabs]") && !!document.querySelector(".ws-nav") && !document.querySelector("[data-content-phase=hero]")', '宿主首轮状态变化后原工作台标签可达')
+        if (errors.length) throw new Error(errors.join('\n'))
+        socket.close()
+        process.exit(0)
+    }
+    if (watchMode) {
+        await waitFor('document.querySelector(".ws-top")?.textContent.includes("监听验证") && writerFixture.watchPaths.has("novel")', '面板读到已有项目，根目录监听就绪')
+        const dirs = ['novel', 'novel/chapters', 'novel/chapters/卷一', 'novel/characters', 'novel/plots', 'novel/style', 'novel/worldbuilding']
+        await waitFor('JSON.stringify([...writerFixture.watchPaths].sort()) === ' + JSON.stringify(JSON.stringify(dirs)), '每个存在的空实体目录都已订阅，缺失目录未订阅')
+        await check('JSON.stringify([...writerFixture.watchAttempts].sort()) === ' + JSON.stringify(JSON.stringify(dirs)), '只尝试订阅已存在的目录')
+        await check('(await writerFixture.editFile("novel/project.md", "---\\ntitle: 项目根更新\\n---\\n")).ok', '修改根目录作品信息')
+        await waitFor('document.querySelector(".ws-top")?.textContent.includes("项目根更新")', '根目录文件变动自动刷新')
+        const entities = [
+            ['chapters/001.md', '章稿监听内容'],
+            ['chapters/卷一/002.md', '卷稿监听内容'],
+            ['characters/one.md', '人物监听内容'],
+            ['plots/one.md', '伏笔监听内容'],
+            ['style/one.md', '文风监听内容'],
+            ['worldbuilding/one.md', '设定监听内容'],
+        ]
+        for (const [file, title] of entities) {
+            const path = 'novel/' + file
+            const source = '---\nname: ' + title + '\nnumber: ' + (file.includes('002.md') ? 2 : 1) + '\ntitle: ' + title + '\nhint: ' + title + '\n---\n# ' + title + '\n\n' + title + '测试正文。'
+            await check('(await writerFixture.editFile(' + JSON.stringify(path) + ', ' + JSON.stringify(source) + ')).ok', '写入子目录首个文件：' + file)
+            if (file === 'chapters/卷一/002.md') {
+                await waitFor('[...document.querySelectorAll(".ws-reader-footer button")].some(button => button.textContent.includes("下一章") && !button.disabled)', '章节导航发现卷目录新增章')
+                await textButton('下一章 →')
+            }
+            await waitFor('document.querySelector(".writer-studio")?.textContent.includes(' + JSON.stringify(title) + ')', '新增文件自动刷新：' + file)
+        }
+        await check('(await writerFixture.editFile("novel/characters/one.md", "---\\nname: 更新后人物\\n---\\n正文")).ok', '修改人物文件成功')
+        await waitFor('document.querySelector("#writer-view-characters")?.textContent.includes("更新后人物")', '修改文件自动刷新')
+        await check('(await writerFixture.editFile("novel/characters/one.md", null)).ok', '删除人物文件成功')
+        await waitFor('!document.querySelector("#writer-view-characters")?.textContent.includes("更新后人物")', '删除文件自动刷新')
+        await textButton('对话', '[data-conversation-tabs]')
+        await waitFor('!document.querySelector(".writer-studio") && writerFixture.watchPaths.size === 0', '卸载工作台后全部退订')
+        if (errors.length) throw new Error(errors.join('\n'))
+        socket.close()
+        process.exit(0)
+    }
     if (initMode) {
         const ready = async text => {
             for (let attempt = 0; attempt < 80; attempt++) {
@@ -130,10 +202,10 @@ try {
             await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false })
             await pause(120)
             await check('Math.abs(document.querySelector(".writer-studio").getBoundingClientRect().height - document.querySelector("[data-conversation-scroll]").clientHeight) <= 1 && document.documentElement.scrollHeight <= innerHeight + 1 && document.documentElement.scrollWidth <= innerWidth + 1', '工作台占满会话高度且无整页溢出：' + width)
-            await click('[data-shell-view="chat"]')
+            await textButton('对话', '[data-conversation-tabs]')
             await check('document.querySelector("[data-composer-seat]").getClientRects().length > 0 && document.querySelector("[data-native-todos]").getClientRects().length > 0 && document.querySelector("[data-native-input]") === window.nativeInput', '切回对话恢复任务及原输入节点：' + width)
             await fill('[data-native-input]', '需要保留的宿主草稿')
-            await click('[data-shell-view="writer-panel"]')
+            await textButton('写作面板', '[data-conversation-tabs]')
             await pause(150)
             await check('!document.querySelector("[data-composer-seat]").getClientRects().length && document.querySelector("[data-native-input]").value === "需要保留的宿主草稿" && document.querySelector("[data-native-input]") === window.nativeInput', '再次进入面板隐藏底部且不丢草稿：' + width)
         }

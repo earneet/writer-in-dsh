@@ -8,6 +8,8 @@ import assert from 'node:assert/strict'
 import { mapPool, scanNovel, setBrowserContext, watchProject, WORLDBUILDING_MAX } from '../src/client/load.ts'
 import { publishScan, readBus, resetBus } from '../src/client/bus.ts'
 import { buildOverview } from '../src/client/project.ts'
+import { contentHashClient } from '../src/client/hash.ts'
+import { splitSource } from '../src/client/overview.ts'
 
 /** 可控 changes 流：外部 push 帧 / 结束 / 抛错。 */
 function controlledStream() {
@@ -169,6 +171,24 @@ function minimalProject(): Map<string, unknown> {
     ['novel/chapters/001.md', '---\nnumber: 1\n---\n初始正文四个字\n'],
   ])
 }
+
+test('内容哈希一致的部分维护结果仍显示为待维护，完成后清除提示', async () => {
+    const fs = minimalProject()
+    const chapter = splitSource(fs.get('novel/chapters/001.md') as string)
+    const sourceHash = await contentHashClient(chapter.frontmatter, chapter.content)
+    fs.set('novel/.writer/derived/maintenance', [{ name: '001.json', type: 'file' }])
+    const record = 'novel/.writer/derived/maintenance/001.json'
+    setBrowserContext({ remote: mockRemote(fs) as never })
+    try {
+        const scan = () => scanNovel('s1', new AbortController().signal)
+        fs.set(record, JSON.stringify({ sourceHash, partial: true }))
+        assert.deepEqual((await scan()).staleChapters, ['001'])
+        fs.set(record, JSON.stringify({ sourceHash, partial: false }))
+        assert.deepEqual((await scan()).staleChapters ?? [], [])
+        fs.set(record, JSON.stringify({ sourceHash }))
+        assert.deepEqual((await scan()).staleChapters ?? [], [])
+    } finally { setBrowserContext(null) }
+})
 
 test('工作台归档原文：保留完成项、重复项和非列表段落及来源路径', async () => {
     const fs = minimalProject()
