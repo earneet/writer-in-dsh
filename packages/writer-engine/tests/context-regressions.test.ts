@@ -62,6 +62,24 @@ for (const length of ['short', 'long', 'empty'] as const) {
     })
 }
 
+for (const mode of ['full', 'assist'] as const) {
+    test(`${mode} 实际请求按章过滤事件而非仅裁剪全文`, async () => {
+        const { root, store, llm, engine } = await setup()
+        try {
+            await store.save('chapter', '003', { content: '本章开头。' })
+            await store.save('event', 'event', { content: '全局已确认规则。\n## 第001章\n历史事实。\n## 第003章\n本章事实。\n## 第020章\n终局秘密不应进入。\n### 后续影响\n未来秘密不应进入。' })
+            llm.replies.push('新的故事继续展开。')
+            await engine.writeChapter({ chapterId: '003', mode })
+            const request = llm.requests[0].user
+            assert.match(request, /全局已确认规则|历史事实/)
+            assert.match(request, /本章事实/)
+            assert.doesNotMatch(request, /终局秘密|未来秘密/)
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+}
+
 for (const fallback of [false, true]) {
     test(`rewrite 补丁及回退均包含完整准则和有界风格：回退=${fallback}`, async () => {
         const { root, store, llm, engine } = await setup()

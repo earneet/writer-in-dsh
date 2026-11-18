@@ -98,6 +98,11 @@ function stripQuotes(value: string): string {
 /** 序列化实体为 Markdown 文本（frontmatter + 正文，结尾恰好一个换行）。 */
 export function serializeEntity(frontmatter: Frontmatter, content: string): string {
   const keys = Object.keys(frontmatter).sort()
+    for (const key of keys) {
+        if (!key || key.trim() !== key || key.startsWith('#') || /[:\r\n]/.test(key) || key === '__proto__') {
+            throw new Error(`frontmatter 键非法：${JSON.stringify(key)}（键必须可无损往返，不能含冒号、换行、边缘空白或注释前缀）`)
+        }
+    }
   if (keys.length === 0) return ensureTrailingNewline(content)
   const lines = keys.map((key) => `${key}: ${formatValue(frontmatter[key])}`)
   return `---\n${lines.join('\n')}\n---\n${ensureTrailingNewline(content)}`
@@ -510,9 +515,9 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
     remaining = optional('更早章节（摘要/标题）', earlier.join('\n'), remaining)
   }
 
-  // —— 事件（防剧透提示：events.md 为全书事件，仅注首部）——
+  // 先按章过滤再裁剪预算，避免未来事件因排在文件首部而进入早章上下文。
   if (input.events !== undefined && remaining > 0) {
-    remaining = optional('关键事件（节选）', input.events.content, remaining)
+    remaining = optional('关键事件（节选）', visibleEvents(input.events.content, input.chapterNumber), remaining)
   }
 
   // —— 风格示范（首条）——
@@ -522,6 +527,22 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
 
   const usageChars = sections.reduce((sum, s) => sum + s.title.length + s.body.length + 2, 0)
   return { sections, usageChars }
+}
+
+function visibleEvents(content: string, chapterNumber: number): string {
+    let chapter: number | undefined
+    let fence: string | undefined
+    return content.split('\n').filter(line => {
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+        if (marker) {
+            if (fence === undefined && (marker[1][0] === '~' || !marker[2].includes('`'))) fence = marker[1]
+            else if (fence !== undefined && marker[1][0] === fence[0] && marker[1].length >= fence.length && marker[2].trim() === '') fence = undefined
+        } else if (fence === undefined) {
+            const heading = /^ {0,3}##\s+第\s*(\d+)\s*章/.exec(line)
+            if (heading) chapter = Number(heading[1])
+        }
+        return chapter === undefined || chapter <= chapterNumber
+    }).join('\n')
 }
 
 // ---------------------------------------------------------------------------

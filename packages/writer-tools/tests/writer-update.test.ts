@@ -7,6 +7,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/index.ts'
+import { Context as CordisContext } from '@deepseek-ai/cordis'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import WriterStore from 'dsh-writer-store/src/index.ts'
 
 interface CapturedTool {
   name: string
@@ -26,6 +31,24 @@ function makeCtx(writer: unknown): { tools: Map<string, CapturedTool> } {
 }
 
 const baseArgs = { entity: 'character', id: 'elin', expectHash: 'h1' }
+
+test('writer_update：JSON 自有 __proto__ 键拒绝，正文及原文件保持', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'writer-update-keys-'))
+    try {
+        // @ts-expect-error 独立测试无需宿主加载器。
+        const store = new WriterStore(new CordisContext(), { projectRoot: root })
+        const initial = await store.save('character', 'elin', { content: '原始正文。' })
+        const file = join(root, 'characters/elin.md')
+        const before = await readFile(file, 'utf8')
+        const { tools } = makeCtx(store)
+        await assert.rejects(() => tools.get('writer_update')!.execute({
+            ...baseArgs, expectHash: initial.hash, content: '不能落盘的修改。', frontmatter: JSON.parse('{"__proto__":"应拒绝"}'),
+        }), /frontmatter 键非法/)
+        assert.equal(await readFile(file, 'utf8'), before)
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
 
 test('writer_update：character.timeline 合法数组通过并落盘（数组被 JSON 化）', async () => {
   const saved: unknown[] = []

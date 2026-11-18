@@ -603,13 +603,7 @@ function renderWriteResult(result: import('dsh-writer-domain').ChapterWriteResul
 /** 模型提供的 frontmatter 值收敛到域库标量值域（数组/对象/null 以 JSON 文本保留，可无损回读）。 */
 function sanitizeFrontmatter(raw: Record<string, unknown> | undefined): Frontmatter | undefined {
   if (raw === undefined) return undefined
-  const out: Frontmatter = {}
-  for (const [key, value] of Object.entries(raw)) {
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      out[key] = value
-    } else {
-      out[key] = JSON.stringify(value)
-    }
-  }
-  return out
+    return Object.fromEntries(Object.entries(raw).map(([key, value]) => [
+        key, typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : JSON.stringify(value),
+    ]))
 }

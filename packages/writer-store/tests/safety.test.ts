@@ -15,6 +15,19 @@ async function setup() {
     return { root, store }
 }
 
+test('非法 frontmatter 键拒绝保存且原文件字节保持', async () => {
+    const { root, store } = await setup()
+    try {
+        const initial = await store.save('character', 'elin', { content: '原始人物。', frontmatter: { name: '艾琳' } })
+        const path = join(root, 'characters/elin.md')
+        const before = await readFile(path, 'utf8')
+        await assert.rejects(() => store.save('character', 'elin', { frontmatter: { 'title: fake\nother': 'abc' } }, initial.hash), /frontmatter 键非法/)
+        assert.equal(await readFile(path, 'utf8'), before)
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
 test('Windows 大小写别名并发保存：同一旧 hash 恰一次成功', { skip: process.platform !== 'win32' }, async () => {
     const { root, store } = await setup()
     try {

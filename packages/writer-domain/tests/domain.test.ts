@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  parseFrontmatter, serializeEntity, contentHash, transitionForeshadow, stripContinuationRepetition, guardContinuation,
+  parseFrontmatter, serializeEntity, contentHash, transitionForeshadow, stripContinuationRepetition, guardContinuation, assembleWritingContext,
 } from '../src/index.ts'
 
 test('parseFrontmatter：CRLF + BOM 归一', () => {
@@ -43,6 +43,54 @@ test('parseFrontmatter：正文中 --- 不误判', () => {
 
 test('parseFrontmatter：坏行抛错', () => {
   assert.throws(() => parseFrontmatter('---\n没有冒号的行\n---\nx'))
+})
+
+test('写作事件：保留全局、本章与历史，未来章节及其子标题不进入上下文', () => {
+    const result = assembleWritingContext({
+        chapterNumber: 3, budgetChars: 4000, chapters: [], characters: [], plots: [],
+        events: {
+            kind: 'event', id: 'event', path: 'events.md', hash: 'events', frontmatter: {},
+            content: '# 重要事件\n全局已确认规则。\n## 第 001 章\n过去的承诺。\n## 第003章 当前\n本章的信件。\n## 第020章\n终局凶手。\n### 人物影响\n未来背叛。\n## 第002章\n历史线索。',
+        },
+    })
+    const body = result.sections.map(section => section.body).join('\n')
+    assert.match(body, /全局已确认规则/)
+    assert.match(body, /过去的承诺/)
+    assert.match(body, /本章的信件/)
+    assert.match(body, /历史线索/)
+    assert.doesNotMatch(body, /终局凶手|未来背叛|第020章/)
+})
+
+test('serializeEntity：拒绝无法无损往返的键，保留开放的中文键', () => {
+    for (const key of ['', ' title', 'title ', 'a:b', '#memo', 'title: fake\nother', 'a\rb', '__proto__']) {
+        assert.throws(() => serializeEntity(JSON.parse(JSON.stringify({ [key]: 'abc' })), '正文'), /frontmatter 键非法/)
+    }
+    assert.equal(serializeEntity({ '显示 名称': '人物' }, '正文'), '---\n显示 名称: "人物"\n---\n正文\n')
+})
+
+test('未来事件的子标题和围栏示例不能变成早章锚', () => {
+    for (const body of [
+        '### 第001章承诺的后续影响\n未来事实不能进入。',
+        '```\n```example\n## 第001章\n示例\n```\n未来事实不能进入。',
+        '~~~\n~~~example\n## 第001章\n示例\n~~~\n未来事实不能进入。',
+    ]) {
+        const result = assembleWritingContext({
+            chapterNumber: 3, budgetChars: 4000, chapters: [], characters: [], plots: [],
+            events: { kind: 'event', id: 'event', path: 'events.md', hash: 'events', frontmatter: {}, content: `## 第020章\n${body}` },
+        })
+        assert.doesNotMatch(JSON.stringify(result.sections), /未来事实不能进入/)
+    }
+})
+
+test('事件章标题支持 Markdown 的零至三个前导空格', () => {
+    for (const indent of ['', ' ', '  ', '   ']) {
+        const result = assembleWritingContext({
+            chapterNumber: 3, budgetChars: 4000, chapters: [], characters: [], plots: [],
+            events: { kind: 'event', id: 'event', path: 'events.md', hash: 'events', frontmatter: {}, content: `## 第001章\n历史事实。\n${indent}## 第020章\n未来凶手。` },
+        })
+        assert.match(JSON.stringify(result.sections), /历史事实/)
+        assert.doesNotMatch(JSON.stringify(result.sections), /未来凶手/)
+    }
 })
 
 test('parseFrontmatter：闭合 --- 无尾换行（EOF 手编文件）', () => {
