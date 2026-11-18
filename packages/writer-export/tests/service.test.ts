@@ -33,6 +33,25 @@ async function seedProject(store: WriterStoreService): Promise<void> {
   await store.save('character', 'elin', { content: '巡灯人。' })
 }
 
+for (const format of ['txt', 'html', 'epub'] as const) {
+    test(`${format} 导出以 project 为书名作者来源，兼容旧大纲元数据`, async () => {
+        const { exporter, store, root } = await makeSetup()
+        try {
+            await seedProject(store)
+            await exporter.exportBook({ format })
+            assert.ok((await readFile(join(root, `exports/book.${format}`))).includes(Buffer.from('灯塔街异闻')))
+            await store.save('project', 'project', { content: '项目简介。', frontmatter: { title: '项目中的正式书名', author: '项目作者' } })
+            await exporter.exportBook({ format })
+            const output = await readFile(join(root, `exports/book.${format}`))
+            assert.ok(output.includes(Buffer.from('项目中的正式书名')))
+            assert.ok(output.includes(Buffer.from('项目作者')))
+            assert.ok(!output.includes(Buffer.from('灯塔街异闻')))
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+}
+
 test('txt 导出：卷组织 + 附录 + 相对路径返回', async () => {
   const { exporter, store, root } = await makeSetup()
   try {

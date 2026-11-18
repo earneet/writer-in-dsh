@@ -59,7 +59,8 @@ export default class WriterExportServiceImpl extends ExportService {
     if (request.format !== 'txt' && request.format !== 'html' && request.format !== 'epub') {
       throw new Error(`未知导出格式：${String(request.format)}（可选 txt / html / epub）`)
     }
-    const [outline, characters, chapters] = await Promise.all([
+    const [project, outline, characters, chapters] = await Promise.all([
+        this.ctx.writer.get('project', 'project'),
       this.ctx.writer.get('outline', 'outline'),
       this.ctx.writer.list('character'),
       this.ctx.writer.list('chapter'),
@@ -85,8 +86,10 @@ export default class WriterExportServiceImpl extends ExportService {
       if (volumes.length === 0) throw new Error(`没有名为 ${JSON.stringify(request.volume)} 的卷（现有卷：${[...volumeMap.keys()].join('、')}）`)
     }
     const book: ExportBook = {
-      title: typeof outline?.frontmatter['title'] === 'string' ? outline.frontmatter['title'] : '未命名作品',
-      author: typeof outline?.frontmatter['author'] === 'string' ? outline.frontmatter['author'] : '',
+        title: typeof project?.frontmatter['title'] === 'string' && project.frontmatter['title'].trim()
+            ? project.frontmatter['title'] : typeof outline?.frontmatter['title'] === 'string' ? outline.frontmatter['title'] : '未命名作品',
+        author: typeof project?.frontmatter['author'] === 'string'
+            ? project.frontmatter['author'] : typeof outline?.frontmatter['author'] === 'string' ? outline.frontmatter['author'] : '',
       volumes,
       ...(request.includeOutline === true && outline !== undefined ? { outlineAppendix: outline.content } : {}),
       ...(request.includeCharacters === true && characters.length > 0
