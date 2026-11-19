@@ -108,13 +108,13 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'write_chapter',
-    description: '写作引擎：按准则+大纲生成/续写/改写一章并保存。mode=full（整章生成，可建新章，可传 title）/ assist（从现有正文结尾续写）/ rewrite（按 instruction 改写现有章节；引擎优先走补丁协议，小改零触碰未提及内容，大改回退全文并跑丢句守卫）。章节不存在时只能用 full。',
+    description: '写作引擎：按准则+大纲生成/续写/改写一章并保存。mode=full（整章生成，可建新章，可传 title）/ assist（从现有正文结尾续写）/ rewrite（按 instruction 改写现有章节）。rewrite 提供 selection 时，整组补丁均须在选区内唯一命中；被拒绝后请让作者重新选定范围或明确要求整章改稿。作者明确要求整章改稿时省略 selection，允许全文路径并检查丢句。章节不存在时只能用 full。',
     parameters: {
       chapter: { type: 'string', required: true, description: '章节 id（三位序号，如 "002"）' },
       mode: { type: 'string', required: true, description: 'full / assist / rewrite' },
       instruction: { type: 'string', description: '写作/续写/改写指令（rewrite 必填；full/assist 可选补充要求）' },
       title: { type: 'string', description: 'full 创建新章时的标题' },
-      selection: { type: 'string', description: 'rewrite 可选：选区原文片段（限制改写范围）' },
+      selection: { type: 'string', description: 'rewrite 可选：从当前章稿逐字复制的非空、唯一正文选区，只在该范围内应用补丁' },
     },
     output: {
       schema: { type: 'string' },
@@ -158,15 +158,19 @@ export function apply(ctx: Context): void {
         throw new Error(`focus 含无效维度：${invalid.join('、')}（合法维度：${REVIEW_DIMENSIONS.join(' / ')}）`)
       }
       const report = await engine.reviewChapter(args.chapter, focus, exec.signal)
+      const coverage = report.coverage?.length ? [`审稿覆盖：${report.coverage.join('；')}`] : []
+      const summary = encodeReviewLine(report.summary || '（无）')
       if (report.suggestions.length === 0) {
-        return `审稿完成，无结构化建议。总评：${report.summary || '（无）'}`
+        return [`审稿完成，无结构化建议。总评：${summary}`, ...coverage].join('\n')
       }
-      const lines = [`审稿完成（${report.suggestions.length} 条建议）。总评：${report.summary || '（无）'}`, '']
+      const lines = [`审稿完成（${report.suggestions.length} 条建议）。总评：${summary}`, ...coverage, '']
       for (const [i, s] of report.suggestions.entries()) {
-        lines.push(`${i + 1}. [${s.severity}] ${s.dimension}：${s.problem}`)
-        if (s.quote !== undefined) lines.push(`   原文：${s.quote}`)
-        lines.push(`   建议：${s.suggestion}`)
-        if (s.rewriteOption !== undefined) lines.push(`   改写方案：${s.rewriteOption}`)
+        lines.push(`${i + 1}. [${s.severity}] ${s.dimension}：${encodeReviewLine(s.problem)}`)
+        if (s.quote !== undefined) lines.push(`   原文：${encodeReviewLine(s.quote)}`)
+        if (s.evidence !== undefined) lines.push(`   依据：${encodeReviewLine(`${s.evidence.ref} · ${s.evidence.quote}`)}`)
+        if (s.needsVerification === true) lines.push('   状态：待核对')
+        lines.push(`   建议：${encodeReviewLine(s.suggestion)}`)
+        if (s.rewriteOption !== undefined) lines.push(`   改写方案：${encodeReviewLine(s.rewriteOption)}`)
       }
       return lines.join('\n')
     },
@@ -575,11 +579,14 @@ function getEngine(ctx: Context): EngineService | { unavailable: string } {
   return engine
 }
 
-/** 写作类工具的格式化结果（长任务；engine 落盘与统计全部透传 exec.signal）。 */
+function encodeReviewLine(text: string): string {
+  if (!/[\r\n\u2028\u2029]/.test(text) && !text.startsWith('（JSON）')) return text
+  return `（JSON）${JSON.stringify(text).replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029')}`
+}
+
 function renderWriteResult(result: import('dsh-writer-domain').ChapterWriteResult): string {
-  // 空补丁 = 模型判定无需修改：未落盘，不能宣称「已保存」
   if (result.mode === 'rewrite-patch' && result.patchStats !== undefined && result.patchStats.applied === 0 && result.patchStats.skipped === 0) {
-    return `rewrite 判定无需修改，未落盘（chapter/${result.chapter.id} 保持原样，hash=${result.chapter.hash}）`
+    return `rewrite 未返回可应用补丁，未落盘（chapter/${result.chapter.id} 保持原样，hash=${result.chapter.hash}）`
   }
   const lines = [
     `已完成 ${result.mode} 写作并保存 chapter/${result.chapter.id}（hash=${result.chapter.hash}，字数≈${result.chapter.content.length}）`,

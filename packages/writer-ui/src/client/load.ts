@@ -18,6 +18,10 @@ import type { WorkspaceProjectState } from 'dsh-writer-core'
 interface WorkspaceFilesApi {
   list(sessionId: string, path: string, signal?: AbortSignal): Promise<{ ok: boolean; value?: any; error?: any }>
   read(sessionId: string, path: string, range: { offset?: number; limit?: number }, signal?: AbortSignal): Promise<{ ok: boolean; value?: any; error?: any }>
+  readBytes?(sessionId: string, path: string, options: { range: { offset: number; length: number } }, signal?: AbortSignal): Promise<{
+    ok: boolean
+    value?: { version: string; bytes?: number; offset: number; data: Uint8Array }
+  }>
   /** 目录变更流（api/workspace-files changes；第一方 files 侧栏同款）。第三方可选消费。 */
   changes?(sessionId: string, path: string, signal?: AbortSignal): AsyncIterable<{ kind: 'ready' | 'change' }>
 }
@@ -103,17 +107,37 @@ async function readText(sessionId: string, path: string, signal: AbortSignal): P
   if (api === null) throw new Error('workspaceFiles remote 不可用')
   let offset = 1
   let text = ''
+  let version: string | undefined
   for (let page = 0; ; page++) {
     if (signal.aborted) throw new DOMException('aborted', 'AbortError')
     if (page >= READ_MAX_PAGES) throw new Error(`read ${path} 超过 ${READ_MAX_PAGES} 页保险丝`)
     if (text.length > READ_MAX_CHARS) throw new Error(`read ${path} 超过 ${READ_MAX_CHARS} 字符保险丝`)
     const result = await api.read(sessionId, path, { offset }, signal)
     if (!result.ok) throw new Error(`read ${path} 失败: ${JSON.stringify(result.error ?? null)}`)
-    const pageValue = result.value as { text: string; lines: number; eof: boolean }
+    const pageValue = result.value as { text: string; lines: number; eof: boolean; bytes?: number; version?: string }
+    if (version !== undefined && pageValue.version !== version) throw new Error(`read ${path} 时文件版本已变化`)
+    version = pageValue.version
     text += pageValue.text
-    if (pageValue.eof || pageValue.lines === 0) return text
+    if (pageValue.eof || pageValue.lines === 0) {
+      if (pageValue.bytes === undefined) return text
+      const missingBytes = pageValue.bytes - new TextEncoder().encode(text).length
+      if (missingBytes === 0) return text
+      // 宿主行窗口略去页末分隔符，最后一个换行需靠文件字节数恢复。
+      if (missingBytes === 1 && pageValue.lines > 0) return `${text}\n`
+      // 本地宿主解码会省略 UTF-8 BOM。只补回同一文件版本中实际存在的 BOM。
+      if (api.readBytes && version !== undefined && (missingBytes === 3 || (missingBytes === 4 && pageValue.lines > 0))) {
+        const result = await api.readBytes(sessionId, path, { range: { offset: 0, length: 3 } }, signal)
+        signal.throwIfAborted()
+        const prefix = result.value
+        if (result.ok && prefix?.version === version && prefix.bytes === pageValue.bytes && prefix.offset === 0
+          && prefix.data.length === 3 && prefix.data[0] === 0xef && prefix.data[1] === 0xbb && prefix.data[2] === 0xbf) {
+          return `\uFEFF${text}${missingBytes === 4 ? '\n' : ''}`
+        }
+      }
+      throw new Error(`read ${path} 得到的字节数与文件大小不符`)
+    }
     offset += pageValue.lines
-    if (!text.endsWith('\n')) text += '\n'
+    text += '\n'
   }
 }
 
@@ -305,6 +329,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
 
   // —— 阶段三：按任务目录归类为扫描结果 ——
   const chapters: any[] = []
+  const malformedChapterFiles = new Set<string>()
   const plots: any[] = []
   const characters: any[] = []
   const style: any[] = []
@@ -315,8 +340,10 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     if (raw === null) continue
     const parsed = splitSource(raw)
     const record = { name: task.name, frontmatter: parsed.frontmatter, content: parsed.content, ...(task.subdir !== undefined ? { subdir: task.subdir } : {}) }
-    if (task.dir === chaptersDir) chapters.push(record)
-    else if (task.dir === join(root, 'plots')) plots.push(record)
+    if (task.dir === chaptersDir) {
+      chapters.push(record)
+      if (task.subdir === undefined && parsed.invalidFrontmatter) malformedChapterFiles.add(task.name)
+    } else if (task.dir === join(root, 'plots')) plots.push(record)
     else if (task.dir === join(root, 'characters')) characters.push(record)
     else if (task.dir === join(root, 'style')) style.push(record)
     else if (task.dir === join(root, 'worldbuilding')) worldbuilding.push(record)
@@ -344,7 +371,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     const heading = outline.content.split('\n').find((line: string) => /^#\s+\S/.test(line))?.replace(/^#\s+/, '').trim() ?? ''
     project = /^(大纲|outline|目录|toc)$/i.test(heading) || heading.length === 0 ? null : { title: heading }
   }
-  const pending: PendingSection[] = singletons.has('pending.md') ? extractPendingSections(singletons.get('pending.md')!.content) : []
+  const pendingSource = singletons.get('pending.md')?.content
   // 归档：根下为主，旧布局 .writer/ 兜底合并（迁移前的历史段仍可见，新来源在前）
   const pendingArchive: PendingSection[] = [
     ...(singletons.has('pending-archive.md') ? extractPendingSections(singletons.get('pending-archive.md')!.content) : []),
@@ -356,18 +383,23 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   // 章节缺失派生、部分完成或哈希不一致 = 待维护 pass（与服务端 writer_stats staleChapters 同语义；
   // 分歧留痕：remote 读取失败的章节不入本清单（计入 failedFiles），服务端按全量章节判）。
   const staleChapters: string[] = []
+  const pendingChapterHashes = new Map<string, string>()
+  const hasSourceVersions = pendingSource?.includes('<!-- writer-pending-source:') === true
   {
     const hashed = await mapPool(chapters, READ_CONCURRENCY, async (chapter) => {
       if (signal.aborted) throw new DOMException('aborted', 'AbortError')
       const id = String(chapter.name).replace(/\.md$/, '')
       const derived = maintenance.get(id)
-      if (derived === undefined || derived.sourceHash === undefined || derived.partial === true) return id
+      const canVerifyPending = hasSourceVersions && chapter.subdir === undefined && /^\d{3}\.md$/.test(chapter.name) && !malformedChapterFiles.has(chapter.name)
+      if (!canVerifyPending && (derived?.sourceHash === undefined || derived.partial === true)) return id
       const hash = await contentHashClient(chapter.frontmatter, chapter.content)
-      return hash === derived.sourceHash ? null : id
+      if (canVerifyPending) pendingChapterHashes.set(id, hash)
+      return hash === derived?.sourceHash && derived?.partial !== true ? null : id
     }, signal)
     for (const id of hashed) if (id !== null) staleChapters.push(id)
     staleChapters.sort()
   }
+  const pending = pendingSource === undefined ? [] : extractPendingSections(pendingSource, pendingChapterHashes)
 
   const singleton = (name: string) => singletons.get(name)
   return {

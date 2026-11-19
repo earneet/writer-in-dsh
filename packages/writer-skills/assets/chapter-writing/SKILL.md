@@ -12,10 +12,11 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 |---|---|---|
 | 写全新一章 | `write_chapter(mode="full")` | 引擎自动组装上下文（准则全量 + 本章大纲 + 前一章原文 + 人物摘要 + 伏笔指令）；可传 `title` 建新章 |
 | 从结尾继续写 | `write_chapter(mode="assist")` | 轻上下文续写，追加到现有正文尾部，不改已有句子 |
-| 按指令改稿 | `write_chapter(mode="rewrite", instruction=...)` | 补丁协议优先：小改零触碰未提及内容；大改自动回退全文并跑丢句守卫 |
+| 改动选中的正文 | `write_chapter(mode="rewrite", instruction=..., selection=...)` | 整组补丁必须在原选区内逐字定位且互不重叠，任何一条失败都保留原稿 |
+| 整章改稿 | `write_chapter(mode="rewrite", instruction=...)` | 作者明确要求整章改稿时使用；补丁优先，全文路径附带丢句告警 |
 
 - 章节 id 是三位序号（`"002"`）。assist/rewrite 要求章节已存在；新章只能用 full。
-- rewrite 必须给 `instruction`（改什么、往哪个方向改）；只改局部时可传 `selection`（选区原文）限定范围。
+- rewrite 必须给 `instruction`（改什么、往哪个方向改）。局部改稿时，从当前正文逐字复制非空、只出现一次的 `selection`。
 
 ## 写作前准备
 
@@ -56,7 +57,7 @@ writer_read(entity="plot") 盘点伏笔
 
 - **审稿先行**：维护类更新（伏笔状态、事件、人物状态）必须发生在 `review_chapter` 之后、基于审过稿的正文，禁止与 write 同轮。
 - rewrite 结果里的「丢句守卫告警」是疑似蒸发的重要原句：逐条判断是否为有意删除，无意丢失就再 rewrite 补回。
-- 补丁协议「跳过」条目（not-found / ambiguous）说明模型给的锚点没唯一命中：核对原文片段后重试一次，或改为全文大改。
+- 选区改稿被拒绝时，向作者说明原稿已保留，请作者核对后重新选定范围，或明确发起整章改稿。整章补丁的「跳过」条目（not-found / ambiguous）说明相应锚点未能唯一命中。
 
 ## 章后维护清单
 

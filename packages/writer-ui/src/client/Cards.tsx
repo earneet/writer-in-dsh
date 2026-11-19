@@ -237,7 +237,7 @@ export function WriteChapterCard(props: ToolViewPropsBase) {
   }
   // 章号原样展示守卫（工具契约为三位序号，但非数字 id 不应显示「第 NaN 章」）
   const chapterLabel = /^\d+$/.test(parsed.chapterId) ? `第 ${Number(parsed.chapterId)} 章` : `chapter/${parsed.chapterId}`
-  const title = parsed.chars > 0 ? `${chapterLabel} · 已保存` : `${chapterLabel} · 无需修改`
+  const title = parsed.note === null ? `${chapterLabel} · 已保存` : `${chapterLabel} · 原稿保留`
   return (
     <ToolRow
       icon={<IconEditOutlineRegular />}
@@ -326,15 +326,18 @@ export function ReviewCard(props: ToolViewPropsBase) {
     >
       <div style={detail}>
         {parsed.summary.length > 0 && <div style={{ color: 'var(--dsw-alias-label-primary)' }}>总评：{parsed.summary}</div>}
+        {parsed.coverage !== undefined && <div style={muted}>审稿覆盖：{parsed.coverage}</div>}
         {parsed.suggestions.map((s, i) => (
           <div key={i}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
               <Tag tone={severityTone(s.severity)}>{s.severity}</Tag>
+              {s.needsVerification === true && <Tag tone="warning">待核对</Tag>}
               <span><span style={muted}>{s.dimension}：</span>{s.problem}</span>
             </div>
             {s.quote !== null && (
-              <div style={{ ...muted, paddingLeft: 8, borderLeft: '2px solid var(--dsw-alias-border-l2)' }}>原文：{s.quote}</div>
+              <div style={{ ...muted, whiteSpace: 'pre-wrap', paddingLeft: 8, borderLeft: '2px solid var(--dsw-alias-border-l2)' }}>原文：{s.quote}</div>
             )}
+            {s.evidence !== undefined && <div style={{ ...muted, whiteSpace: 'pre-wrap' }}>依据：{s.evidence}</div>}
             {s.suggestion !== null && <div>建议：{s.suggestion}</div>}
             {s.rewriteOption !== null && <div>改写方案：{s.rewriteOption}</div>}
           </div>

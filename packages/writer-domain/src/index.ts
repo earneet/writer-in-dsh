@@ -266,25 +266,28 @@ export type RewriteModelOutput =
 /**
  * 解析 rewrite 模型输出：宽容提取首个 JSON 对象（允许前后缀寒暄与 Markdown 栅栏包裹），
  * 仅当其解析为对象且 `patches` 为逐项合法的 `{find,replace}` 数组时按补丁协议处理；
+ * 选区使用 strict，拒绝附带的正文或额外字段。
  * 否则一律视为全文（交给丢句守卫与引擎的 JSON 形守卫把关，不在此抛错）。
  */
-export function parseRewriteModelOutput(raw: string): RewriteModelOutput {
+export function parseRewriteModelOutput(raw: string, options?: { strict?: boolean }): RewriteModelOutput {
   const asFulltext = (): RewriteModelOutput => ({ kind: 'fulltext', text: raw.trim() })
   const text = raw.trim()
   // 候选 1：整体即栅栏块；候选 2：首 { 到尾 } 的子串（剥掉寒暄/尾注）
   const fenced = text.match(/^```[a-zA-Z]*\s*\n([\s\S]*?)\n?```$/)
-  const candidates = fenced !== null ? [fenced[1].trim()] : [text, sliceBraces(text)].filter((s) => s.length > 0)
+  const candidates = fenced !== null ? [fenced[1].trim()] : [text]
+  if (fenced === null && !options?.strict) candidates.push(sliceBraces(text))
   for (const candidate of candidates) {
     if (!candidate.startsWith('{')) continue
     try {
       const parsed = JSON.parse(candidate) as { patches?: unknown }
       if (!Array.isArray(parsed.patches)) continue
+      if (options?.strict && Object.keys(parsed).length !== 1) continue
       const patches: RewritePatch[] = []
       let entryValid = true
       for (const entry of parsed.patches) {
         if (typeof entry !== 'object' || entry === null) { entryValid = false; break }
         const { find, replace } = entry as Record<string, unknown>
-        if (typeof find !== 'string' || typeof replace !== 'string') { entryValid = false; break }
+        if (typeof find !== 'string' || typeof replace !== 'string' || (options?.strict && Object.keys(entry).length !== 2)) { entryValid = false; break }
         patches.push({ find, replace })
       }
       if (entryValid) return { kind: 'patches', patches }
@@ -529,7 +532,7 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
   return { sections, usageChars }
 }
 
-function visibleEvents(content: string, chapterNumber: number): string {
+export function visibleEvents(content: string, chapterNumber: number): string {
     let chapter: number | undefined
     let fence: string | undefined
     return content.split('\n').filter(line => {
@@ -561,12 +564,15 @@ export interface ReviewSuggestion {
   problem: string
   suggestion: string
   rewriteOption?: string
+  evidence?: { ref: string; quote: string }
+  needsVerification?: boolean
 }
 
 /** 审稿报告：建议列表 + 总评。 */
 export interface ReviewReport {
   suggestions: ReviewSuggestion[]
   summary: string
+  coverage?: string[]
 }
 
 const SEVERITIES = ['high', 'medium', 'low'] as const
@@ -597,6 +603,7 @@ export function parseReviewReport(raw: string): ReviewReport | undefined {
     const s = entry as Record<string, unknown>
     if (typeof s.dimension !== 'string' || typeof s.problem !== 'string' || typeof s.suggestion !== 'string') continue
     const severity = (SEVERITIES as readonly string[]).includes(String(s.severity)) ? s.severity as ReviewSuggestion['severity'] : 'medium'
+    const evidence = s.evidence as { ref?: unknown; quote?: unknown } | undefined | null
     valid.push({
       dimension: s.dimension,
       severity,
@@ -606,6 +613,8 @@ export function parseReviewReport(raw: string): ReviewReport | undefined {
       // 有意简化：参考源（writing-workflow.md §8.2）的 rewriteOption 是对象（text+replaceRange），
       // 本仓 DSH 工具路径只取改写文本字符串，quote 定位交给补丁协议的 find 锚点
       ...(typeof s.rewriteOption === 'string' && s.rewriteOption.length > 0 ? { rewriteOption: s.rewriteOption } : {}),
+      ...(typeof evidence?.ref === 'string' && typeof evidence.quote === 'string' && evidence.quote.trim().length > 0
+        ? { evidence: { ref: evidence.ref, quote: evidence.quote } } : {}),
     })
   }
   return { suggestions: valid, summary: typeof summary === 'string' ? summary : '' }
@@ -641,7 +650,7 @@ export interface ChapterWriteRequest {
   instruction?: string
   /** full 模式创建新章时的标题。 */
   title?: string
-  /** rewrite 模式可选选区锚（限制改写范围提示）。 */
+  /** rewrite 模式可选的非空、逐字唯一正文选区；仅接受选区内的整组补丁。 */
   selection?: string
   signal?: AbortSignal
 }

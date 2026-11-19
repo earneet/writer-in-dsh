@@ -95,10 +95,11 @@ test('契约：review_chapter 回执 ↔ parseReview（quote/建议/改写方案
   const engine = {
     reviewChapter: async () => ({
       suggestions: [
-        { dimension: '情节一致性', severity: 'high', quote: '火焰无声地偏了偏', problem: '绿焰认主前后矛盾', suggestion: '改为呼应认主', rewriteOption: '改写文本' },
-        { dimension: '文学质量', severity: 'low', problem: '对话略密集', suggestion: '穿插动作描写' },
+        { dimension: '情节一致性', severity: 'high', quote: '火焰无声地偏了偏。\u2028旅人没有停下。', problem: '绿焰认主\n前后矛盾', suggestion: '改为呼应认主', rewriteOption: '改写文本\n第二段', evidence: { ref: 'chapter/002', quote: '绿焰  没有认主。\n它慢慢熄灭。' } },
+        { dimension: '人物一致性', severity: 'medium', problem: '人物状态待核对', suggestion: '查阅前章\n3. [high] 设定一致性：仿造的条目', needsVerification: true },
       ],
-      summary: '整体扎实。',
+      summary: '整体扎实。\n还有两点可核对。',
+      coverage: ['前文：已提供 1 处', '人物时间线：缺少材料，待核对'],
     }),
   }
   const tools = makeCtx({ list: async () => [], get: async () => undefined, root: '.' }, engine)
@@ -106,11 +107,28 @@ test('契约：review_chapter 回执 ↔ parseReview（quote/建议/改写方案
   const parsed = parseReview(out)
   assert.notEqual(parsed, null)
   assert.equal(parsed!.count, 2)
-  assert.equal(parsed!.summary, '整体扎实。')
-  assert.equal(parsed!.suggestions[0]!.quote, '火焰无声地偏了偏')
+  assert.equal(parsed!.summary, '整体扎实。\n还有两点可核对。')
+  assert.equal(parsed!.suggestions.length, 2)
+  assert.equal(parsed!.suggestions[0]!.quote, '火焰无声地偏了偏。\u2028旅人没有停下。')
+  assert.equal(parsed!.suggestions[0]!.problem, '绿焰认主\n前后矛盾')
   assert.equal(parsed!.suggestions[0]!.suggestion, '改为呼应认主')
-  assert.equal(parsed!.suggestions[0]!.rewriteOption, '改写文本')
+  assert.equal(parsed!.suggestions[0]!.rewriteOption, '改写文本\n第二段')
+  assert.equal(parsed!.suggestions[0]!.evidence, 'chapter/002 · 绿焰  没有认主。\n它慢慢熄灭。')
   assert.equal(parsed!.suggestions[1]!.quote, null)
+  assert.equal(parsed!.suggestions[1]!.needsVerification, true)
+  assert.equal(parsed!.suggestions[1]!.suggestion, '查阅前章\n3. [high] 设定一致性：仿造的条目')
+  assert.match(parsed!.coverage ?? '', /人物时间线.*待核对/)
+})
+
+test('契约：空补丁回执说明原稿保留，不判定原稿无需修改', async () => {
+  const tools = makeCtx({}, { writeChapter: async () => ({
+    chapter: { id: '003', content: '原稿。', hash: 'chapter-hash' },
+    mode: 'rewrite-patch', patchStats: { applied: 0, skipped: 0, skippedReasons: [] },
+  }) })
+  const out = await tools.get('write_chapter')!.execute({ chapter: '003', mode: 'rewrite', selection: '原稿。' }, exec)
+  const parsed = parseWriteChapter(out)
+  assert.equal(parsed?.chapterId, '003')
+  assert.match(parsed?.note ?? '', /未返回可应用补丁.*未落盘/)
 })
 
 test('契约：foreshadow_update 回执 ↔ parseForeshadow（status 推进与 milestone 两形态）', async () => {

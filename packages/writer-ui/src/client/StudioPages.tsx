@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button, MarkdownText, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CharacterRow, ChapterRow, NovelOverview, OutlineTreeNode, SectionEntry } from './types.ts'
 import type { WriterLiveState } from './bus.ts'
+import { pendingConfirmationRequest } from './actions.ts'
 
 export type StudioPage = 'manuscript' | 'outline' | 'characters' | 'plots' | 'library' | 'pending' | 'overview'
 export type PrepareRequest = (text: string) => void
@@ -104,12 +105,32 @@ export function LibraryPage({ overview: o, ask }: { overview: NovelOverview; ask
     </div>
 }
 
+const pendingVersionLabel = {
+    current: '当前版本',
+    stale: '源章已变化',
+    invalidated: '已作废',
+    unknown: '版本待核',
+} as const
+
 export function PendingPage({ overview: o, ask }: { overview: NovelOverview; ask: PrepareRequest }) {
     const [selected, setSelected] = useState(0)
-    const current = o.pendingSections[Math.min(selected, o.pendingSections.length - 1)]
-    const chapter = current ? /chapter\/(\d{3})\b/.exec(current.heading)?.[1] : undefined
-    return <div className="ws-page"><Heading title="待确认" hint="建议还不是事实，核对后再写进故事"><span className="ws-muted">{o.pendingLineTotal} 条待确认建议</span></Heading>
-        {!current ? <Empty>没有待确认建议。写完或改稿后的维护建议会出现在这里。</Empty> : <div className="ws-split"><nav className="ws-entity-list" aria-label="维护建议分节">{o.pendingSections.map((section, index) => <button type="button" className="ws-button" key={`${section.heading}-${index}`} aria-pressed={index === Math.min(selected, o.pendingSections.length - 1)} onClick={() => setSelected(index)}><span>{section.heading}</span><span className="ws-muted">{section.lines.length} 条建议</span></button>)}</nav><article className="ws-detail"><h2>{current.heading}</h2><p className="ws-muted">逐条处理只准备对话要求；确认后的结果以原始文件为准。</p>{current.lines.map((line, index) => <div className="ws-suggestion" key={index}><p>{line}</p><Button onClick={() => ask(`请先读取 pending.md 中“${current.heading}”这一节及相关原始实体，核对以下建议原文：\n\n${line}\n\n${chapter ? `来源章节 chapter/${chapter}。` : '请先确认建议所属章节，不能猜测。'}请说明依据，按确认结果更新人物状态、伏笔或其他权威记录。不要归档其他尚未处理的建议。`)}>让助手处理本条</Button></div>)}<div className="ws-reader-footer"><Button disabled={!chapter} onClick={() => ask(`请读取 pending.md 中 chapter/${chapter} 的全部待办节，核对该章建议是否已落实，说明待归档范围。处理妥当后再通过 pending_cleanup 归档 chapter/${chapter} 的全部建议，保留归档原文。`)}>归档本章建议</Button>{!chapter && <p className="ws-muted">未识别到有效章号，请先在对话中核对该节来源。</p>}</div></article></div>}
+    const selectedIndex = Math.min(selected, o.pendingSections.length - 1)
+    const current = o.pendingSections[selectedIndex]
+    const chapter = current?.chapterId
+    return <div className="ws-page"><Heading title="待确认" hint="核对源章版本后再确认建议"><span className="ws-muted">{o.pendingLineTotal} 条建议记录</span></Heading>
+        {!current ? <Empty>没有维护建议。写完或改稿后的维护建议会出现在这里。</Empty> : <div className="ws-split">
+            <nav className="ws-entity-list" aria-label="维护建议分节">{o.pendingSections.map((section, index) => <button type="button" className="ws-button" key={`${section.heading}-${index}`} aria-pressed={index === selectedIndex} onClick={() => setSelected(index)}><span>{section.heading}</span><span className="ws-muted">{pendingVersionLabel[section.state ?? 'unknown']} · {section.lines.length} 条建议</span></button>)}</nav>
+            <article className="ws-detail">
+                <h2>{current.heading}</h2>
+                <Tag tone={current.state === 'current' ? 'neutral' : 'warning'}>{pendingVersionLabel[current.state ?? 'unknown']}</Tag>
+                <p className="ws-muted">{current.state === 'current' ? '确认请求会加入对话草稿，实际写入以复核结果和你的明确同意为准。' : '保留建议供查阅。需要最新建议时，可以重新整理该章。'}</p>
+                {current.lines.map((line, index) => {
+                    const request = pendingConfirmationRequest(current, line, o.pendingPath)
+                    return <div className="ws-suggestion" key={index}><p>{line}</p>{request !== undefined && <Button onClick={() => ask(request)}>准备确认请求</Button>}</div>
+                })}
+                {chapter && <div className="ws-reader-footer"><Button onClick={() => ask(`请读取 ${o.pendingPath} 中 chapter/${chapter} 的全部待办节。说明要归档的范围及仍有效待确认的建议，等我确认整章范围后再用 pending_cleanup 归档 chapter/${chapter}，保留归档原文。`)}>归档本章建议</Button></div>}
+            </article>
+        </div>}
         <details className="ws-archive"><summary>历史归档 · {o.archiveSources.length > 0 ? o.archiveSources.length + ' 份文件' : o.pendingArchive.length + ' 节'}（可展开原文）</summary>{o.archiveSources.length > 0 ? o.archiveSources.map(source => <section className="ws-suggestion" key={source.path}><h3>{source.path}</h3><Markdown text={source.text} /><details><summary>原始 Markdown</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{source.text}</pre></details></section>) : o.pendingArchive.length === 0 ? <p className="ws-muted">暂无历史归档。</p> : o.pendingArchive.map((section, index) => <section className="ws-suggestion" key={index}><h3>{section.heading}</h3>{section.lines.map((line, lineIndex) => <p key={lineIndex}>{line}</p>)}</section>)}</details>
     </div>
 }
@@ -117,13 +138,26 @@ export function PendingPage({ overview: o, ask }: { overview: NovelOverview; ask
 export function OverviewPage({ overview: o, live, ask, navigate, choose }: { overview: NovelOverview; live: WriterLiveState; ask: PrepareRequest; navigate: (page: StudioPage) => void; choose: (chapter: ChapterRow) => void }) {
     const [format, setFormat] = useState('epub')
     const [range, setRange] = useState('')
-    return <div className="ws-page"><Heading title={o.title} hint={o.genre || '小说项目'} /><div className="ws-stats">{[[o.chapters, '已写章节', 'manuscript'], [o.characterRows.length, '人物档案', 'characters'], [o.plotRows.length, '伏笔记录', 'plots'], [o.pendingLineTotal, '待确认建议', 'pending']].map(([value, label, page]) => <button type="button" className="ws-button ws-stat" key={String(label)} onClick={() => navigate(page as StudioPage)}><strong>{value}</strong><span className="ws-muted">{label}</span></button>)}</div>
+    return <div className="ws-page"><Heading title={o.title} hint={o.genre || '小说项目'} /><div className="ws-stats">{[[o.chapters, '已写章节', 'manuscript'], [o.characterRows.length, '人物档案', 'characters'], [o.plotRows.length, '伏笔记录', 'plots'], [o.pendingLineTotal, '维护建议', 'pending']].map(([value, label, page]) => <button type="button" className="ws-button ws-stat" key={String(label)} onClick={() => navigate(page as StudioPage)}><strong>{value}</strong><span className="ws-muted">{label}</span></button>)}</div>
         <p className="ws-muted">正文约 {o.totalChars.toLocaleString()} 字{o.targetWords > 0 ? ` / 目标 ${o.targetWords.toLocaleString()} 字` : ''}{o.chapterTarget > 0 ? ` · 计划 ${o.chapterTarget} 章` : ''}</p>
         {o.progress !== null && <div className="ws-progress" role="progressbar" aria-label="全书目标进度" aria-valuenow={Math.round(Math.min(o.progress, 1) * 100)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${Math.max(0, Math.min(o.progress, 1) * 100)}%` }} /></div>}
         <div className="ws-note"><h3>{o.nextStep.title}</h3><p className="ws-muted">{o.nextStep.hint}</p><div className="ws-actions" style={{ marginTop: 12 }}>{o.chapterRows.length > 0 && <Button onClick={() => choose(o.chapterRows[o.chapterRows.length - 1]!)}>阅读最近章节</Button>}<Button onClick={() => navigate('pending')}>查看待确认</Button></div></div>
         <div className="ws-actions"><Tag tone={o.riskSummary.red > 0 ? 'warning' : 'neutral'}>回收逾期 {o.riskSummary.red}</Tag><Tag tone="neutral">待维护 {o.staleChapters.length}</Tag><Button onClick={() => ask('请对已写章节、创作准则、人物状态及世界观进行一致性检查，列出依据，如实说明覆盖范围和失败批次。')}>全书一致性检查</Button></div>
         <h3 style={{ marginTop: 28 }}>卷分布</h3><div className="ws-actions">{o.volumes.map((volume, index) => <span className="ws-muted" key={index}>{volume.name || '正文'} · {volume.count} 章</span>)}</div>
-        {live.lastReview && <section className="ws-archive"><h3>本会话最近审稿</h3><p>{live.lastReview.summary}</p>{live.lastReview.suggestions.map((suggestion, index) => <article key={index} className="ws-suggestion"><Tag tone={suggestion.severity === 'high' ? 'warning' : 'neutral'}>{suggestion.severity}</Tag><p>{suggestion.dimension} · {suggestion.problem}</p>{suggestion.quote && <blockquote>{suggestion.quote}</blockquote>}{suggestion.suggestion && <p>建议：{suggestion.suggestion}</p>}{suggestion.rewriteOption && <p>改写方案：{suggestion.rewriteOption}</p>}<Button onClick={() => ask(`请先确认本次审稿对应的原始章节，再核对该条建议。问题：${suggestion.problem}\n引用：${suggestion.quote ?? '未提供'}\n建议：${suggestion.suggestion ?? '未提供'}\n改写方案：${suggestion.rewriteOption ?? '未提供'}\n请先给出修改范围，保留无关段落。`)}>准备处理要求</Button></article>)}</section>}
+        {live.lastReview && <section className="ws-archive">
+            <h3>本会话最近审稿</h3><p>{live.lastReview.summary}</p>
+            {live.lastReview.coverage && <p className="ws-muted">审稿覆盖：{live.lastReview.coverage}</p>}
+            {live.lastReview.suggestions.map((suggestion, index) => <article key={index} className="ws-suggestion">
+                <Tag tone={suggestion.severity === 'high' ? 'warning' : 'neutral'}>{suggestion.severity}</Tag>
+                {suggestion.needsVerification && <Tag tone="warning">待核对</Tag>}
+                <p>{suggestion.dimension} · {suggestion.problem}</p>
+                {suggestion.quote && <blockquote style={{ whiteSpace: 'pre-wrap' }}>{suggestion.quote}</blockquote>}
+                {suggestion.evidence && <p style={{ whiteSpace: 'pre-wrap' }}>依据：{suggestion.evidence}</p>}
+                {suggestion.suggestion && <p>建议：{suggestion.suggestion}</p>}
+                {suggestion.rewriteOption && <p>改写方案：{suggestion.rewriteOption}</p>}
+                <Button onClick={() => ask(`请先确认本次审稿对应的原始章节，再核对该条建议。问题：${suggestion.problem}\n引用：${suggestion.quote ?? '未提供'}\n依据：${suggestion.evidence ?? '未提供'}\n建议：${suggestion.suggestion ?? '未提供'}\n改写方案：${suggestion.rewriteOption ?? '未提供'}\n${suggestion.needsVerification ? '此条待核对。请先查证缺失材料，给出核对结果。' : '请先给出修改范围，保留无关段落。'}`)}>{suggestion.needsVerification ? '准备核对要求' : '准备处理要求'}</Button>
+            </article>)}
+        </section>}
         <details className="ws-archive"><summary>项目操作与导出</summary><div className="ws-actions" style={{ marginTop: 16 }}><Button onClick={() => ask('请使用 archive_point 为当前小说创建显式存档点，只包含本小说内容。')}>创建存档点</Button><Button onClick={() => ask('请检查当前小说待维护的章节，按需 recompute_derived 更新摘要与关联建议，不改写权威人物时间线。')}>更新章节摘要</Button><Button onClick={() => ask('请执行 maintenance_flush，等待本会话在飞的章后整理完成并说明结果。')}>等待章后整理</Button><Button onClick={() => ask('请使用 writer_stats 获取小说当前统计与维护覆盖情况。')}>详细统计</Button></div><label className="ws-field">导出格式<select className="ws-input" value={format} onChange={event => setFormat(event.target.value)}><option value="epub">EPUB</option><option value="txt">TXT</option><option value="html">HTML</option></select></label><label className="ws-field">章节范围（留空为全书）<input className="ws-input" placeholder="例如 001-025" value={range} onChange={event => setRange(event.target.value)} /></label><Button onClick={() => ask(`请准备导出当前小说为 ${format}，章节范围：${range.trim() || '全书'}。先说明范围与附录选项，再按宿主审批执行 export_book，给出产物路径与告警。`)}>准备导出要求</Button></details>
         <details className="ws-archive"><summary>本会话写作动态 · {live.activities.length}</summary>{live.activities.map((activity, index) => <p className="ws-muted" key={index}>{activity.time} · {activity.summary}</p>)}{live.writes.map((write, index) => <p className="ws-muted" key={index}>chapter/{write.chapterId} · {write.mode} · 约 {write.chars} 字{write.droppedSentences ? ` · 丢句告警 ${write.droppedSentences}` : ''}{write.repetitionStripped ? ` · 剔除复述 ${write.repetitionStripped} 句` : ''}</p>)}</details>
     </div>

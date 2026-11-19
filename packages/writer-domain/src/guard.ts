@@ -21,6 +21,7 @@ export type BusinessErrorCategory =
  */
 const THROWN_PATTERNS: ReadonlyArray<readonly [BusinessErrorCategory, RegExp]> = [
     ['validation', /^frontmatter 键非法/],
+    ['validation', /^选区改稿未通过：/],
   ['optimistic-lock', /^乐观锁失败|^实体已存在：/],
   ['parse', /^(审稿输出|维护 pass 抽取输出|frontmatter 行)无法解析|^milestones JSON 解析失败|^(milestones|timeline) (必须是 JSON|JSON 解析失败)|^(milestones|timeline)\[|rewrite 全文输出疑似补丁 JSON/],
   ['reference-reject', /^引用不存在|^fact「.*」引用不存在的实体|^foreshadowEvent 引用不存在的伏笔|^characterState 引用不存在的人物/],

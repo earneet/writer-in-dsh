@@ -7,6 +7,7 @@ import {
   REVIEW_DIMENSIONS,
   type AssembledWritingContext, type ContextSection, type WriterEntity,
 } from 'dsh-writer-domain'
+import type { ReviewContext } from './review.ts'
 
 /** 把组装出的分节渲染为用户提示词正文（标题 + 内容块）。 */
 export function renderSections(sections: readonly ContextSection[]): string {
@@ -27,7 +28,15 @@ export function buildWriteSystemPrompt(mode: 'full' | 'assist'): string {
 }
 
 /** rewrite 模式 system 提示词：补丁协议优先（小改），大改输出全文。 */
-export function buildRewriteSystemPrompt(): string {
+export function buildRewriteSystemPrompt(hasSelection = false): string {
+    if (hasSelection) {
+        return [
+            '你是一位中文长篇小说的改写执行者。根据改写指令在指定选区内修改，遵守「创作准则」。',
+            '只输出一个 JSON 对象，形如 {"patches":[{"find":"选区原文片段","replace":"改后文本"}]}。',
+            '所有 find 都必须逐字摘自改写前的选区，在选区内唯一且互不重叠。选区外正文只供参考。',
+            '无法在选区内完成改写或无需改动时，输出 {"patches":[]}。禁止输出全文或解释。',
+        ].join('\n')
+    }
   return [
     '你是一位中文长篇小说的改写执行者。依据改写指令修改章节正文，遵守「创作准则」的红线。',
     '输出协议（二选一，严格遵守）：',
@@ -52,8 +61,8 @@ export function buildRewriteUserPrompt(
     selection?: string,
     context?: { principles?: string; styleReferences?: string },
 ): string {
-  const anchor = selection !== undefined && selection.trim().length > 0
-    ? `\n\n## 改写范围\n只围绕以下选区前后改动（其余内容尽量走补丁协议保持原样）：\n${selection}`
+  const anchor = selection !== undefined
+    ? `\n\n## 改写范围（补丁只可锚定以下选区原文）\n${selection}`
     : ''
   return [
     ...(context?.principles !== undefined ? [`## 创作准则（全量）\n${context.principles}`] : []),
@@ -70,23 +79,18 @@ export function buildReviewSystemPrompt(focus?: readonly string[]): string {
   const dims = focus !== undefined && focus.length > 0 ? focus.join('、') : REVIEW_DIMENSIONS.join('、')
   return [
     `你是一位严谨的中文小说审稿人。只审以下维度：${dims}。`,
-    '逐条给出建议；每条尽量引用原文片段（quote，逐字摘自正文、足够定位），无法精确定位时可省略 quote。',
+    '逐条给出建议；quote 逐字摘自本章正文，要足以定位问题。对一致性硬冲突，同时给出依据 evidence，ref 使用提供的来源编号，quote 逐字摘自该来源并包含冲突事实。',
     '只输出一个 JSON 对象（可被 JSON.parse），不要任何其他文字：',
-    '{"summary":"总评（2-3 句）","suggestions":[{"dimension":"维度名","severity":"high|medium|low","quote":"原文片段（可选）","problem":"问题描述","suggestion":"修改建议","rewriteOption":"可选的改写后文本"}]}',
-    '没有问题的维度不要编造建议；提供了 quote 但与正文不符的建议会被丢弃。',
+    '{"summary":"总评（2-3 句）","suggestions":[{"dimension":"维度名","severity":"high|medium|low","quote":"本章原文片段（可选）","problem":"问题描述","suggestion":"修改建议","rewriteOption":"可选的改写后文本","evidence":{"ref":"来源编号","quote":"依据原文片段"}}]}',
+    '依据缺失时省略 evidence，在建议中说明待核对的材料。总评只评价已提供材料；没有问题的维度不要编造建议。',
   ].join('\n')
 }
 
-/** 审稿 user 提示词：准则 + 本章大纲 + 人物/伏笔摘要 + 章节正文。 */
-export function buildReviewUserPrompt(
-  chapter: WriterEntity,
-  context: { principles?: string; chapterOutline?: string; charactersBrief?: string; plotsBrief?: string },
-): string {
-  const parts: string[] = []
-  if (context.principles !== undefined) parts.push(`## 创作准则\n${context.principles}`)
-  if (context.chapterOutline !== undefined) parts.push(`## 本章大纲\n${context.chapterOutline}`)
-  if (context.charactersBrief !== undefined) parts.push(`## 人物设定摘要\n${context.charactersBrief}`)
-  if (context.plotsBrief !== undefined) parts.push(`## 伏笔档案\n${context.plotsBrief}`)
+export function buildReviewUserPrompt(chapter: WriterEntity, context: ReviewContext): string {
+  const parts = [`## 审稿覆盖\n${context.coverage.map(item => `- ${item}`).join('\n')}`]
+  for (const { label, sources } of context.materials) {
+    if (sources.length > 0) parts.push(`## ${label}\n${sources.map(({ ref, text }) => `### ${ref}\n${text}`).join('\n\n')}`)
+  }
   parts.push(`## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）\n${chapter.content}`)
   return parts.join('\n\n')
 }

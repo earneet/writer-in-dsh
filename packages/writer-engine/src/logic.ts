@@ -4,8 +4,9 @@
  * @module dsh-writer-engine/logic
  */
 import type { FinishReason } from '@deepseek-ai/dsh-llm'
+import { parseFrontmatter, serializeEntity } from 'dsh-writer-domain'
 import type {
-  ChapterWriteRequest, Frontmatter, RewriteModelOutput, RewritePatchResult, SectionValidation, WriterEntity,
+  ChapterWriteRequest, Frontmatter, RewriteModelOutput, RewritePatch, RewritePatchResult, SectionValidation, WriterEntity,
 } from 'dsh-writer-domain'
 
 /** 章节实体 id 约定：三位序号。 */
@@ -18,6 +19,9 @@ export const CHAPTER_ID_RE = /^\d{3}$/
 export function validateWriteRequest(request: ChapterWriteRequest, existing: WriterEntity | undefined): void {
   if (!CHAPTER_ID_RE.test(request.chapterId)) {
     throw new Error(`章节 id 必须为三位序号：${JSON.stringify(request.chapterId)}`)
+  }
+  if (request.selection !== undefined && request.mode !== 'rewrite') {
+    rejectSelectionRewrite('selection 参数仅适用于 rewrite 模式')
   }
   if (request.mode !== 'full' && existing === undefined) {
     throw new Error(`章节不存在：chapter/${request.chapterId}（assist/rewrite 需已存在章节；新建请用 full 模式）`)
@@ -45,7 +49,7 @@ export function mergeAssistContent(existingContent: string, continuation: string
 
 /** rewrite 决策树的三个落点。 */
 export type RewriteDecision =
-  | { action: 'no-change' } // 空补丁：模型判定无需修改，不落盘
+  | { action: 'no-change' }
   | { action: 'save-patch'; patch: RewritePatchResult } // 补丁命中 ≥1：保存补丁结果
   | { action: 'fulltext' } // 全文路径（大改输出 / 补丁全不命中降级 / 模型直接给全文）
 
@@ -62,6 +66,53 @@ export function decideRewritePath(model: RewriteModelOutput, patch?: RewritePatc
   if (patch === undefined) throw new Error('decideRewritePath：补丁输出缺少应用结果')
   if (patch.applied > 0) return { action: 'save-patch', patch }
   return { action: 'fulltext' }
+}
+
+export function rejectSelectionRewrite(reason: string): never {
+    throw new Error(`选区改稿未通过：${reason}，本次未保存。请从当前章稿重新选定可唯一定位的原文，或请作者明确要求整章改稿后再扩大范围。`)
+}
+
+export function locateRewriteSelection(content: string, selection: string): number {
+    if (selection.trim().length === 0) rejectSelectionRewrite('选区必须包含非空正文')
+    const start = content.indexOf(selection)
+    if (start < 0) rejectSelectionRewrite('当前章稿中没有逐字匹配的选区')
+    if (content.indexOf(selection, start + 1) >= 0) rejectSelectionRewrite('选区在当前章稿中匹配多处')
+    return start
+}
+
+export function applySelectionRewrite(
+    chapter: WriterEntity,
+    selection: { text: string; start: number },
+    patches: readonly RewritePatch[],
+): RewritePatchResult {
+    const spans = patches.map(({ find, replace }, index) => {
+        const start = selection.text.indexOf(find)
+        if (find.trim().length === 0 || start < 0 || selection.text.indexOf(find, start + 1) >= 0) {
+            rejectSelectionRewrite(`第 ${index + 1} 条补丁在选区原文内无唯一的逐字匹配`)
+        }
+        return { start, end: start + find.length, replace }
+    }).sort((a, b) => a.start - b.start)
+    const prefix = chapter.content.slice(0, selection.start)
+    const suffix = chapter.content.slice(selection.start + selection.text.length)
+    const parts = [prefix]
+    let cursor = 0
+    for (const span of spans) {
+        if (span.start < cursor) rejectSelectionRewrite('补丁锚点在选区内重叠')
+        parts.push(selection.text.slice(cursor, span.start), span.replace)
+        cursor = span.end
+    }
+    parts.push(selection.text.slice(cursor), suffix)
+    const content = parts.join('')
+    // 存储会规范化 Markdown；写入前确认不会暗中改动选区外的正文。
+    let savedContent: string
+    try {
+        savedContent = parseFrontmatter(Buffer.from(serializeEntity(chapter.frontmatter, content)).toString()).content
+    } catch {
+        rejectSelectionRewrite('补丁结果无法按章稿 Markdown 格式保存')
+    }
+    const expected = suffix.length === 0 && !content.endsWith('\n') ? `${content}\n` : content
+    if (savedContent !== expected) rejectSelectionRewrite('章稿存储格式无法原样保存补丁结果，可能改动选区外正文')
+    return { content, applied: patches.length, skipped: [] }
 }
 
 /**

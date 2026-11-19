@@ -257,6 +257,7 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
     characterRows,
     // 统计格用扫描总数：读取上限（WORLDBUILDING_MAX）只限制卡片条数，概况数字不得随截断缩水
     worldbuildingCount: scan.worldbuildingCount,
+    pendingPath: scan.root === '.' || scan.root === '' ? 'pending.md' : `${scan.root}/pending.md`,
     pendingSections: pending,
     pendingLineTotal: pending.reduce((sum, section) => sum + section.lines.length, 0),
     riskSummary,

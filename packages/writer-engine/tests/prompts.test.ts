@@ -75,10 +75,13 @@ test('审稿 system 提示词：维度与 JSON 契约；focus 过滤生效', () 
 test('审稿用户提示词：准则/大纲/人物/伏笔 + 正文', () => {
   const ch = entity('chapter', '001', { number: 1 }, '章节内容。')
   const u = buildReviewUserPrompt(ch, {
-    principles: '准则内容',
-    chapterOutline: '大纲内容',
-    charactersBrief: '- elin：守灯人',
-    plotsBrief: '- green-flame：绿焰',
+    materials: [
+      { label: '创作准则', dimensions: ['设定一致性'], sources: [{ ref: 'principles/principles', text: '准则内容' }] },
+      { label: '本章大纲', dimensions: ['情节一致性'], sources: [{ ref: 'outline/outline', text: '大纲内容' }] },
+      { label: '人物设定', dimensions: ['人物一致性'], sources: [{ ref: 'character/elin', text: '守灯人' }] },
+      { label: '伏笔档案', dimensions: ['情节一致性'], sources: [{ ref: 'plot/green-flame', text: '绿焰' }] },
+    ],
+    coverage: ['前文：缺少材料，待核对'],
   })
-  for (const kw of ['准则内容', '大纲内容', '- elin', '- green-flame', '章节内容。']) assert.ok(u.includes(kw))
+  for (const kw of ['准则内容', '大纲内容', 'character/elin', 'plot/green-flame', '章节内容。', '前文：缺少材料，待核对']) assert.ok(u.includes(kw))
 })

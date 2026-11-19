@@ -27,7 +27,7 @@ export interface WriteChapterResult {
   droppedSentences: number
   /** assist 复述守卫剔除的复述句数（>0 表示有连续复述段被剔除后才落盘）。 */
   repetitionStripped: number
-  /** 「rewrite 判定无需修改」等非保存路径的原文首行。 */
+  /** 非保存路径的原文首行。 */
   note: string | null
 }
 
@@ -42,12 +42,15 @@ export interface ReviewSuggestion {
   suggestion: string | null
   /** 可选改写方案（`   改写方案：…`；可选）。 */
   rewriteOption: string | null
+  evidence?: string
+  needsVerification?: boolean
 }
 
 export interface ReviewReport {
   count: number
   summary: string
   suggestions: ReviewSuggestion[]
+  coverage?: string
 }
 
 /** 解析 writer_stats 输出（工具渲染格式；人物时间线一览不计入结构化字段）。 */
@@ -118,41 +121,59 @@ export function parseWriteChapter(text: string): WriteChapterResult | null {
       note: null,
     }
   }
-  const noop = /^rewrite 判定无需修改，未落盘（chapter\/(\d{3,})/m.exec(text)
+  const noop = /^rewrite (?:判定无需修改|未返回可应用补丁)，未落盘（chapter\/(\d{3,})/m.exec(text)
   if (noop !== null) {
     return { mode: 'rewrite-patch', chapterId: noop[1], chars: 0, patchesApplied: 0, patchesSkipped: 0, droppedSentences: 0, repetitionStripped: 0, note: text.split('\n')[0] ?? null }
   }
   return null
 }
 
+function decodeReviewLine(value: string): string {
+  const prefix = '（JSON）'
+  if (!value.startsWith(prefix)) return value
+  try {
+    const decoded: unknown = JSON.parse(value.slice(prefix.length))
+    return typeof decoded === 'string' ? decoded : value
+  } catch {
+    return value
+  }
+}
+
 /** 解析 review_chapter 输出（总评 + 逐条建议）。 */
 export function parseReview(text: string): ReviewReport | null {
+  const coverage = /^审稿覆盖：([^\r\n]+)\r?$/m.exec(text)?.[1]
+  const scope = coverage === undefined ? {} : { coverage }
   const head = /^审稿完成（(\d+) 条建议）。总评：(.*)$/m.exec(text)
   if (head === null) {
     if (/^审稿完成，无结构化建议。/.test(text)) {
-      return { count: 0, summary: /^审稿完成，无结构化建议。总评：(.*)$/m.exec(text)?.[1] ?? '', suggestions: [] }
+      return { count: 0, summary: decodeReviewLine(/^审稿完成，无结构化建议。总评：(.*)$/m.exec(text)?.[1] ?? ''), suggestions: [], ...scope }
     }
     return null
   }
   const suggestions: ReviewSuggestion[] = []
   // 缩进续行（`   原文：` / `   建议：` / `   改写方案：`）归属当前条目——
   // writer-tools 渲染逐字对齐（src/index.ts:166-168 的三空格缩进行）；split(/\r?\n/) 容 CRLF
-  const CONTINUATION = /^\s{2,}(原文|建议|改写方案)：(.*)$/
+  const CONTINUATION = /^\s{2,}(原文|建议|改写方案|依据|状态)：(.*)$/
   for (const line of text.split(/\r?\n/)) {
-    const m = /^\d+\. \[(\w+)\] ([^：]+)：(.+)$/.exec(line)
+    const m = /^(\d+)\. \[(\w+)\] ([^：]+)：(.*)$/.exec(line)
     if (m !== null) {
-      suggestions.push({ severity: m[1], dimension: m[2], problem: m[3], quote: null, suggestion: null, rewriteOption: null })
+      if (Number(m[1]) !== suggestions.length + 1) return null
+      suggestions.push({ severity: m[2], dimension: m[3], problem: decodeReviewLine(m[4]), quote: null, suggestion: null, rewriteOption: null })
       continue
     }
     const c = CONTINUATION.exec(line)
     if (c === null) continue
     const current = suggestions[suggestions.length - 1]
     if (current === undefined) continue
-    if (c[1] === '原文') current.quote = c[2]
-    else if (c[1] === '建议') current.suggestion = c[2]
-    else current.rewriteOption = c[2]
+    const value = decodeReviewLine(c[2])
+    if (c[1] === '原文') current.quote = value
+    else if (c[1] === '建议') current.suggestion = value
+    else if (c[1] === '改写方案') current.rewriteOption = value
+    else if (c[1] === '依据') current.evidence = value
+    else if (value === '待核对') current.needsVerification = true
   }
-  return { count: Number(head[1]), summary: head[2], suggestions }
+  const count = Number(head[1])
+  return count === suggestions.length ? { count, summary: decodeReviewLine(head[2]), suggestions, ...scope } : null
 }
 
 /** foreshadow_update 输出（状态推进或 milestone 事件追加；两者回执形态不同）。 */

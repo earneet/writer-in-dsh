@@ -67,9 +67,9 @@ test('一致性提示词：四维与 JSON 契约齐备', () => {
 test('renderPendingSection：三节条目 + partial 拒收提示（人机确认界面格式回归）', () => {
   const record: MaintenanceDerived = {
     sourceHash: 'h',
-    summary: '摘要文本',
+    summary: '摘要文本\n## 模型提供的标题',
     extraction: {
-      facts: [{ description: '事实A', characters: ['elin'], plots: ['green-flame'] }],
+      facts: [{ description: '事实A\n```text', characters: ['elin'], plots: ['green-flame'] }],
       foreshadowEvents: [{ plot: 'green-flame', action: 'planted', note: '第七盏灯' }],
       characterStates: [{ character: 'elin', state: '左手受伤' }],
     },
@@ -80,7 +80,8 @@ test('renderPendingSection：三节条目 + partial 拒收提示（人机确认�
   const section = renderPendingSection('001', record)
   assert.match(section, /## \[维护 pass\] chapter\/001/)
   assert.match(section, /- 摘要：摘要文本/)
-  assert.match(section, /- 事实：事实A（人物：elin）（伏笔：green-flame）/)
+  assert.match(section, /- 事实：事实A ```text（人物：elin）（伏笔：green-flame）/)
+  assert.doesNotMatch(section, /\n(?:## |```)/)
   assert.match(section, /- 伏笔事件建议：plot\/green-flame planted——第七盏灯.*foreshadow_update/)
   assert.match(section, /- 人物状态建议：character\/elin 第 001 章末 → 左手受伤（如属实请用 timeline_update 确认写入人物时间线/)
   assert.match(section, /⚠ 部分抽取条目因引用校验未通过被拒收/)

@@ -450,6 +450,12 @@ export default class WriterStoreService extends WriterService {
                 const marker = (key: string) => `<!-- writer-pending:${key}${epoch ? `:${epoch}` : ''} -->`
                 const markers = [marker(options.dedupKey), ...(options.supersedingKey ? [marker(options.supersedingKey)] : [])]
                 if ([existing, archived].some(text => markers.some(value => text.includes(value)) || (!epoch && text.includes(body)))) return
+                if (sectionKind?.[1] === '维护 pass' && options.chapter?.id === sectionKind[2]) {
+                    const headerEnd = body.indexOf('\n')
+                    const header = headerEnd < 0 ? body : body.slice(0, headerEnd)
+                    const rest = headerEnd < 0 ? '' : body.slice(headerEnd)
+                    body = `${header}\n<!-- writer-pending-source:${options.chapter.hash} -->${rest}`
+                }
                 body = `${body}\n${markers[0]}`
             }
         }

@@ -92,7 +92,7 @@ test('软失败白名单契约：writer-tools 全部错误型 return 可归类�
     if (classifyBusinessError(text, 'soft') !== undefined) continue
     if (SOFT_UNCLASSIFIED.some((prefix) => text.startsWith(prefix))) continue
     // 成功型文案前缀（已/没有/当前/统计报告/列表行/序号行/无操作提示等）不是软失败
-    if (/^(已|没有|当前|章节：|卷分布|人物|伏笔：|关键事件|维护派生覆盖|审稿完成|一致性检查完成|派生重算完成|rewrite 判定无需修改|（|-|\d|[a-z]+\/)/.test(text)) continue
+    if (/^(已|没有|当前|章节：|卷分布|人物|伏笔：|关键事件|维护派生覆盖|审稿完成|一致性检查完成|派生重算完成|rewrite 未返回可应用补丁|（|-|\d|[a-z]+\/)/.test(text)) continue
     drift.push(text)
   }
   assert.deepEqual(drift, [], `以下 return 文案未被软失败白名单覆盖也不在成功/环境前缀——请同步 domain/guard.ts SOFT_PATTERNS 或显式裁定`)

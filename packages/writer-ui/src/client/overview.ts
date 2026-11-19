@@ -5,7 +5,7 @@
  * 聚合在 project.ts（实体图投影）；本模块保留 NovelScan 扫描形状 + splitSections/
  * extractBodyRelations/splitSource/extractPendingSections 解析基元（graph.ts 与扫描共用）。
  */
-import { parseFrontmatter, type Frontmatter } from 'dsh-writer-domain'
+import { parseFrontmatter, sectionChapterIds, splitPendingSections, type Frontmatter } from 'dsh-writer-domain'
 import type { PendingSection, RelationEntry, SectionEntry } from './types.ts'
 
 // 视图模型类型的家在 types.ts（M1b 迁移；此处 type 再导出兼容旧引用——TimelineEntry
@@ -117,11 +117,11 @@ export function extractBodyRelations(content: string): RelationEntry[] {
 }
 
 /** 解析一个 Markdown 文件为 frontmatter + 正文（扫描入口用；坏 frontmatter 宽容回退）。 */
-export function splitSource(raw: string): { frontmatter: Frontmatter; content: string } {
+export function splitSource(raw: string): { frontmatter: Frontmatter; content: string; invalidFrontmatter?: true } {
   try {
     return parseFrontmatter(raw)
   } catch {
-    return { frontmatter: {}, content: raw }
+    return { frontmatter: {}, content: raw, invalidFrontmatter: true }
   }
 }
 
@@ -131,35 +131,44 @@ export function splitSource(raw: string): { frontmatter: Frontmatter; content: s
  * - 按 `## ` 标题切分；首个标题前的散列表项归入「待办」节（放最末，视为最旧）。
  * - 分节倒序输出（pending.md 追加写，**最新维护 pass 在文件末尾**——旧实现取文件前
  *   30 行恰是最旧一次 pass）。
- * - 跨分节按归一化文本去重（保留最新一次的出现）。
+ * - 同一来源版本与标记轮次内按归一化文本去重（保留最新一次的出现）。
  * - `[x] 已完成` 行过滤。
  */
-export function extractPendingSections(text: string): PendingSection[] {
-  const parts = text.split(/^##\s+/m)
-  const sections: PendingSection[] = []
-  const preambleLines = pendingListLines(parts[0] ?? '')
-  if (preambleLines.length > 0) sections.push({ heading: '待办', lines: preambleLines })
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i] ?? ''
-    const nl = part.indexOf('\n')
-    const heading = (nl >= 0 ? part.slice(0, nl) : part).trim()
-    const body = nl >= 0 ? part.slice(nl + 1) : ''
-    const lines = pendingListLines(body)
-    if (heading.length > 0 || lines.length > 0) sections.push({ heading: heading.length > 0 ? heading : '—', lines })
-  }
-  // 倒序（最新在前）+ 跨节去重（保留最新出现）
-  const seen = new Set<string>()
-  const result: PendingSection[] = []
-  for (const section of sections.reverse()) {
-    const lines = section.lines.filter(line => {
-      const key = line.replace(/\s+/g, '')
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    if (lines.length > 0) result.push({ heading: section.heading, lines })
-  }
-  return result
+export function extractPendingSections(text: string, chapterHashes?: ReadonlyMap<string, string>): PendingSection[] {
+    const { preamble, sections } = splitPendingSections(text)
+    const marks = new Map<string, number>()
+    const seen = new Set<string>()
+    const result: PendingSection[] = []
+    for (const { header, body } of [...sections.reverse(), { header: '## 待办', body: preamble }]) {
+        const heading = header.slice(3).trim() || '—'
+        const [, kind, generatedChapter] = /^\[(维护 pass|recompute mark)\] chapter\/(\d{3})(?=$|[\s（])/.exec(heading) ?? []
+        const chapterIds = [...sectionChapterIds({ header, body })]
+        const chapterId = generatedChapter ?? (chapterIds.length === 1 ? chapterIds[0] : undefined)
+        const laterMarks = chapterId === undefined ? 0 : marks.get(chapterId) ?? 0
+        if (chapterId !== undefined && kind === 'recompute mark') {
+            marks.set(chapterId, laterMarks + 1)
+            continue
+        }
+        const sourceHash = kind === '维护 pass' ? /^<!-- writer-pending-source:([0-9a-f]{64}) -->$/.exec(body.split('\n', 1)[0] ?? '')?.[1] : undefined
+        const scope = chapterHashes === undefined ? '' : `${chapterId ?? ''}:${sourceHash ?? ''}:${laterMarks}:`
+        const lines = pendingListLines(body).filter(line => {
+            const key = scope + line.replace(/\s+/g, '')
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+        })
+        if (lines.length === 0) continue
+        if (chapterHashes === undefined) {
+            result.push({ heading, lines })
+            continue
+        }
+        const currentHash = chapterId === undefined ? undefined : chapterHashes.get(chapterId)
+        const state = laterMarks > 0 ? 'invalidated'
+            : sourceHash === undefined || currentHash === undefined ? 'unknown'
+            : sourceHash === currentHash ? 'current' : 'stale'
+        result.push({ heading, lines, state, ...(chapterId === undefined ? {} : { chapterId }), ...(sourceHash === undefined ? {} : { sourceHash }) })
+    }
+    return result
 }
 
 /** 一段文本里的待办列表行（剥 `- `/`* ` 前缀；过滤 `[x]` 已完成行）。 */

@@ -5,6 +5,12 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
+import { WorkspaceFiles } from '@deepseek-ai/dsh-api-workspace-files'
+import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
 import { mapPool, scanNovel, setBrowserContext, watchProject, WORLDBUILDING_MAX } from '../src/client/load.ts'
 import { publishScan, readBus, resetBus } from '../src/client/bus.ts'
 import { buildOverview } from '../src/client/project.ts'
@@ -126,7 +132,7 @@ test('mapPool：abort 抛 AbortError 且不再消费后续项', async () => {
 })
 
 /** 构造 mock remote 文件系统（分页 read 支持小页尺寸以锁定页拼接契约）。 */
-function mockRemote(fs: Map<string, unknown>, opts: { pageSize?: number; neverEof?: boolean } = {}) {
+function mockRemote(fs: Map<string, unknown>, opts: { pageSize?: number; neverEof?: boolean; hostLineWindow?: boolean } = {}) {
   const entries = (path: string) => {
     const value = fs.get(path)
     return Array.isArray(value) ? value : undefined
@@ -144,7 +150,8 @@ function mockRemote(fs: Map<string, unknown>, opts: { pageSize?: number; neverEo
         if (opts.neverEof === true && (range.offset ?? 1) > 1) {
           return { ok: true, value: { text: '更多内容', lines: 1, eof: false } }
         }
-        const lines = text.split('\n')
+        const lines = opts.hostLineWindow && text.length === 0 ? []
+          : (opts.hostLineWindow ? text.replace(/\n$/, '') : text).split('\n')
         const size = opts.pageSize ?? lines.length
         const offset = range.offset ?? 1
         const page = lines.slice(offset - 1, offset - 1 + size)
@@ -154,6 +161,7 @@ function mockRemote(fs: Map<string, unknown>, opts: { pageSize?: number; neverEo
             text: page.join('\n'),
             lines: page.length,
             eof: opts.neverEof === true ? false : offset - 1 + size >= lines.length,
+            ...(opts.hostLineWindow ? { bytes: Buffer.byteLength(text, 'utf8'), version: path } : {}),
           },
         }
       },
@@ -192,14 +200,151 @@ test('内容哈希一致的部分维护结果仍显示为待维护，完成后�
 
 test('工作台归档原文：保留完成项、重复项和非列表段落及来源路径', async () => {
     const fs = minimalProject()
-    const raw = '# 归档\n\n## chapter/001\n\n人工说明段落。\n- [x] 已确认状态\n- 重复建议\n\n## chapter/002\n\n- 重复建议\n'
+    const raw = '# 归档\n\n## chapter/001\n\n人工说明段落。\n- [x] 已确认状态\n- 重复建议\n\n## chapter/002\n\n- 重复建议\n\n'
     ;(fs.get('novel') as unknown[]).push({ name: 'pending-archive.md', type: 'file' })
     fs.set('novel/pending-archive.md', raw)
-    setBrowserContext({ remote: mockRemote(fs) as never })
+    setBrowserContext({ remote: mockRemote(fs, { hostLineWindow: true, pageSize: 2 }) as never })
     const scan = await scanNovel('s1', new AbortController().signal)
     assert.deepEqual(scan.archiveSources, [{ path: 'novel/pending-archive.md', text: raw }])
     assert.deepEqual(buildOverview(scan).archiveSources, scan.archiveSources)
     setBrowserContext(null)
+})
+
+test('实际宿主读取 UTF-8 BOM 与 CRLF 行窗口时，工作台核对当前章并保留完整归档', async t => {
+    const workspace = await mkdtemp(join(tmpdir(), 'writer-ui-host-read-'))
+    t.after(() => rm(workspace, { recursive: true, force: true }))
+    await mkdir(join(workspace, 'novel/chapters'), { recursive: true })
+    const chapterPath = 'novel/chapters/001.md'
+    const archivePath = 'novel/pending-archive.md'
+    const pendingPath = 'novel/pending.md'
+    const chapterText = '\uFEFF---\r\nnumber: 1\r\n---\r\n第一段。\r\n\r\n第二段。\r\n'
+    const archiveText = '\uFEFF# 归档\r\n\r\n## chapter/001\r\n- [x] 保留原文'
+    const chapter = splitSource(chapterText)
+    const sourceHash = await contentHashClient(chapter.frontmatter, chapter.content)
+    await Promise.all([
+        writeFile(join(workspace, 'novel/project.md'), '\uFEFF---\r\ntitle: "登记作品"\r\n---\r\n'),
+        writeFile(join(workspace, chapterPath), chapterText),
+        writeFile(join(workspace, pendingPath), `\uFEFF## [维护 pass] chapter/001（本轮）待人工确认\r\n<!-- writer-pending-source:${sourceHash} -->\r\n- 核对版本。\r\n`),
+        writeFile(join(workspace, archivePath), archiveText),
+    ])
+    const ctx = new Context()
+    const local = await ctx.plugin(LocalFileSystem, { cwd: workspace })
+    t.after(() => local.dispose())
+    ctx.provide('sandboxPolicy', { workspaceRoot: workspace, resolve: () => ({ mode: 'workspace-write', workspaceRoot: workspace }) } as never)
+    const files = new WorkspaceFiles(ctx, { maxLines: 2, maxEntries: 100, maxBytes: 1024, maxFileBytes: 1024 } as never)
+    const scope = { sessionId: 'bom-test', workspaceRoot: workspace } as never
+    const signal = new AbortController().signal
+    const readFirstPage = await files.read(scope, chapterPath, {}, signal)
+    assert.equal(readFirstPage.text, '---\r\nnumber: 1\r')
+    assert.equal(readFirstPage.bytes, Buffer.byteLength(chapterText))
+    const byteReads: [string, unknown][] = []
+    let changeChapterBeforePrefix = false
+    setBrowserContext({ remote: { workspaceFiles: {
+        list: async (_id, path) => {
+            try { return { ok: true, value: await files.list(scope, path, signal) } }
+            catch (error) { return { ok: false, error } }
+        },
+        read: async (_id, path, range) => ({ ok: true, value: await files.read(scope, path, range, signal) }),
+        readBytes: async (_id: string, path: string, options: Parameters<WorkspaceFiles['readBytes']>[2]) => {
+            byteReads.push([path, options])
+            if (changeChapterBeforePrefix && path === chapterPath) {
+                await writeFile(join(workspace, chapterPath), `${chapterText}并发保存的正文。\r\n`)
+            }
+            return { ok: true, value: await files.readBytes(scope, path, options, signal) }
+        },
+    } } } as Parameters<typeof setBrowserContext>[0])
+    t.after(() => setBrowserContext(null))
+    const scan = await scanNovel('bom-test', signal)
+    assert.deepEqual(scan.failedFiles ?? [], [])
+    assert.equal(scan.project?.title, '登记作品')
+    assert.equal(scan.pending[0]?.state, 'current')
+    assert.deepEqual(scan.archiveSources, [{ path: archivePath, text: archiveText }])
+    assert.equal(byteReads.length, 4)
+    for (const [, options] of byteReads) assert.deepEqual(options, { range: { offset: 0, length: 3 } })
+    changeChapterBeforePrefix = true
+    const changed = await scanNovel('bom-test', signal)
+    assert.deepEqual(changed.failedFiles, [chapterPath])
+    assert.equal(changed.pending[0]?.state, 'unknown')
+})
+
+test('待确认按源章哈希和同章标记区分新旧建议，相同文字在各版本均可查', async () => {
+    const fs = minimalProject()
+    const path = 'novel/chapters/001.md'
+    const chapter = splitSource(fs.get(path) as string)
+    const currentHash = await contentHashClient(chapter.frontmatter, chapter.content)
+    const oldHash = await contentHashClient(chapter.frontmatter, '改稿前正文')
+    ;(fs.get('novel') as unknown[]).push({ name: 'pending.md', type: 'file' })
+    fs.set('novel/pending.md', [
+        '## [维护 pass] chapter/001（旧稿）待人工确认',
+        `<!-- writer-pending-source:${oldHash} -->`,
+        '- 核对旧稿事实',
+        '## [维护 pass] chapter/001（标记前）待人工确认',
+        `<!-- writer-pending-source:${currentHash} -->`,
+        '- 相同建议',
+        '## [recompute mark] chapter/001 派生已标记过期（标记时刻）',
+        '## [维护 pass] chapter/001（另一旧版本）待人工确认',
+        `<!-- writer-pending-source:${oldHash} -->`,
+        '- 核对旧稿事实',
+        '## [维护 pass] chapter/001（最新）待人工确认',
+        `<!-- writer-pending-source:${currentHash} -->`,
+        '- 相同建议',
+    ].join('\n'))
+    setBrowserContext({ remote: mockRemote(fs, { hostLineWindow: true, pageSize: 2 }) as never })
+    try {
+        const scan = () => scanNovel('s1', new AbortController().signal)
+        const versions = async () => buildOverview(await scan()).pendingSections.map(section => [section.state, section.sourceHash, section.lines[0]])
+        assert.deepEqual(await versions(), [
+            ['current', currentHash, '相同建议'],
+            ['stale', oldHash, '核对旧稿事实'],
+            ['invalidated', currentHash, '相同建议'],
+            ['invalidated', oldHash, '核对旧稿事实'],
+        ])
+        fs.set(path, '又修改了一次')
+        assert.equal((await versions())[0]?.[0], 'stale')
+    } finally { setBrowserContext(null) }
+})
+
+test('待确认遇到旧节、源章读取失败和缺失时保留原建议并要求版本待核', async () => {
+    const fs = minimalProject()
+    const hash = 'a'.repeat(64)
+    const nestedBody = '仅面板可读的卷内稿件。\n'
+    const nestedHash = await contentHashClient({}, nestedBody)
+    const malformedBody = '---\n无效元数据\n---\n稿件暂不可用于核对。\n'
+    const malformedHash = await contentHashClient({}, malformedBody)
+    ;(fs.get('novel') as unknown[]).push({ name: 'pending.md', type: 'file' })
+    ;(fs.get('novel/chapters') as unknown[]).push({ name: '003.md', type: 'file' }, { name: '卷一', type: 'directory' })
+    fs.set('novel/chapters/卷一', [{ name: '002.md', type: 'file' }])
+    fs.set('novel/chapters/卷一/002.md', nestedBody)
+    fs.set('novel/chapters/003.md', malformedBody)
+    fs.set('novel/pending.md', [
+        '## [维护 pass] chapter/001（旧格式）待人工确认',
+        '- 旧格式正文',
+        '## [维护 pass] chapter/001（文件不可读）待人工确认',
+        `<!-- writer-pending-source:${hash} -->`,
+        '- 读失败建议',
+        '## [维护 pass] chapter/002（仅有卷内同名稿）待人工确认',
+        `<!-- writer-pending-source:${nestedHash} -->`,
+        '- 卷内文件不替代顶层来源',
+        '## [维护 pass] chapter/003（元数据无效）待人工确认',
+        `<!-- writer-pending-source:${malformedHash} -->`,
+        '- 坏元数据不使用宽容回退核对',
+        '## [维护 pass] chapter/004（无章稿）待人工确认',
+        `<!-- writer-pending-source:${hash} -->`,
+        '- 缺文件建议',
+    ].join('\n'))
+    fs.delete('novel/chapters/001.md')
+    setBrowserContext({ remote: mockRemote(fs) as never })
+    try {
+        const scan = await scanNovel('s1', new AbortController().signal)
+        assert.deepEqual(scan.failedFiles, ['novel/chapters/001.md'])
+        assert.deepEqual(scan.pending.map(section => [section.state, section.sourceHash, section.lines[0]]), [
+            ['unknown', hash, '缺文件建议'],
+            ['unknown', malformedHash, '坏元数据不使用宽容回退核对'],
+            ['unknown', nestedHash, '卷内文件不替代顶层来源'],
+            ['unknown', hash, '读失败建议'],
+            ['unknown', undefined, '旧格式正文'],
+        ])
+    } finally { setBrowserContext(null) }
 })
 
 test('scanNovel：小分页拼接还原全文（页间换行契约）+ never-eof 触发保险丝入失败清单', async () => {

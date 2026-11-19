@@ -45,12 +45,14 @@ test('维护待办读取失败后普通重试补投，已归档结果不回流',
         assert.equal(x.llm.calls, 2)
         const pending = await readFile(join(x.root, 'pending.md'), 'utf8')
         assert.equal(pending.match(/## \[维护 pass\]/g)?.length, 1)
+        assert.equal(pending.split('\n')[1], `<!-- writer-pending-source:${x.chapter.hash} -->`)
         await x.store.archivePending(text => {
             const parts = partitionPendingByChapter(text, '001')
             return { next: parts.keep, extracted: parts.archived }
         })
         await x.engine.maintenancePass('001')
         assert.equal((await readFile(join(x.root, 'pending.md'), 'utf8')).trim(), '')
+        assert.match(await readFile(join(x.root, 'pending-archive.md'), 'utf8'), new RegExp(`^<!-- writer-pending-source:${x.chapter.hash} -->$`, 'm'))
         assert.equal(x.llm.calls, 2)
         await x.store.deleteMaintenance('001')
         x.llm.replies.push('同一正文重新生成的摘要。', JSON.stringify({ facts: [{ description: '已确认内容换了说法。' }], foreshadowEvents: [], characterStates: [] }))

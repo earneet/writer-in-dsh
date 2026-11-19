@@ -266,6 +266,9 @@ export interface OutlineOverview {
 export interface PendingSection {
   heading: string
   lines: string[]
+  chapterId?: string
+  sourceHash?: string
+  state?: 'current' | 'stale' | 'invalidated' | 'unknown'
 }
 
 /** 下一步情境卡（概况页决策面；计算见 project.ts nextStepOf）。 */
@@ -293,6 +296,7 @@ export interface NovelOverview {
   characterRows: CharacterRow[]
   worldbuildingCount: number
   /** 待办分节（倒序：最新维护 pass 在前；跨 pass 建议已去重、[x] 已过滤）。 */
+  pendingPath: string
   pendingSections: PendingSection[]
   /** 去重后的待办总行数（面板截断提示用）。 */
   pendingLineTotal: number

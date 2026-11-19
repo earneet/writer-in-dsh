@@ -19,15 +19,16 @@ import {
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
   renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
   type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport, type ExtractionSectionName,
-  type MaintenanceDerived, type MaintenanceExtraction, type ReviewReport, type TruncatedBody, type WriterEntity,
+  REVIEW_DIMENSIONS, type MaintenanceDerived, type MaintenanceExtraction, type ReviewReport, type TruncatedBody, type WriterEntity,
 } from 'dsh-writer-domain'
 import {
   EngineService, type ConsistencyScope, type MaintenancePassResult,
   type RecoverySnapshotResult, type RecomputeDerivedResult,
 } from 'dsh-writer-core'
 import {
-  assertFinish, assertRewriteFullTextPlausible, CHAPTER_ID_RE, decideRewritePath, mergeAssistContent,
-  mergeFullFrontmatter, parseChapterRange, planSectionRetry, validateWriteRequest,
+  applySelectionRewrite, assertFinish, assertRewriteFullTextPlausible, CHAPTER_ID_RE, decideRewritePath,
+  locateRewriteSelection, mergeAssistContent, mergeFullFrontmatter, parseChapterRange, planSectionRetry,
+  rejectSelectionRewrite, validateWriteRequest,
 } from './logic.ts'
 import {
   buildConsistencySystemPrompt, buildConsistencyUserPrompt, buildExtractionSystemPrompt,
@@ -35,6 +36,7 @@ import {
   buildRewriteUserPrompt, buildSummarySystemPrompt, buildSummaryUserPrompt, buildWriteSystemPrompt,
   buildWriteUserPrompt,
 } from './prompts.ts'
+import { loadReviewContext, reviewWithEvidence } from './review.ts'
 
 /** 插件配置：LLM 路由与生成参数（可调参数不硬编码，配置错误响亮失败）。 */
 export interface Config {
@@ -112,28 +114,16 @@ export default class WriterEngineServiceImpl extends EngineService {
     if (!/^\d{3}$/.test(chapterId)) throw new Error(`章节 id 必须为三位序号：${JSON.stringify(chapterId)}`)
     const chapter = await this.ctx.writer.get('chapter', chapterId)
     if (chapter === undefined) throw new Error(`章节不存在：chapter/${chapterId}`)
-    const [principles, outline, characters, plots] = await Promise.all([
-      this.ctx.writer.get('principles', 'principles'),
-      this.ctx.writer.get('outline', 'outline'),
-      this.ctx.writer.list('character'),
-      this.ctx.writer.list('plot'),
-    ])
-    const chapterNumber = typeof chapter.frontmatter['number'] === 'number' ? chapter.frontmatter['number'] : Number(chapterId)
-    const brief = (entities: readonly WriterEntity[], max: number): string =>
-      entities.map((e) => `- ${e.id}：${e.content.replace(/\s+/g, ' ').trim().slice(0, max)}`).join('\n')
-    const user = buildReviewUserPrompt(chapter, {
-      principles: principles?.content,
-      chapterOutline: outline === undefined ? undefined : extractChapterOutline(outline.content, chapterNumber),
-      charactersBrief: characters.length > 0 ? brief(characters, 100) : undefined,
-      plotsBrief: plots.length > 0 ? brief(plots, 120) : undefined,
-    })
+    const context = await loadReviewContext(this.ctx.writer, chapter, focus, this.genParams.contextBudgetChars)
+    const user = buildReviewUserPrompt(chapter, context)
     const raw = await this.generate(buildReviewSystemPrompt(focus), user, signal)
     const parsed = parseReviewReport(raw)
     if (parsed === undefined) {
       throw new Error(`审稿输出无法解析为结构化报告（模型返回前 200 字：${raw.slice(0, 200)}）`)
     }
     // quote 幻觉过滤（提示词承诺的丢弃语义在此落地）+ focus 维度过滤
-    return filterSuggestionsByFocus(filterSuggestionsByQuotes(parsed, chapter.content), focus)
+    const filtered = filterSuggestionsByFocus(filterSuggestionsByQuotes(parsed, chapter.content), focus?.length ? focus : REVIEW_DIMENSIONS)
+    return reviewWithEvidence(filtered, chapter, context)
   }
 
   // —— 维护 pass（保存后异步，默认两次调用；inflight 去重 + 完成 hash 锚定）——
@@ -602,49 +592,52 @@ export default class WriterEngineServiceImpl extends EngineService {
     return result
   }
 
-  // —— rewrite：补丁协议优先；决策树见 logic.decideRewritePath；全文路径跑丢句守卫 + JSON 形守卫 ——
-
-  private async writeRewrite(request: ChapterWriteRequest, chapter: WriterEntity): Promise<ChapterWriteResult> {
+    private async writeRewrite(request: ChapterWriteRequest, chapter: WriterEntity): Promise<ChapterWriteResult> {
+        const selection = request.selection === undefined ? undefined : {
+            text: request.selection,
+            start: locateRewriteSelection(chapter.content, request.selection),
+        }
         const [principles, styles] = await Promise.all([
             this.ctx.writer.get('principles', 'principles'),
             this.ctx.writer.list('style'),
         ])
         const styleReferences = styles.map(style => `style/${style.id}\n${style.content}`).join('\n\n')
-    const system = buildRewriteSystemPrompt()
-        const user = buildRewriteUserPrompt(chapter, request.instruction ?? '', request.selection, {
+        const system = buildRewriteSystemPrompt(selection !== undefined)
+        const user = buildRewriteUserPrompt(chapter, request.instruction ?? '', selection?.text, {
             principles: principles?.content,
             styleReferences: styleReferences.length > 0
                 ? truncateCodePoints(styleReferences, Math.floor(this.genParams.contextBudgetChars / 4))
                 : undefined,
         })
-    const raw = await this.generate(system, user, request.signal)
-    const parsed = parseRewriteModelOutput(raw)
-    const applied = parsed.kind === 'patches' && parsed.patches.length > 0
-      ? applyRewritePatches(chapter.content, parsed.patches)
-      : undefined
-    const decision = decideRewritePath(parsed, applied)
-    if (decision.action === 'no-change') {
-      // 空补丁 = 模型判定无需修改：不落盘、不 emit，原实体原样返回
-      return { chapter, mode: 'rewrite-patch', patchStats: { applied: 0, skipped: 0, skippedReasons: ['模型返回空补丁（判定无需修改）'] } }
+        const raw = await this.generate(system, user, request.signal)
+        const parsed = parseRewriteModelOutput(raw, { strict: selection !== undefined })
+        if (selection !== undefined && parsed.kind !== 'patches') {
+            rejectSelectionRewrite('模型没有按选区补丁协议返回结果')
+        }
+        let applied
+        if (parsed.kind === 'patches' && parsed.patches.length > 0) {
+            applied = selection === undefined
+                ? applyRewritePatches(chapter.content, parsed.patches)
+                : applySelectionRewrite(chapter, selection, parsed.patches)
+        }
+        const decision = decideRewritePath(parsed, applied)
+        if (decision.action === 'no-change') {
+            return { chapter, mode: 'rewrite-patch', patchStats: { applied: 0, skipped: 0, skippedReasons: ['模型返回空补丁'] } }
+        }
+        if (decision.action === 'fulltext') return this.rewriteFullText(request, chapter, user)
+        const saved = await this.ctx.writer.save('chapter', request.chapterId, { content: decision.patch.content }, chapter.hash)
+        const result: ChapterWriteResult = {
+            chapter: saved,
+            mode: 'rewrite-patch',
+            patchStats: {
+                applied: decision.patch.applied,
+                skipped: decision.patch.skipped.length,
+                skippedReasons: decision.patch.skipped.map((s) => `${s.reason}: ${s.find.slice(0, 50)}`),
+            },
+        }
+        this.ctx.emit(this, 'writer/chapter-written', result)
+        return result
     }
-    if (decision.action === 'save-patch') {
-      const saved = await this.ctx.writer.save(
-        'chapter', request.chapterId, { content: decision.patch.content }, chapter.hash,
-      )
-      const result: ChapterWriteResult = {
-        chapter: saved,
-        mode: 'rewrite-patch',
-        patchStats: {
-          applied: decision.patch.applied,
-          skipped: decision.patch.skipped.length,
-          skippedReasons: decision.patch.skipped.map((s) => `${s.reason}: ${s.find.slice(0, 50)}`),
-        },
-      }
-      this.ctx.emit(this, 'writer/chapter-written', result)
-      return result
-    }
-    return this.rewriteFullText(request, chapter, user)
-  }
 
   /** 全文改写路径（大改输出 / 补丁降级共用）：JSON 形守卫 + 替换全文 + 丢句守卫告警。 */
     private async rewriteFullText(request: ChapterWriteRequest, chapter: WriterEntity, user: string): Promise<ChapterWriteResult> {
@@ -830,5 +823,5 @@ export function renderPendingSection(chapterId: string, record: MaintenanceDeriv
     lines.push('- ⚠ 部分抽取条目因引用校验未通过被拒收（重试预算耗尽）：')
     for (const reason of record.rejected ?? []) lines.push(`  - ${reason}`)
   }
-  return lines.join('\n')
+  return lines.map(line => line.replace(/\s*[\r\n]+\s*/g, ' ')).join('\n')
 }

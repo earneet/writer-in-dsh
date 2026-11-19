@@ -79,6 +79,14 @@ describe('renderPending / partitionPendingByChapter', () => {
     assert.match(keep, /通用待办/)
   })
 
+  it('归档三位章号保留更长的旧章号与带字母后缀的手工节', () => {
+    const text = '## chapter/0012\n- 长章号\n\n## chapter/001a\n- 带后缀\n\n## chapter/001\n- 正常建议\n'
+    const { keep, archived } = partitionPendingByChapter(text, '001')
+    assert.match(keep, /chapter\/0012/)
+    assert.match(keep, /chapter\/001a/)
+    assert.equal(archived, '## chapter/001\n- 正常建议\n')
+  })
+
   it('围栏代码块内的 ## 行不算节界（防撕裂 Markdown 示例正文）', () => {
     const text = '## [维护 pass] chapter/001（t）待人工确认\n- 示例：\n```\n## 这不是节界\n```\n- 结尾\n'
     const { sections } = splitPendingSections(text)

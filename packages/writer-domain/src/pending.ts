@@ -44,7 +44,7 @@ export function splitPendingSections(text: string): { preamble: string; sections
 /** 节归属的章节 id：**只认头行**的 `chapter/<三位序号>`（正文跨章引用不算归属，防过度归档）。 */
 export function sectionChapterIds(section: PendingSection): Set<string> {
   const ids = new Set<string>()
-  for (const m of section.header.matchAll(/chapter\/(\d{3})/g)) ids.add(m[1])
+  for (const m of section.header.matchAll(/\bchapter\/(\d{3})\b/g)) ids.add(m[1])
   return ids
 }
 

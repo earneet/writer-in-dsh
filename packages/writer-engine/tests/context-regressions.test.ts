@@ -104,6 +104,67 @@ for (const fallback of [false, true]) {
     })
 }
 
+test('单章审稿提供截至目标章的依据，硬冲突核对两端引文', async () => {
+    const { root, store, llm, engine } = await setup()
+    try {
+        await store.save('chapter', '001', { content: '前文：桥梁已经坍塌。' })
+        await store.save('chapter', '002', { content: '她复活后步行过桥。' })
+        await store.save('chapter', '003', { content: '未来章正文标记。' })
+        await store.save('event', 'event', { content: '## 第001章\n桥梁坍塌记录。\n## 第003章\n未来事件标记。' })
+        await store.save('worldbuilding', 'rules', { content: '死者不可复活。\n## 第003章\n未来设定标记。' })
+        await store.save('plot', 'bridge', { content: '桥下绳索尚未找到。\n## 第003章\n未来伏笔标记。' })
+        await store.save('character', 'hero', { content: '她是守桥人。\n## 第003章\n未来人物标记。', frontmatter: {
+            timeline: '[{"chapter":"001","state":"左腿受伤"},{"chapter":"003","state":"未来状态标记"}]',
+        } })
+        const suggestion = { dimension: '设定一致性', severity: 'high', quote: '她复活后步行过桥。', problem: '复活违反规则', suggestion: '核对复活条件' }
+        llm.replies.push(JSON.stringify({ summary: '存在疑点', suggestions: [
+            { ...suggestion, evidence: { ref: 'worldbuilding/rules', quote: '死者不可复活。' } },
+            { ...suggestion, evidence: { ref: 'worldbuilding/rules', quote: '编造的引文' } },
+            { ...suggestion, quote: undefined, evidence: { ref: 'worldbuilding/rules', quote: '死者不可复活。' } },
+            { ...suggestion, evidence: { ref: 'chapter/001', quote: '桥梁已经坍塌。' } },
+            { ...suggestion, quote: '\n', evidence: { ref: 'worldbuilding/rules', quote: '死者不可复活。' } },
+        ] }))
+        const report = await engine.reviewChapter('002')
+        const request = llm.requests[0].user
+        for (const text of ['chapter/001', '桥梁已经坍塌', '桥梁坍塌记录', 'character/hero', '左腿受伤', 'worldbuilding/rules', '死者不可复活']) {
+            assert.ok(request.includes(text), text)
+        }
+        assert.doesNotMatch(request, /未来.*标记/)
+        assert.deepEqual(report.suggestions[0]?.evidence, { ref: 'worldbuilding/rules', quote: '死者不可复活。' })
+        assert.equal(report.suggestions[0]?.severity, 'high')
+        assert.deepEqual(report.suggestions.slice(1).map(s => [s.severity, s.needsVerification, s.evidence]), [
+            ['medium', true, undefined],
+            ['medium', true, { ref: 'worldbuilding/rules', quote: '死者不可复活。' }],
+            ['medium', true, undefined],
+            ['medium', true, { ref: 'worldbuilding/rules', quote: '死者不可复活。' }],
+        ])
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
+test('单章审稿按维度供料，明示缺失和裁剪', async () => {
+    const { root, store, llm, engine } = await setup(2000)
+    try {
+        await store.save('chapter', '001', { content: '前文无关标记。' })
+        await store.save('chapter', '002', { content: '本章完整正文。' })
+        await store.save('character', 'hero', { content: '人物无关标记。' })
+        llm.replies.push(JSON.stringify({ summary: '未发现问题', suggestions: [] }))
+        const missing = await engine.reviewChapter('002', ['设定一致性'])
+        assert.match(missing.coverage?.join('\n') ?? '', /世界观.*待核对/)
+        assert.doesNotMatch(llm.requests[0].user, /无关标记/)
+        await store.save('worldbuilding', 'rules', { content: `规则开始${'长'.repeat(3000)}规则结尾` })
+        llm.replies.push(JSON.stringify({ summary: '未发现问题', suggestions: [] }))
+        const partial = await engine.reviewChapter('002', ['设定一致性'])
+        assert.match(partial.coverage?.join('\n') ?? '', /世界观.*裁剪/)
+        assert.match(llm.requests[1].user, /规则开始/)
+        assert.doesNotMatch(llm.requests[1].user, /规则结尾/)
+        assert.match(llm.requests[1].user, /本章完整正文/)
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
 test('一致性实际输入包含世界观、人物正文及权威 timeline，保留实体引用', async () => {
     const { root, store, llm, engine } = await setup()
     try {
