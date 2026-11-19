@@ -1,13 +1,14 @@
 # 发布检查清单
 
-> **任务来源**: 用户要求修复 2026-11-18 审查中的发布指引版本漂移问题。
-> **任务内容**: 按当前安装版宿主、十二包依赖及预构建形态核对发布和安装步骤。
+> **任务来源**: 用户要求修复 2026-11-18 审查中的发布指引版本漂移，并确认补齐 Windows 与桌面验收。
+> **任务内容**: 核对当前宿主、十二包依赖及预构建安装路径，加入可重复的浏览器冒烟与真实桌面验收。
 > **参考文档**:
 > - `docs/current-state-review-2026-11-18.md` — R10 及宿主升级边界。
+> - `docs/writing-safety-decisions-2026-11-19.md` — 写作流程改进及浏览器与桌面验收范围。
 > - `docs/implementation-plan.md` — 历轮发布与安装实测记录。
 > - `package.json`、`packages/writer-preset/package.json` — 当前宿主依赖矩阵。
 > - `references/dsh-plugin-research.md` — 插件分发机制。
-> **生成日期**: 2026-11-18
+> **生成日期**: 2026-11-19
 
 > 适用于 `dsh-writer-*` 十二包（9 代码包 + bundle + preset + ui）的 npm 发布。依据 `references/dsh-plugin-research.md`（publish.zh.md 摘要）与
 > `docs/implementation-plan.md` §8 轮次 6/10/11/17/18。当前版本 0.1.0；发布前逐项打勾。
@@ -43,6 +44,13 @@
 - [ ] 安装后 `dsh --profile <p> --dump-config` 核对组合树（`# == dsh-writer-bundle` 分节含 store→engine→skills→export→rag→guard→tools 行序；preset 形态含 writer-ui 全局行 + preset-writer 声明行）。
 - [ ] preset 形态追加验证（轮次 17 教训）：web 启动后 **必须**核对 `agentPresets/list`（token 换 cookie 后 POST `/api/agentPresets/list`）——写作模式在 roster 且**无 `broken` 标记**（dump-config 组合树不充分，服务提供方须在 isolate 域）；ui 形态核对 boot 图发现 `dsh-writer-ui` + `/plugins/??dsh-writer-ui/client.js&rev=…` 返回 200。
 - [ ] 从含 `novel/` 的小说工作目录启动 headless 跑一次 `writer_stats`；缺省 projectRoot 跟随发起会话的 `header.cwd/novel`，不是宿主进程启动目录。显式绝对路径配置仍优先。
+
+### Windows 写作流程复验
+
+- [ ] 干净 checkout 中执行 `npm ci --no-audit --no-fund` 和 `npm run smoke:windows`。核对首轮前建书实际落盘、改稿要求追加到宿主草稿并保留原稿、待办刷新及改稿后旧建议停止供确认。记录 CI run 链接或执行日志。脚本自动查找 Edge 或 Chrome，必要时用 `WRITER_BROWSER_EXECUTABLE` 指定浏览器。夹具使用随依赖安装的宿主前端产物、真实命令与临时项目，模型输出和真人审批由下面的桌面场景验证。
+- [ ] 使用隔离的 Windows 测试账号或虚拟机，以新的 Electron profile 安装本次候选包。发布前可按本节 link 顺序装候选包，发布后另用全新 profile 走 registry 路径。记录应用版本、包版本、安装来源和测试作品目录。在桌面宿主内通过 `plugin_manager list_plugins` 核对写作预设及客户端插件已激活。验收时使用独立的测试模型配置及空工作目录。
+- [ ] 新建「写作模式」会话，在发送首轮之前点击初始化，验证 `novel/project.md` 写入所选目录、已有输入草稿保留，首轮后能打开工作台。保存并改写一个示例章，核对选区外原样、旧稿待办状态及审稿依据。
+- [ ] 对同一测试章从工作台发起 `export_book`。验收者先拒绝一次，确认目录无新增产物，再发起并批准一次，检查回执与实际文件路径，打开 EPUB 或 HTML 核对书名和章范围。记录拒绝和批准结果及产物路径。浏览器夹具的通过记录和这项验收记录分别归档。
 
 ## 4. 已知环境坑（装机差异，发布说明可引用）
 

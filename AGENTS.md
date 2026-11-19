@@ -23,6 +23,7 @@
 | `references/novel-writer-analysis.md` | 被复刻项目的功能/工作流/子系统分析 + DSH 复刻映射（§14 是包规划） |
 | `references/dsh-plugin-research.md` | dsh 插件定义形式、bundle/profile 分发、skill 格式、能力缝清单 |
 | `docs/implementation-plan.md` | 本项目落地规划（§1 包职责、§5 阶段表、§8 迭代记录——**含全部已知限制与环境坑，动手前必读**） |
+| `docs/writing-safety-decisions-2026-11-19.md` | 选区改稿、待办、单章审稿及发布验收的有意差异。调整这些路径或对齐上游前先核对裁定 |
 | `references/novel-writer/`、`references/deepseek-harness/` | 源码子模块（只读参考，勿改动；它们有自己的 AGENTS.md，不适用于本仓库） |
 
 两个子模块用 `git submodule update --init` 拉取。引用参考结论时注明来源路径。

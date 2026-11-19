@@ -9,7 +9,7 @@ import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import WriterStore from '../src/index.ts'
 
-export async function commandHarness() {
+export async function commandHarness(tempParent = tmpdir()) {
     const ctx = new Context()
     new SessionProjectionRegistry(ctx)
     const agents = new AgentRegistry(ctx)
@@ -20,7 +20,7 @@ export async function commandHarness() {
     const suite = createScope(ctx, key)
     const store = new WriterStore(suite.ctx, {})
     await suite.ctx.fiber.await()
-    const root = await mkdtemp(join(tmpdir(), 'writer-command-'))
+    const root = await mkdtemp(join(tempParent, 'writer-command-'))
     const scopes: ReturnType<typeof createScope>[] = []
     const detachers: (() => void)[] = []
     return {

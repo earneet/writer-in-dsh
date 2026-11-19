@@ -1,18 +1,27 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { contentHash, parseFrontmatter } from 'dsh-writer-domain'
 
-const output = resolve('.tmp/ui-implementation/browser')
+const output = resolve(process.env.WRITER_FIXTURE_REPORT_DIR ?? '.tmp/ui-implementation/browser')
+const fixtureOrigin = process.env.WRITER_FIXTURE_ORIGIN ?? 'http://127.0.0.1:63438'
 const shellMode = process.argv.includes('--shell')
 const initMode = process.argv.includes('--init')
 const blankInitMode = process.argv.includes('--blank-init')
 const watchMode = process.argv.includes('--watch')
 await mkdir(output, { recursive: true })
-const pages = await fetch((process.env.WRITER_FIXTURE_CDP_ORIGIN ?? 'http://127.0.0.1:9227') + '/json/list').then(response => response.json())
+const pages = await fetch((process.env.WRITER_FIXTURE_CDP_ORIGIN ?? 'http://127.0.0.1:9227') + '/json/list', { signal: AbortSignal.timeout(10_000) }).then(response => response.json())
 const socket = new WebSocket(pages.find(page => page.type === 'page').webSocketDebuggerUrl)
 await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }) })
 let nextId = 0
 const pending = new Map()
 const errors = []
+socket.addEventListener('close', () => {
+    for (const task of pending.values()) {
+        clearTimeout(task.timer)
+        task.reject(new Error('浏览器调试连接已关闭'))
+    }
+    pending.clear()
+})
 socket.addEventListener('message', event => {
     const message = JSON.parse(event.data)
     if (message.method === 'Runtime.executionContextsCleared') errors.length = 0
@@ -25,6 +34,7 @@ socket.addEventListener('message', event => {
     else task.resolve(message.result)
 })
 function call(method, params = {}) {
+    if (socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('浏览器调试连接已关闭'))
     return new Promise((resolve, reject) => {
         const id = ++nextId
         const timer = setTimeout(() => { pending.delete(id); reject(new Error('CDP timeout ' + method)) }, 20000)
@@ -78,7 +88,7 @@ try {
     await call('Page.enable')
     await call('Runtime.enable')
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false })
-    await call('Page.navigate', { url: 'http://127.0.0.1:63438/' + (blankInitMode ? '?blank-init=1' : watchMode ? '?watch=1' : shellMode ? '?shell=1' : initMode ? '?init=1' : '') })
+    await call('Page.navigate', { url: fixtureOrigin + '/' + (blankInitMode ? '?blank-init=1' : watchMode ? '?watch=1' : shellMode ? '?shell=1' : initMode ? '?init=1' : '') })
     if (blankInitMode) {
         const hero = '[data-slot="conversation.hero.options"]'
         const heroText = 'document.querySelector(' + JSON.stringify(hero) + ')?.textContent'
@@ -118,9 +128,11 @@ try {
             ['style/one.md', '文风监听内容'],
             ['worldbuilding/one.md', '设定监听内容'],
         ]
+        let chapterSource
         for (const [file, title] of entities) {
             const path = 'novel/' + file
-            const source = '---\nname: ' + title + '\nnumber: ' + (file.includes('002.md') ? 2 : 1) + '\ntitle: ' + title + '\nhint: ' + title + '\n---\n# ' + title + '\n\n' + title + '测试正文。'
+            const source = '---\nname: ' + title + '\nnumber: ' + (file.includes('002.md') ? 2 : 1) + '\ntitle: ' + title + '\nhint: ' + title + '\n---\n# ' + title + '\n\n' + title + '测试正文。\n'
+            if (file === 'chapters/001.md') chapterSource = source
             await check('(await writerFixture.editFile(' + JSON.stringify(path) + ', ' + JSON.stringify(source) + ')).ok', '写入子目录首个文件：' + file)
             if (file === 'chapters/卷一/002.md') {
                 await waitFor('[...document.querySelectorAll(".ws-reader-footer button")].some(button => button.textContent.includes("下一章") && !button.disabled)', '章节导航发现卷目录新增章')
@@ -132,8 +144,37 @@ try {
         await waitFor('document.querySelector("#writer-view-characters")?.textContent.includes("更新后人物")', '修改文件自动刷新')
         await check('(await writerFixture.editFile("novel/characters/one.md", null)).ok', '删除人物文件成功')
         await waitFor('!document.querySelector("#writer-view-characters")?.textContent.includes("更新后人物")', '删除文件自动刷新')
+        await click('[aria-controls="writer-view-pending"]')
+        const pendingView = 'document.querySelector("#writer-view-pending .ws-detail")?.textContent'
+        await check('(await writerFixture.editFile("novel/pending.md", "# 待办\\n\\n## chapter/001\\n\\n- 初版建议：核对旧情节。\\n")).ok', '从磁盘新增待办文件')
+        await waitFor(pendingView + '?.includes("初版建议：核对旧情节。")', '工作台自动读取新建的待办文件')
+        await check('(await writerFixture.editFile("novel/pending.md", "# 待办\\n\\n## chapter/001\\n\\n- 更新建议：核对场景顺序。\\n")).ok', '从磁盘更新待办文件')
+        await waitFor(pendingView + '?.includes("更新建议：核对场景顺序。") && !' + pendingView + '?.includes("初版建议")', '待确认页自动替换旧建议')
+        await check(pendingView + '?.includes("归档本章建议") && !' + pendingView + '?.includes("准备确认请求")', '旧格式待办可归档，版本待核时没有确认入口')
+        const { frontmatter, content } = parseFrontmatter(chapterSource)
+        const currentPending = `## [维护 pass] chapter/001（冒烟测试）待人工确认\n<!-- writer-pending-source:${contentHash(frontmatter, content)} -->\n- 核对开场。\n`
+        await check('(await writerFixture.editFile("novel/pending.md", ' + JSON.stringify(currentPending) + ')).ok', '写入带真实源章哈希的待办')
+        await waitFor(pendingView + '?.includes("当前版本") && ' + pendingView + '?.includes("准备确认请求")', '源章哈希匹配时可准备确认')
+        await check('(await writerFixture.editFile("novel/chapters/001.md", ' + JSON.stringify(chapterSource + '\n修改后的章稿。\n') + ')).ok', '从磁盘改写源章')
+        await waitFor(pendingView + '?.includes("源章已变化") && !' + pendingView + '?.includes("准备确认请求")', '章稿变更后取消旧建议的确认入口')
         await textButton('对话', '[data-conversation-tabs]')
         await waitFor('!document.querySelector(".writer-studio") && writerFixture.watchPaths.size === 0', '卸载工作台后全部退订')
+        await fill('[data-native-input]', '保留这段原始草稿')
+        await textButton('写作面板', '[data-conversation-tabs]')
+        await waitFor('!!document.querySelector(".ws-nav")', '已有项目重新打开工作台')
+        await click('[aria-controls="writer-view-manuscript"]')
+        await textButton('← 上一章')
+        await check('document.querySelector(".ws-chapter-title")?.textContent === "章稿监听内容"', '选中磁盘上的已有章稿')
+        const chapterRead = '(await writerFixture.readFile("init-watch", "novel/chapters/001.md")).value.text'
+        const before = await evaluate('(async () => ' + chapterRead + ')()')
+        await textButton('提出修改')
+        const prompt = await evaluate('document.querySelector(".ws-request-text").value')
+        await check('document.querySelector(".ws-request-text").value.includes("chapter/001") && document.querySelector(".ws-request-text").value.includes("优先局部补丁")', '改稿请求包含正确章号及局部修改要求')
+        const revised = prompt + '\n仅修改开场动作。'
+        await fill('.ws-request-text', revised)
+        await textButton('添加到对话草稿', '.ws-dialog')
+        await waitFor('!!document.querySelector("[data-chat-view]") && document.querySelector("[data-native-input]").value === ' + JSON.stringify('保留这段原始草稿\n\n' + revised), '改稿请求追加到宿主已有草稿，回到对话且保留原有文字')
+        await check(chapterRead + ' === ' + JSON.stringify(before), '准备改稿请求后磁盘原稿保持原样')
         if (errors.length) throw new Error(errors.join('\n'))
         socket.close()
         process.exit(0)
