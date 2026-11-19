@@ -74,10 +74,10 @@ const RISK_ORDER: Record<PlotRiskLevel, number> = { red: 0, yellow: 1, gray: 2, 
 /** 下一步情境卡（概况页：按项目状态给出最高价值动作）。 */
 export type { NextStep }
 
-/** 计算下一步情境（纯函数；无大纲→规划；有纲无章→首章；有待维护→维护；否则→下一章）。 */
-export function nextStepOf(overview: { chapters: number; outline: OutlineOverview | null; currentChapter: number | null; staleChapters: string[]; riskSummary: { red: number } }): NextStep {
-  if (overview.outline === null) {
-    return { kind: 'outline', title: '规划整体大纲', hint: '还没有大纲（outline.md）——让助手先规划卷/章结构与主线。' }
+/** 计算下一步情境（无大纲或缺第一章规划→规划；有待维护→维护；否则→写作）。 */
+export function nextStepOf(overview: { chapters: number; outline: OutlineOverview | null; currentChapter: number | null; staleChapters: string[]; riskSummary: { red: number } }, firstChapterPlanned = false): NextStep {
+  if (overview.outline === null || (overview.chapters === 0 && !firstChapterPlanned)) {
+    return { kind: 'outline', title: '规划故事与大纲', hint: '先和助手确定故事梗概、主要冲突和第一章计划。' }
   }
   if (overview.chapters === 0) {
     return { kind: 'first-chapter', title: '写第一章', hint: '大纲已就绪——让助手按大纲写第一章（write_chapter）。' }
@@ -276,7 +276,8 @@ export function projectOverview(graph: EntityGraph, scan: NovelScan): NovelOverv
     styleRows: graph.styleRefs,
     worldbuildingTruncated: scan.worldbuildingTruncated ?? 0,
   }
-  return { ...partial, nextStep: nextStepOf(partial) }
+  const firstChapterPlanned = !!graph.indexes.outlineByChapterNumber.get(1)?.body.trim()
+  return { ...partial, nextStep: nextStepOf(partial, firstChapterPlanned) }
 }
 
 /** 兼容入口（旧调用方/测试）：扫描 → 实体图 → 投影。 */

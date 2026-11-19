@@ -9,7 +9,7 @@
  */
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join, dirname, isAbsolute, posix, resolve, relative, sep } from 'node:path'
 import {
   contentHash, parseFrontmatter, serializeEntity,
@@ -185,11 +185,14 @@ export default class WriterStoreService extends WriterService {
         if (value) this.indexes.set(this.projectRoot, value)
     }
 
-    private get projectRoot(): string {
-        if (this.configuredRoot !== undefined) return this.configuredRoot
+    private get sessionWorkspaceRoot(): string {
         const cwd = this.ctx.get('agents')?.currentInitiator()?.session.header.cwd
         if (!cwd) throw new Error('当前会话没有工作目录，请在小说工作目录中打开写作会话，或显式配置 projectRoot。')
-        return join(cwd, 'novel')
+        return cwd
+    }
+
+    private get projectRoot(): string {
+        return this.configuredRoot ?? join(this.sessionWorkspaceRoot, 'novel')
     }
 
   constructor(ctx: Context, config: Config) {
@@ -239,8 +242,17 @@ export default class WriterStoreService extends WriterService {
         return inspectProject(workspaceRoot, this.projectRoot)
     }
 
-    initializeProject(workspaceRoot: string, signal?: AbortSignal): Promise<WorkspaceProjectState> {
-        return withWriteChain(workspaceRoot, 'initialize', () => initializeProject(workspaceRoot, this.projectRoot, signal))
+    async initializeProject(workspaceRoot: string, signal?: AbortSignal): Promise<WorkspaceProjectState> {
+        const canonicalWorkspace = await realpath(workspaceRoot)
+        return withWriteChain(canonicalWorkspace, 'initialize', () => initializeProject(canonicalWorkspace, this.projectRoot, signal))
+    }
+
+    async assertProjectWritable(): Promise<void> {
+        if (this.configuredRoot !== undefined) return
+        const state = await this.inspectProject(this.sessionWorkspaceRoot)
+        if (state.status !== 'ready') {
+            throw new Error(state.message ?? '小说项目尚未初始化，请在当前写作会话点击“一键初始化”后再写入。')
+        }
     }
 
   /** 触发一次旧布局归档迁移（幂等；走归档串行链，与归档写入互斥；构造期与归档写入共用）。 */
@@ -271,6 +283,7 @@ export default class WriterStoreService extends WriterService {
   /** 串行化保护下的实际保存（read→校验→原子写→索引→emit 的临界区）。 */
   private async saveLocked(kind: EntityKind, id: string, patch: EntityPatch, expectHash?: string): Promise<WriterEntity> {
     assertSafeId(kind, id)
+    await this.assertProjectWritable()
     const existing = await this.readFromDisk(kind, id)
     if (expectHash === undefined) {
       // 显式 create 语义：不带乐观锁的 save 仅允许创建，已存在即抛错（防 "new" 误填静默覆盖）

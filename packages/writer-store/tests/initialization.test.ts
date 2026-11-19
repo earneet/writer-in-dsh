@@ -59,6 +59,50 @@ test('非空、隐藏文件、冒名标记目录和 novel 文件不被视为空�
     }
 })
 
+test('Git 工作区和预建的空 novel 目录允许初始化，保留工作区元数据', async t => {
+    for (const [hasGit, hasNovel] of [[true, false], [false, true], [true, true]]) {
+        const root = await workspace(t)
+        if (hasGit) {
+            await mkdir(join(root, '.git'))
+            await writeFile(join(root, '.git/HEAD'), 'ref: refs/heads/main\n')
+        }
+        if (hasNovel) await mkdir(join(root, 'novel'))
+        const { store, run } = createStore()
+        await run(root, async () => {
+            assert.equal((await store.inspectProject(root)).status, 'empty')
+            assert.equal((await store.initializeProject(root)).status, 'ready')
+            assert.equal((await store.get('project', 'project'))?.frontmatter.title, '未命名作品')
+            if (hasGit) assert.equal(await readFile(join(root, '.git/HEAD'), 'utf8'), 'ref: refs/heads/main\n')
+        })
+    }
+})
+
+test('冒名 Git 元数据和未识别的 novel 内容依然会阻止初始化', async t => {
+    for (const entry of ['.git', 'novel']) {
+        const root = await workspace(t)
+        await mkdir(join(root, entry))
+        await writeFile(join(root, entry, 'notes.md'), '已有内容')
+        const { store, run } = createStore()
+        await run(root, async () => {
+            assert.equal((await store.inspectProject(root)).status, 'blocked')
+            await assert.rejects(store.initializeProject(root), /非空/)
+            assert.deepEqual(await readdir(join(root, entry)), ['notes.md'])
+        })
+    }
+})
+
+test('跟随会话的新项目先拒绝实体写入，初始化后才创建章节', async t => {
+    const root = await workspace(t)
+    const { store, run } = createStore()
+    await run(root, async () => {
+        await assert.rejects(store.save('chapter', '001', { content: '第一个章节' }), /一键初始化/)
+        assert.deepEqual(await readdir(root), [])
+        await store.initializeProject(root)
+        await store.save('chapter', '001', { content: '第一个章节' })
+        assert.equal((await store.get('chapter', '001'))?.content.trim(), '第一个章节')
+    })
+})
+
 test('固定路径与会话不匹配时拒绝初始化，已有平铺项目可显式打开', async t => {
     const root = await workspace(t)
     const other = await workspace(t)
@@ -131,7 +175,13 @@ test('写入前目录变成非空或操作中断时保留原文件并如实标�
         let checks = 0
         const signal = { throwIfAborted: () => { if (++checks === 4) throw new Error('用户取消') } } as AbortSignal
         await assert.rejects(store.initializeProject(another, signal), /初始化未完成.*用户取消/)
-        assert.match((await store.inspectProject(another)).message ?? '', /未完成/)
+        assert.equal((await store.inspectProject(another)).status, 'incomplete')
+        await assert.rejects(store.save('chapter', '001', { content: '不应写入' }), /重试初始化/)
+        await writeFile(join(another, 'novel/outline.md'), '# 作者的大纲\n我的故事构思')
+        assert.equal((await store.initializeProject(another)).status, 'ready')
+        assert.equal(await readFile(join(another, 'novel/outline.md'), 'utf8'), '# 作者的大纲\n我的故事构思')
+        assert.equal((await store.get('project', 'project'))?.frontmatter.title, '未命名作品')
+        assert.ok(!(await readdir(join(another, 'novel'))).includes('.initializing'))
     })
 })
 

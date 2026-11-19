@@ -102,6 +102,7 @@ export default class WriterEngineServiceImpl extends EngineService {
 
   async writeChapter(request: ChapterWriteRequest): Promise<ChapterWriteResult> {
     request.signal?.throwIfAborted()
+    await this.ctx.writer.assertProjectWritable?.()
     const chapter = await this.ctx.writer.get('chapter', request.chapterId)
     validateWriteRequest(request, chapter)
     if (request.mode === 'full') return this.writeFull(request, chapter)

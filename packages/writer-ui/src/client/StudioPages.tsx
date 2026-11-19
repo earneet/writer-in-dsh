@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button, MarkdownText, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CharacterRow, ChapterRow, NovelOverview, OutlineTreeNode, SectionEntry } from './types.ts'
 import type { WriterLiveState } from './bus.ts'
-import { pendingConfirmationRequest } from './actions.ts'
+import { pendingConfirmationRequest, startupRequest } from './actions.ts'
 
 export type StudioPage = 'manuscript' | 'outline' | 'characters' | 'plots' | 'library' | 'pending' | 'overview'
 export type PrepareRequest = (text: string) => void
@@ -141,7 +141,7 @@ export function OverviewPage({ overview: o, live, ask, navigate, choose }: { ove
     return <div className="ws-page"><Heading title={o.title} hint={o.genre || '小说项目'} /><div className="ws-stats">{[[o.chapters, '已写章节', 'manuscript'], [o.characterRows.length, '人物档案', 'characters'], [o.plotRows.length, '伏笔记录', 'plots'], [o.pendingLineTotal, '维护建议', 'pending']].map(([value, label, page]) => <button type="button" className="ws-button ws-stat" key={String(label)} onClick={() => navigate(page as StudioPage)}><strong>{value}</strong><span className="ws-muted">{label}</span></button>)}</div>
         <p className="ws-muted">正文约 {o.totalChars.toLocaleString()} 字{o.targetWords > 0 ? ` / 目标 ${o.targetWords.toLocaleString()} 字` : ''}{o.chapterTarget > 0 ? ` · 计划 ${o.chapterTarget} 章` : ''}</p>
         {o.progress !== null && <div className="ws-progress" role="progressbar" aria-label="全书目标进度" aria-valuenow={Math.round(Math.min(o.progress, 1) * 100)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${Math.max(0, Math.min(o.progress, 1) * 100)}%` }} /></div>}
-        <div className="ws-note"><h3>{o.nextStep.title}</h3><p className="ws-muted">{o.nextStep.hint}</p><div className="ws-actions" style={{ marginTop: 12 }}>{o.chapterRows.length > 0 && <Button onClick={() => choose(o.chapterRows[o.chapterRows.length - 1]!)}>阅读最近章节</Button>}<Button onClick={() => navigate('pending')}>查看待确认</Button></div></div>
+        <div className="ws-note"><h3>{o.nextStep.title}</h3><p className="ws-muted">{o.nextStep.hint}</p><div className="ws-actions" style={{ marginTop: 12 }}>{o.chapters === 0 && o.nextStep.kind === 'outline' && <Button onClick={() => ask(startupRequest)}>和助手确定故事方向</Button>}{o.chapterRows.length > 0 && <Button onClick={() => choose(o.chapterRows[o.chapterRows.length - 1]!)}>阅读最近章节</Button>}<Button onClick={() => navigate('pending')}>查看待确认</Button></div></div>
         <div className="ws-actions"><Tag tone={o.riskSummary.red > 0 ? 'warning' : 'neutral'}>回收逾期 {o.riskSummary.red}</Tag><Tag tone="neutral">待维护 {o.staleChapters.length}</Tag><Button onClick={() => ask('请对已写章节、创作准则、人物状态及世界观进行一致性检查，列出依据，如实说明覆盖范围和失败批次。')}>全书一致性检查</Button></div>
         <h3 style={{ marginTop: 28 }}>卷分布</h3><div className="ws-actions">{o.volumes.map((volume, index) => <span className="ws-muted" key={index}>{volume.name || '正文'} · {volume.count} 章</span>)}</div>
         {live.lastReview && <section className="ws-archive">

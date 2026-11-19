@@ -36,14 +36,14 @@ for (const path of Object.keys(files)) {
 }
 const drafts: Record<string, string> = { a: '已有草稿与引用', b: '另一个会话的草稿' }
 const referenceChips = { a: ['existing-reference'], b: [] }
-const phases = { a: 'plain', b: 'plain', 'init-watch': 'plain' }
+const phases = { a: 'plain', b: 'plain', 'init-watch': 'plain', 'init-blank': 'plain' }
 const calls: unknown[] = []
 const statusFailures = new Set<string>()
 const watchPaths = new Set<string>()
 const watchAttempts: string[] = []
 const slotComponents = new Map<string, React.ComponentType<any>>()
 const presets: Record<string, string> = { 'init-blank': 'default' }
-const bindings = { a: { ctx: { id: 'a' } }, b: { ctx: { id: 'b' } }, 'init-watch': { ctx: { id: 'init-watch' } } }
+const bindings = { a: { ctx: { id: 'a' } }, b: { ctx: { id: 'b' } }, 'init-watch': { ctx: { id: 'init-watch' } }, 'init-blank': { ctx: { id: 'init-blank' } } }
 type BoundSession = keyof typeof bindings
 const ctx = {
     effect: (fn: () => void) => fn(),
@@ -100,7 +100,13 @@ const ctx = {
     } },
     conversation: { input: {
         for: (actx: { id: BoundSession }) => ({ state: { getSnapshot: () => ({ phase: phases[actx.id] }) } }),
-        requestDraftInitialization: (binding: { ctx: { id: BoundSession } }, options: { prompt: string; whenDraftExists: string }) => { calls.push(['append', binding.ctx.id, options]); if (options.whenDraftExists !== 'append') return 'preserved'; drafts[binding.ctx.id] += '\n\n' + options.prompt; return 'applied' },
+        requestDraftInitialization: (binding: { ctx: { id: BoundSession } }, options: { prompt: string; whenDraftExists: string }) => {
+            calls.push(['append', binding.ctx.id, options])
+            if (options.whenDraftExists !== 'append') return 'preserved'
+            drafts[binding.ctx.id] += '\n\n' + options.prompt
+            queueMicrotask(render)
+            return 'applied'
+        },
     } },
 }
 let Panel: React.ComponentType<any>

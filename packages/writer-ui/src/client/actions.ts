@@ -1,5 +1,7 @@
 import type { PendingSection } from './types.ts'
 
+export const startupRequest = '请先读取作品信息、创作准则和大纲，和我一起确定故事方向。从我已有的想法出发，先讨论故事梗概和主要冲突，再约定第一章要写什么。等我确认后再保存作品资料。'
+
 interface ActionContext {
     sessions?: { binding(id: string): { ctx: unknown } | undefined }
     conversation?: { input: {

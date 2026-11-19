@@ -1,12 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import WriterStore from '../../writer-store/src/index.ts'
 import WriterEngine from '../src/index.ts'
+
+test('新会话写第一章先检查项目，未初始化时不调用模型', async t => {
+    const cwd = await mkdtemp(join(tmpdir(), 'writer-engine-workspace-'))
+    t.after(() => rm(cwd, { recursive: true, force: true }))
+    const ctx = new Context()
+    const agent = { session: { header: { cwd } } }
+    ctx.provide('agents', { currentInitiator: () => agent } as never)
+    new WriterStore(ctx, {})
+    ctx.provide('llm', { stream: () => { throw new Error('模型不应收到请求') } } as never)
+    const engine = new WriterEngine(ctx, { provider: 'test', model: 'test', maxOutputTokens: 1000, temperature: 0, contextBudgetChars: 24000, autoMaintenance: false, extractionRetries: 0 })
+    await assert.rejects(engine.writeChapter({ chapterId: '001', mode: 'full' }), /一键初始化/)
+    assert.deepEqual(await readdir(cwd), [])
+})
 
 test('共享引擎按项目隔离同章号维护、计数与排空', async t => {
     const a = await mkdtemp(join(tmpdir(), 'writer-engine-workspace-'))

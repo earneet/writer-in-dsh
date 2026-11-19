@@ -89,7 +89,7 @@ export async function projectCommand(sessionId: string, action: 'status' | 'init
     if (outcome?.kind !== 'success') throw new Error(outcome?.text ?? '项目操作未成功，请检查宿主返回的信息。')
     let state: WorkspaceProjectState
     try { state = JSON.parse(outcome.text ?? '') } catch { throw new Error('项目服务返回了无法识别的结果，请更新写作插件后重试。') }
-    if (!state || !['ready', 'empty', 'blocked', 'mismatch'].includes(state.status) || typeof state.workspaceRoot !== 'string' || typeof state.projectRoot !== 'string' || !['novel', '.'].includes(state.scanRoot) || !Array.isArray(state.entries)) throw new Error('项目服务返回了不完整的目录状态，请更新写作插件后重试。')
+    if (!state || !['ready', 'empty', 'incomplete', 'blocked', 'mismatch'].includes(state.status) || typeof state.workspaceRoot !== 'string' || typeof state.projectRoot !== 'string' || !['novel', '.'].includes(state.scanRoot) || !Array.isArray(state.entries)) throw new Error('项目服务返回了不完整的目录状态，请更新写作插件后重试。')
     if (action === 'init' && state.status !== 'ready') throw new Error(state.message ?? '初始化尚未完成，请检查目录状态。')
     return state
 }

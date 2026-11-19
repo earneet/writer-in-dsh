@@ -83,10 +83,10 @@ test('nextStepOf：章节全无章号锚时如实降级（不给「写第 1 章�
   assert.match(step.hint, /缺章号锚/)
 })
 
-test('情境卡：无大纲→规划；有纲无章→首章；待维护→维护；否则→下一章（含红伏笔提示）', () => {
+test('情境卡：无大纲→规划；首章计划就绪→首章；待维护→维护；否则→下一章（含红伏笔提示）', () => {
   const none = nextStepOf({ chapters: 0, outline: null, currentChapter: null, staleChapters: [], riskSummary: { red: 0 } })
   assert.equal(none.kind, 'outline')
-  const first = nextStepOf({ chapters: 0, outline: { synopsis: '', volumes: 1, chapterTarget: 10, sections: [] }, currentChapter: null, staleChapters: [], riskSummary: { red: 0 } })
+  const first = nextStepOf({ chapters: 0, outline: { synopsis: '', volumes: 1, chapterTarget: 10, sections: [] }, currentChapter: null, staleChapters: [], riskSummary: { red: 0 } }, true)
   assert.equal(first.kind, 'first-chapter')
   const maintain = nextStepOf({ chapters: 3, outline: { synopsis: '', volumes: 1, chapterTarget: 10, sections: [] }, currentChapter: 3, staleChapters: ['002', '003'], riskSummary: { red: 0 } })
   assert.equal(maintain.kind, 'maintain')
@@ -95,6 +95,12 @@ test('情境卡：无大纲→规划；有纲无章→首章；待维护→维�
   assert.equal(next.kind, 'next-chapter')
   assert.equal(next.title, '写第 4 章')
   assert.match(next.hint, /2 个伏笔已超期/)
+})
+
+test('生成的大纲填写指引不会被当成第一章计划', () => {
+  const outline = { name: 'outline.md', frontmatter: {}, content: '# 大纲\n\n> **任务来源**: 用户点击一键初始化。\n\n请先确定故事梗概与主要冲突，再规划章节。' }
+  assert.equal(buildOverview({ ...baseScan, outline }).nextStep.kind, 'outline')
+  assert.equal(buildOverview({ ...baseScan, outline: { ...outline, content: '# 大纲\n\n## 第 1 章 雾港\n主角在渡口遇见失踪多年的朋友。' } }).nextStep.kind, 'first-chapter')
 })
 
 test('扫描侧新字段直通：staleChapters/failedFiles/pendingArchive/nextStep 进总览', () => {

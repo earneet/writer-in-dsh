@@ -22,3 +22,13 @@ test('命令缺席、权限拒绝、业务失败和坏回执均不能假报初�
         }
     } finally { load.setBrowserContext(null) }
 })
+
+test('项目状态命令允许识别可重试的初始化中断', async () => {
+    const state = { status: 'incomplete', workspaceRoot: '/book', projectRoot: '/book/novel', scanRoot: 'novel', entries: ['novel'] }
+    load.setBrowserContext({ remote: { commands: { execute: async () => ({
+        ok: true, value: { result: { kind: 'success', text: JSON.stringify(state) } },
+    }) } } } as never)
+    try {
+        assert.deepEqual(await load.projectCommand('session-a', 'status', new AbortController().signal), state)
+    } finally { load.setBrowserContext(null) }
+})

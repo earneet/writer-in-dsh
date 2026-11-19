@@ -1,7 +1,11 @@
-import { lstat, mkdir, readdir, realpath, unlink, writeFile } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
+import { lstat, mkdir, readFile, readdir, realpath, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { serializeEntity } from 'dsh-writer-domain'
 import type { WorkspaceProjectState } from 'dsh-writer-core'
+
+const initializing = '.initializing'
+const marker = '初始化进行中；未完成时请保留并检查已有文件。\n'
 
 function samePath(a: string, b: string): boolean {
     return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
@@ -16,6 +20,27 @@ async function canonical(path: string): Promise<string> {
         const parent = dirname(absolute)
         return parent === absolute ? absolute : join(await canonical(parent), basename(absolute))
     }
+}
+
+async function readSmallFile(path: string): Promise<string | undefined> {
+    try {
+        const info = await lstat(path)
+        if (info.isFile() && info.size <= 4096) return await readFile(path, 'utf8')
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+}
+
+async function hasOnlySetupEntries(workspace: string, entries: Dirent[]): Promise<boolean> {
+    for (const entry of entries) {
+        if (entry.name === 'novel' && entry.isDirectory()) continue
+        if (entry.name !== '.git') return false
+        const git = join(workspace, '.git')
+        if (entry.isDirectory() && /^(?:ref: refs\/[^\r\n]+|[a-f\d]{40}|[a-f\d]{64})$/i.test((await readSmallFile(join(git, 'HEAD')) ?? '').trim())) continue
+        if (entry.isFile() && /^gitdir: [^\r\n]+$/.test((await readSmallFile(git) ?? '').trim())) continue
+        return false
+    }
+    return true
 }
 
 export async function inspectProject(workspaceRoot: string, projectRoot: string): Promise<WorkspaceProjectState> {
@@ -37,31 +62,52 @@ export async function inspectProject(workspaceRoot: string, projectRoot: string)
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
-    if (projectEntries.some(entry => entry.name === '.initializing')) return { ...state, message: '上次初始化未完成。请先检查 novel/ 中已创建的内容，保留需要的文件，再在空工作目录重新初始化。' }
+    if (projectEntries.some(entry => entry.name === initializing)) {
+        if (state.scanRoot === 'novel' && await hasOnlySetupEntries(workspace, entries) && await readSmallFile(join(candidate, initializing)) === marker) {
+            return { ...state, status: 'incomplete', message: '上次初始化未完成。请选择“重试初始化”补齐缺失项，已有文件会保留。' }
+        }
+        return { ...state, message: '上次初始化未完成，且当前目录无法安全重试。请检查工作目录与 novel/ 中的现有内容。' }
+    }
     const files = new Set(projectEntries.filter(entry => entry.isFile()).map(entry => entry.name))
     const directories = new Set(projectEntries.filter(entry => entry.isDirectory()).map(entry => entry.name))
     const strong = ['project.md', 'principles.md', 'outline.md', 'ideas.md', 'events.md'].some(name => files.has(name))
     const weak = ['chapters', 'characters', 'plots', 'worldbuilding'].filter(name => directories.has(name)).length
     if (strong || weak >= (state.scanRoot === 'novel' ? 1 : 2)) return { ...state, status: 'ready' }
-    if (names.length === 0 && state.scanRoot === 'novel') return { ...state, status: 'empty' }
-    return { ...state, message: '当前工作目录非空，且没有可识别的小说项目。请新建一个空工作目录后使用写作模式，或打开已有 novel/ 的上一级工作目录。已有文件不会被修改。' }
+    if (state.scanRoot === 'novel' && projectEntries.length === 0 && await hasOnlySetupEntries(workspace, entries)) return { ...state, status: 'empty' }
+    return { ...state, message: '当前工作目录非空，且没有可识别的小说项目。请打开空工作目录、仅含 Git 元数据的目录，或已有 novel/ 的上一级工作目录。已有文件不会被修改。' }
+}
+
+async function createDirectory(path: string, keepExisting: boolean): Promise<void> {
+    try {
+        await mkdir(path)
+    } catch (error) {
+        if (!keepExisting || (error as NodeJS.ErrnoException).code !== 'EEXIST' || !(await lstat(path)).isDirectory()) throw error
+    }
 }
 
 export async function initializeProject(workspaceRoot: string, projectRoot: string, signal?: AbortSignal): Promise<WorkspaceProjectState> {
     const state = await inspectProject(workspaceRoot, projectRoot)
-    if (state.status !== 'empty') throw new Error(state.message ?? '目录已有小说项目，不能重复初始化。')
+    const retry = state.status === 'incomplete'
+    if (state.status !== 'empty' && !retry) throw new Error(state.message ?? '目录已有小说项目，不能重复初始化。')
     signal?.throwIfAborted()
     const root = join(state.workspaceRoot, 'novel')
-    await mkdir(root)
+    const markerPath = join(root, initializing)
+    const checkWorkspace = async () => {
+        const entries = await readdir(state.workspaceRoot, { withFileTypes: true })
+        if (!(await hasOnlySetupEntries(state.workspaceRoot, entries))) throw new Error('工作目录已变为非空，已停止初始化')
+    }
+    await checkWorkspace()
+    await createDirectory(root, true)
     try {
-        await writeFile(join(root, '.initializing'), '初始化进行中；未完成时请保留并检查已有文件。\n', { flag: 'wx' })
-        const checkWorkspace = async () => {
-            if ((await readdir(state.workspaceRoot)).some(name => name !== 'novel')) throw new Error('工作目录已变为非空，已停止初始化')
+        if (retry) {
+            if (await readSmallFile(markerPath) !== marker) throw new Error('初始化标记已变化，请重新检查目录')
+        } else {
+            if ((await readdir(root)).length > 0) throw new Error('novel/ 已变为非空，已停止初始化')
+            await writeFile(markerPath, marker, { flag: 'wx' })
         }
-        await checkWorkspace()
         for (const directory of ['chapters', 'characters', 'plots', 'worldbuilding', 'style', 'exports', '.writer']) {
             signal?.throwIfAborted()
-            await mkdir(join(root, directory))
+            await createDirectory(join(root, directory), retry)
         }
         const now = new Date()
         const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -78,12 +124,18 @@ export async function initializeProject(workspaceRoot: string, projectRoot: stri
         }
         for (const [name, content] of Object.entries(documents)) {
             signal?.throwIfAborted()
-            await writeFile(join(root, name), content, { flag: 'wx' })
+            const path = join(root, name)
+            try {
+                await writeFile(path, content, { flag: 'wx' })
+            } catch (error) {
+                if (!retry || (error as NodeJS.ErrnoException).code !== 'EEXIST' || !(await lstat(path)).isFile()) throw error
+            }
         }
         await checkWorkspace()
-        await unlink(join(root, '.initializing'))
+        signal?.throwIfAborted()
+        await unlink(markerPath)
     } catch (error) {
-        throw new Error(`初始化未完成：${error instanceof Error ? error.message : String(error)}。已创建的文件保留在 ${root}，请检查后在空目录重试。`)
+        throw new Error(`初始化未完成：${error instanceof Error ? error.message : String(error)}。已创建的文件保留在 ${root}，请重新检查后重试。`)
     }
     return inspectProject(state.workspaceRoot, projectRoot)
 }

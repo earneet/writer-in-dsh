@@ -43,12 +43,22 @@ export async function startStudioFixture({ output = defaultOutput, port = 63438,
     const harness = await commandHarness(tempParent)
     const fixtureAgents = new Map()
     try {
-        for (const id of ['init-empty', 'init-blank', 'init-other', 'init-nonempty', 'init-hidden', 'init-race', 'init-error', 'init-watch']) {
+        for (const id of ['init-empty', 'init-blank', 'init-other', 'init-nonempty', 'init-hidden', 'init-race', 'init-error', 'init-watch', 'init-git', 'init-retry']) {
             const agent = await harness.createAgent(id)
             fixtureAgents.set(id, agent)
             if (id === 'init-nonempty' || id === 'init-hidden') await writeFile(resolve(agent.session.header.cwd, id === 'init-hidden' ? '.hidden' : 'notes.txt'), '已有内容，必须保留')
+            const cwd = agent.session.header.cwd
+            if (id === 'init-git') {
+                await mkdir(resolve(cwd, '.git'))
+                await writeFile(resolve(cwd, '.git/HEAD'), 'ref: refs/heads/main\n')
+                await mkdir(resolve(cwd, 'novel'))
+            }
+            if (id === 'init-retry') {
+                await mkdir(resolve(cwd, 'novel'))
+                await writeFile(resolve(cwd, 'novel/.initializing'), '初始化进行中；未完成时请保留并检查已有文件。\n')
+                await writeFile(resolve(cwd, 'novel/outline.md'), '# 作者的大纲\n\n必须保留。')
+            }
             if (id === 'init-watch') {
-                const cwd = agent.session.header.cwd
                 for (const dir of ['chapters/卷一', 'characters', 'plots', 'worldbuilding', 'style']) await mkdir(resolve(cwd, 'novel', dir), { recursive: true })
                 await writeFile(resolve(cwd, 'novel/project.md'), '---\ntitle: 监听验证\n---\n')
             }

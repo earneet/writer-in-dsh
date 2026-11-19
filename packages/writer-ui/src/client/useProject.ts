@@ -8,6 +8,7 @@ export function useProject(sessionId: string, scanEnabled = true) {
     const bus = useSyncExternalStore(subscribeBus, snapshot, snapshot)
     const [ui, setUi] = useState({ loading: false, error: null as string | null, progress: '', project: null as WorkspaceProjectState | null })
     const [initializing, setInitializing] = useState(false)
+    const [didInitialize, setDidInitialize] = useState(false)
     const initialization = useRef<AbortController | null>(null)
     const checked = useRef(false)
     const [nonce, setNonce] = useState(0)
@@ -32,6 +33,7 @@ export function useProject(sessionId: string, scanEnabled = true) {
             if (controller.signal.aborted) return
             checked.current = true
             setUi(state => ({ ...state, project }))
+            setDidInitialize(true)
             refresh()
         } catch (error) {
             if (!controller.signal.aborted) {
@@ -145,5 +147,5 @@ export function useProject(sessionId: string, scanEnabled = true) {
         return () => { controller.abort(); clearTimeout(timer) }
     }, [sessionId, watchDirectories, reload])
 
-    return { ...ui, initializing, initialize, bus, refresh }
+    return { ...ui, initializing, didInitialize, initialize, bus, refresh }
 }
