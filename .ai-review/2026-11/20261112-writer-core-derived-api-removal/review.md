@@ -4,8 +4,8 @@ title: 'writer-core: 删除 deprecated 的 readDerived/writeDerived/deleteDerive
 module: writer-core
 audit_type: shrink
 created_at: '2026-11-12T10:36:30+08:00'
-updated_at: '2026-11-13T16:52:10+08:00'
-owner: cxs
+updated_at: '2026-11-23T08:41:40.946Z'
+owner: ghj
 tags:
   - core
   - store
