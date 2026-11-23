@@ -6,6 +6,7 @@ import {
     IconChecklistOutlineRegular, IconDataOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChapterRow } from './types.ts'
+import { rewriteCommand } from './load.ts'
 import { useProject } from './useProject.ts'
 import { ProjectWelcome } from './ProjectWelcome.tsx'
 import { appendRequest, startupRequest, type ActionOwner } from './actions.ts'
@@ -44,6 +45,11 @@ function Workspace(props: WriterPanelProps) {
     const [directory, setDirectory] = useState(false)
     const [context, setContext] = useState(false)
     const [request, setRequest] = useState<string | null>(null)
+    const [rewrite, setRewrite] = useState<{ chapter: ChapterRow; hash: string; scope: 'selection' | 'chapter' } | null>(null)
+    const [selection, setSelection] = useState('')
+    const [instruction, setInstruction] = useState('')
+    const original = useRef<HTMLTextAreaElement>(null)
+    const [registering, setRegistering] = useState(false)
     const [message, setMessage] = useState('')
     const reader = useRef<HTMLElement>(null)
     const overview = bus.scan?.overview ?? null
@@ -78,10 +84,37 @@ function Workspace(props: WriterPanelProps) {
         else setMessage(`第 ${number} 章暂无正文，原始章锚已保留。`)
     }
     function ask(text: string) { setMessage(''); setRequest(text) }
-    function chapterRequest(mode: 'assist' | 'review' | 'rewrite') {
+    function chapterRequest(mode: 'assist' | 'review') {
         if (!current) return
-        const intent = mode === 'assist' ? '续写本章（assist），承接现有结尾，不复述已写内容' : mode === 'review' ? '审阅本章，从情节、人物、设定与阅读体验提出带原文引用和改法的建议，先不要修改' : '按我的要求修改本章，优先局部补丁，保留无关段落'
-        ask(`请先读取 chapter/${current.id}《${current.title}》、本章大纲和创作准则，再${intent}。${mode === 'rewrite' ? '\n\n我的修改要求：\n' : ''}${mode === 'review' ? '' : '\n保存后先审稿，再核对章后维护建议。'}`)
+        const intent = mode === 'assist' ? '续写本章（assist），承接现有结尾，不复述已写内容' : '审阅本章，从情节、人物、设定与阅读体验提出带原文引用和改法的建议，先不要修改'
+        ask(`请先读取 chapter/${current.id}《${current.title}》、本章大纲和创作准则，再${intent}。`)
+    }
+    function openRewrite(scope: 'selection' | 'chapter') {
+        const hash = current && bus.scan?.chapterHashes?.get(current.id)
+        if (!current || !writable || !hash) {
+            setMessage('暂时无法核对章稿版本，请刷新后重试。')
+            return
+        }
+        setSelection('')
+        setInstruction('')
+        setMessage('')
+        setRewrite({ chapter: current, hash, scope })
+    }
+    async function submitRewrite() {
+        if (!rewrite) return
+        setRegistering(true)
+        try {
+            const id = await rewriteCommand(sessionId, {
+                chapter: rewrite.chapter.id, hash: rewrite.hash, scope: rewrite.scope,
+                ...(rewrite.scope === 'selection' ? { selection } : {}),
+            })
+            setRewrite(null)
+            ask(`我已发起第 ${rewrite.chapter.id} 章的${rewrite.scope === 'selection' ? '局部' : '整章'}改稿。请调用 write_chapter，mode="rewrite"，chapter="${rewrite.chapter.id}"，request_id="${id}"。\n\n修改要求：${instruction.trim()}`)
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : String(error))
+        } finally {
+            setRegistering(false)
+        }
     }
 
     return <div className="writer-studio" data-conversation-composer-overlay="">
@@ -94,7 +127,7 @@ function Workspace(props: WriterPanelProps) {
             <main className="ws-main">
                     <section className="ws-view" hidden={page !== 'manuscript'} id="writer-view-manuscript" aria-label="稿件">
                         <div className="ws-toolbar"><div className="ws-actions"><button type="button" className="ws-button ws-outline" disabled={!chapters.length} aria-expanded={directory} onClick={() => setDirectory(true)}>章节目录 · {current?.id ?? '—'} / {chapters.length}</button><Tag tone="neutral">阅读</Tag></div><div className="ws-actions"><button type="button" className="ws-button ws-context-toggle" aria-expanded={context} onClick={() => setContext(value => !value)}>本章资料</button><Button disabled={!writable} onClick={() => chapterRequest('review')}>审阅本章</Button><Button disabled={!writable} onClick={() => chapterRequest('assist')}>续写本章</Button></div></div>
-                        {!current ? <div className="ws-empty"><p>{overview.nextStep.hint}</p><div className="ws-actions" style={{ justifyContent: 'center', marginTop: 16 }}><Button onClick={() => setPage('outline')}>查看大纲</Button>{overview.nextStep.kind === 'outline' ? <Button onClick={() => ask(startupRequest)}>和助手确定故事方向</Button> : <Button onClick={() => ask('请先读取 project/project、大纲与创作准则，核对第一章计划，再准备章节写作。完成后先审稿，并说明需要确认的章后维护建议。')}>准备第一章要求</Button>}</div></div> : <div className="ws-reader-grid"><article ref={reader} className="ws-reader" onScroll={event => { scroll.current[current.path] = event.currentTarget.scrollTop }}><div className="ws-eyebrow">CHAPTER {current.number === null ? current.id : String(current.number).padStart(3, '0')}</div><h1 className="ws-chapter-title">{current.title}</h1><div className="ws-meta"><span>{current.volume || '正文'}</span><span>约 {current.chars.toLocaleString()} 字</span>{current.status && <span>{current.status}</span>}{current.storyline && <span>{current.storyline}</span>}</div>{!writable && <div className="ws-note ws-muted">此章节路径目前仅支持面板阅读，写作工具只支持 chapters/三位章号.md。请先在对话中核对文件布局。</div>}<Markdown text={current.content} prose /><div className="ws-reader-footer"><div className="ws-actions"><button type="button" className="ws-button" disabled={!previous} onClick={() => previous && choose(previous)}>← 上一章</button><button type="button" className="ws-button" disabled={!next} onClick={() => next && choose(next)}>下一章 →</button></div><Button disabled={!writable} onClick={() => chapterRequest('rewrite')}>提出修改</Button></div></article><aside className={`ws-context${context ? ' is-open' : ''}`} aria-label="本章资料"><button type="button" className="ws-button ws-context-toggle" onClick={() => setContext(false)}>关闭资料</button><section className="ws-context-section"><h3>本章大纲</h3>{outline ? <Markdown text={outline.body} /> : <p>没有匹配本章的大纲小节。</p>}<button type="button" className="ws-button" onClick={() => setPage('outline')}>查看大纲 →</button></section><section className="ws-context-section"><h3>关联伏笔 · {linkedPlots.length}</h3>{linkedPlots.map(plot => <p key={plot.id}>{plot.hint} · {plot.status === 'planned' ? '计划埋设' : '留意回收或推进'}</p>)}<button type="button" className="ws-button" onClick={() => setPage('plots')}>查看伏笔 →</button></section><section className="ws-context-section"><h3>创作准则</h3>{overview.principles ? <Markdown text={sectionText(overview.principles)} /> : <p>尚未找到创作准则。</p>}<button type="button" className="ws-button" onClick={() => setPage('library')}>查阅全部资料 →</button></section><section className="ws-context-section"><h3>章后建议</h3><p>全书有 {overview.pendingLineTotal} 条建议待核对。</p><button type="button" className="ws-button" onClick={() => setPage('pending')}>查看待确认 →</button><button type="button" className="ws-button" onClick={() => setPage('characters')}>查阅人物 →</button></section></aside></div>}
+                        {!current ? <div className="ws-empty"><p>{overview.nextStep.hint}</p><div className="ws-actions" style={{ justifyContent: 'center', marginTop: 16 }}><Button onClick={() => setPage('outline')}>查看大纲</Button>{overview.nextStep.kind === 'outline' ? <Button onClick={() => ask(startupRequest)}>和助手确定故事方向</Button> : <Button onClick={() => ask('请先读取 project/project、大纲与创作准则，核对第一章计划，再准备章节写作。完成后先审稿，并说明需要确认的章后维护建议。')}>准备第一章要求</Button>}</div></div> : <div className="ws-reader-grid"><article ref={reader} className="ws-reader" onScroll={event => { scroll.current[current.path] = event.currentTarget.scrollTop }}><div className="ws-eyebrow">CHAPTER {current.number === null ? current.id : String(current.number).padStart(3, '0')}</div><h1 className="ws-chapter-title">{current.title}</h1><div className="ws-meta"><span>{current.volume || '正文'}</span><span>约 {current.chars.toLocaleString()} 字</span>{current.status && <span>{current.status}</span>}{current.storyline && <span>{current.storyline}</span>}</div>{!writable && <div className="ws-note ws-muted">此章节路径目前仅支持面板阅读，写作工具只支持 chapters/三位章号.md。请先在对话中核对文件布局。</div>}<Markdown text={current.content} prose /><div className="ws-reader-footer"><div className="ws-actions"><button type="button" className="ws-button" disabled={!previous} onClick={() => previous && choose(previous)}>← 上一章</button><button type="button" className="ws-button" disabled={!next} onClick={() => next && choose(next)}>下一章 →</button></div><div className="ws-actions"><Button disabled={!writable} onClick={() => openRewrite('selection')}>局部改稿</Button><Button disabled={!writable} onClick={() => openRewrite('chapter')}>整章改稿</Button></div></div></article><aside className={`ws-context${context ? ' is-open' : ''}`} aria-label="本章资料"><button type="button" className="ws-button ws-context-toggle" onClick={() => setContext(false)}>关闭资料</button><section className="ws-context-section"><h3>本章大纲</h3>{outline ? <Markdown text={outline.body} /> : <p>没有匹配本章的大纲小节。</p>}<button type="button" className="ws-button" onClick={() => setPage('outline')}>查看大纲 →</button></section><section className="ws-context-section"><h3>关联伏笔 · {linkedPlots.length}</h3>{linkedPlots.map(plot => <p key={plot.id}>{plot.hint} · {plot.status === 'planned' ? '计划埋设' : '留意回收或推进'}</p>)}<button type="button" className="ws-button" onClick={() => setPage('plots')}>查看伏笔 →</button></section><section className="ws-context-section"><h3>创作准则</h3>{overview.principles ? <Markdown text={sectionText(overview.principles)} /> : <p>尚未找到创作准则。</p>}<button type="button" className="ws-button" onClick={() => setPage('library')}>查阅全部资料 →</button></section><section className="ws-context-section"><h3>章后建议</h3><p>全书有 {overview.pendingLineTotal} 条建议待核对。</p><button type="button" className="ws-button" onClick={() => setPage('pending')}>查看待确认 →</button><button type="button" className="ws-button" onClick={() => setPage('characters')}>查阅人物 →</button></section></aside></div>}
                     </section>
                     <section className="ws-view" hidden={page !== 'outline'} id="writer-view-outline" aria-label="大纲"><OutlinePage overview={overview} ask={ask} choose={choose} /></section>
                     <section className="ws-view" hidden={page !== 'characters'} id="writer-view-characters" aria-label="人物"><CharactersPage overview={overview} ask={ask} jump={jump} /></section>
@@ -106,6 +139,20 @@ function Workspace(props: WriterPanelProps) {
         </div>}
         {message && <div className="ws-alert" role="status">{message}</div>}
         {directory && <ChapterDirectory chapters={chapters} current={current?.path ?? ''} choose={choose} close={() => setDirectory(false)} />}
+        {rewrite && <Dialog title={rewrite.scope === 'selection' ? '局部改稿' : '整章改稿'} close={() => { if (!registering) setRewrite(null) }} wide>
+            <p>第 {rewrite.chapter.id} 章《{rewrite.chapter.title}》{rewrite.scope === 'chapter' && '。助手执行前会另行请求你的批准。'}</p>
+            {rewrite.scope === 'selection' && <>
+                <label className="ws-field">从章稿原文选取范围<textarea ref={original} className="ws-input ws-request-text" readOnly value={rewrite.chapter.content} /></label>
+                <button type="button" className="ws-button ws-outline" onClick={() => {
+                    if (original.current) setSelection(original.current.value.slice(original.current.selectionStart, original.current.selectionEnd))
+                }}>使用所选原文</button>
+                {selection && <p className="ws-note">已选原文：{selection}</p>}
+            </>}
+            <label className="ws-field">修改要求<textarea className="ws-input ws-request-text" aria-label="修改要求" value={instruction} onChange={event => setInstruction(event.target.value)} /></label>
+            {message && <p role="alert">{message}</p>}
+            <div className="ws-dialog-footer"><Button disabled={registering || !instruction.trim() || (rewrite.scope === 'selection' && !selection.trim())} onClick={() => void submitRewrite()}>登记改稿范围</Button></div>
+        </Dialog>}
+        {writable && <button type="button" className="ws-button ws-muted" onClick={() => { void rewriteCommand(sessionId).then(setMessage, error => setMessage(String(error))) }}>取消待执行改稿</button>}
         {request !== null && <Dialog title="交给助手的要求" close={() => setRequest(null)} wide><p className="ws-muted">追加到当前会话草稿，保留已有文字与引用，再由你发送。</p><label className="ws-field">可以补充要求<textarea className="ws-input ws-request-text" value={request} onChange={event => setRequest(event.target.value)} /></label><div className="ws-dialog-footer"><button type="button" className="ws-button ws-outline" onClick={() => { void navigator.clipboard?.writeText(request).then(() => setMessage('要求已复制。')).catch(() => setMessage('复制不可用，请手动选择上方文字复制。')) }}>复制要求</button><Button disabled={!request.trim()} onClick={() => { const result = appendRequest(sessionId, request, props); setMessage(result.message); if (result.status === 'applied') setRequest(null) }}>添加到对话草稿</Button></div>{message && <p role="status" className="ws-muted" style={{ marginTop: 12 }}>{message}</p>}</Dialog>}
     </div>
 }

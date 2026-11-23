@@ -39,7 +39,7 @@ test('rewrite system 提示词：声明补丁协议与全文两种输出形态',
   assert.ok(s.includes('整章正文全文'))
 })
 
-test('抽取用户提示词：既有记录防重段（轮次 31）——注入/缺席两分支', () => {
+test('抽取用户提示词要求仍成立的旧候选附新版原文重新输出', () => {
   const ch = entity('chapter', '003', { number: 3 }, '正文。')
   const refs = { characters: ['elin'], plots: ['green-flame'] }
   const withExisting = buildExtractionUserPrompt(ch, refs, undefined, undefined, {
@@ -49,7 +49,7 @@ test('抽取用户提示词：既有记录防重段（轮次 31）——注入/�
   assert.ok(withExisting.includes('既有抽取记录'), '防重段存在')
   assert.ok(withExisting.includes('- fact：绿焰只在雨夜显现'))
   assert.ok(withExisting.includes('- foreshadow：green-flame planted：雨夜初现'))
-  assert.ok(withExisting.includes('不要重复输出'))
+  assert.ok(withExisting.includes('仍成立的必须重新输出并给出本版逐字引文'))
   const without = buildExtractionUserPrompt(ch, refs, undefined, undefined, { facts: [], foreshadowEvents: [] })
   assert.ok(!without.includes('既有抽取记录'), '空记录不注入防重段')
   const legacy = buildExtractionUserPrompt(ch, refs)

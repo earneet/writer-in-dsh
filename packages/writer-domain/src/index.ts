@@ -393,14 +393,11 @@ export function extractChapterOutline(outlineContent: string, chapterNumber: num
 
 /**
  * 章节序号判定（组装器与 RAG 防剧透共用的单一实现）：
- * frontmatter number 优先；缺失/脏值回退纯数字文件名 id（"002"→2）；两者皆不可判定返回 undefined。
+ * 以章文件 id 为准，展示序号不能改变正文或伏笔的时间边界。
  * 调用方对 undefined 必须保守处理（防剧透语境按不可见/不注入处理）。
  */
 export function chapterNumberOf(entity: WriterEntity): number | undefined {
-  const n = entity.frontmatter['number']
-  if (typeof n === 'number') return n
-  if (/^\d+$/.test(entity.id)) return Number(entity.id)
-  return undefined
+    return /^\d{3}$/.test(entity.id) ? Number(entity.id) : undefined
 }
 
 function briefOf(entity: WriterEntity, maxChars: number): string {
@@ -414,9 +411,47 @@ function briefOf(entity: WriterEntity, maxChars: number): string {
  * （按缺失处理：伏笔红线不因脏数据静默误判，也不因脏数据误触发）。
  */
 function chapterAnchorOf(value: FrontmatterValue | undefined): number | undefined {
-  if (value === undefined) return undefined
-  const n = Number(value)
-  return Number.isFinite(n) ? n : undefined
+    if (typeof value !== 'number' && !(typeof value === 'string' && /^\d{1,3}$/.test(value.trim()))) return undefined
+    const n = Number(value)
+    return Number.isInteger(n) && n >= 0 && n <= 999 ? n : undefined
+}
+
+export function projectForeshadow(plot: WriterEntity, chapter: number, purpose: 'write' | 'review' | 'search') {
+    const fm = plot.frontmatter
+    const limit = purpose === 'review' ? chapter : chapter - 1
+    const planned = chapterAnchorOf(fm.planned_chapter)
+    const planted = chapterAnchorOf(fm.planted_chapter)
+    const resolved = chapterAnchorOf(fm.resolved_chapter)
+    const abandoned = chapterAnchorOf(fm.abandoned_chapter)
+    const plantedHere = (fm.status === 'planted' || fm.status === 'resolved' || fm.status === 'abandoned')
+        && planted !== undefined && planted <= limit
+    const endedAt = fm.status === 'resolved' ? resolved : fm.status === 'abandoned' ? abandoned : undefined
+    const ended = plantedHere && endedAt !== undefined && endedAt >= planted && endedAt <= limit
+    const canPlan = purpose === 'write' && (fm.status === undefined || fm.status === 'planned' || fm.status === 'planted')
+        && (planned !== undefined ? planned <= chapter : (fm.status === undefined || fm.status === 'planned') && planted === undefined)
+    if (!plantedHere && !canPlan) return undefined
+    if (!plantedHere) {
+        return { status: 'planned', planned, resolve: undefined, text: '仅有计划资料', withheld: plot.content.trim().length > 0 }
+    }
+    let milestones: ForeshadowMilestone[] = []
+    let malformed = false
+    try { milestones = parseMilestones(fm.milestones) } catch { malformed = true }
+    const milestonesInScope = milestones.filter(item => {
+        const anchor = chapterAnchorOf(item.chapter)
+        return anchor !== undefined && anchor >= planted && anchor <= limit && (!ended || anchor <= endedAt)
+    })
+    const anchored = visibleEvents(plot.content, limit, { from: planted, includeUnanchored: false })
+    const text = [
+        `第 ${planted} 章已埋设`,
+        ...milestonesInScope.map(item => `第 ${item.chapter} 章 ${item.type}${item.note ? `：${item.note}` : ''}`),
+        ...(ended ? [`第 ${endedAt} 章已${fm.status === 'resolved' ? '回收' : '放弃'}`] : []),
+        anchored,
+    ].filter(Boolean).join('\n')
+    return {
+        status: ended ? String(fm.status) : 'planted', planned,
+        resolve: purpose === 'write' && !ended ? chapterAnchorOf(fm.resolve_chapter) : undefined,
+        text, withheld: malformed || anchored.trim() !== plot.content.trim() || milestones.length !== milestonesInScope.length,
+    }
 }
 
 /**
@@ -459,15 +494,18 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
   // —— 伏笔指令 ——
   const foreshadowLines: string[] = []
   for (const plot of input.plots) {
-    const status = String(plot.frontmatter['status'] ?? 'planned')
-    if (status !== 'planned' && status !== 'planted') continue
-    const anchor = chapterAnchorOf(plot.frontmatter['planned_chapter'])
-    if (anchor !== undefined && anchor > input.chapterNumber) continue
+    const view = projectForeshadow(plot, input.chapterNumber, 'write')
+    if (!view) continue
+    const { status, planned: anchor } = view
+    if (status !== 'planned' && status !== 'planted') {
+        foreshadowLines.push(`- ${plot.id}：${view.text}${view.withheld ? '\n（部分档案因章锚未纳入）' : ''}`)
+        continue
+    }
     // planned 且 planned_chapter 已过 = 逾期未设置：本章必须设置（状态机 planned→planted；planned 不能直接 resolved）
     const overdue = status === 'planned' && anchor !== undefined && anchor < input.chapterNumber
-    const dueHere = anchor === input.chapterNumber
+    const dueHere = status === 'planned' && anchor === input.chapterNumber
     // 回收侧锚（轮次 31，吸收上游 S-1）：planted 伏笔的 resolve_chapter 到期/逾期 → 本章必须回收
-    const resolveAnchor = status === 'planted' ? chapterAnchorOf(plot.frontmatter['resolve_chapter']) : undefined
+    const resolveAnchor = view.resolve
     const resolveDue = resolveAnchor === input.chapterNumber
     const resolveOverdue = resolveAnchor !== undefined && resolveAnchor < input.chapterNumber
     const marker = dueHere || overdue || resolveDue || resolveOverdue ? '🔴' : '🟡'
@@ -482,7 +520,7 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
             : resolveAnchor !== undefined
               ? `活跃伏笔，注意一致性与可强化点（计划第 ${resolveAnchor} 章回收）`
               : '活跃伏笔，注意一致性与可强化点'
-    foreshadowLines.push(`${marker} ${plot.id}（${status}）：${directive}——${briefOf(plot, 120)}`)
+    foreshadowLines.push(`${marker} ${plot.id}（${status}）：${directive}——${truncateCodePoints(view.text, 120)}${view.withheld ? '（部分档案因章锚未纳入）' : ''}`)
   }
   if (foreshadowLines.length > 0) {
     // 伏笔指令是写作红线，优先级仅次于必注分节
@@ -532,7 +570,7 @@ export function assembleWritingContext(input: WritingContextInput): AssembledWri
   return { sections, usageChars }
 }
 
-export function visibleEvents(content: string, chapterNumber: number): string {
+export function visibleEvents(content: string, chapterNumber: number, scope?: { from: number; includeUnanchored: boolean }): string {
     let chapter: number | undefined
     let fence: string | undefined
     return content.split('\n').filter(line => {
@@ -544,7 +582,7 @@ export function visibleEvents(content: string, chapterNumber: number): string {
             const heading = /^ {0,3}##\s+第\s*(\d+)\s*章/.exec(line)
             if (heading) chapter = Number(heading[1])
         }
-        return chapter === undefined || chapter <= chapterNumber
+        return chapter === undefined ? scope?.includeUnanchored !== false : chapter <= chapterNumber && chapter >= (scope?.from ?? 0)
     }).join('\n')
 }
 
@@ -652,6 +690,8 @@ export interface ChapterWriteRequest {
   title?: string
   /** rewrite 模式可选的非空、逐字唯一正文选区；仅接受选区内的整组补丁。 */
   selection?: string
+  expectedChapterHash?: string
+  createOnly?: boolean
   signal?: AbortSignal
 }
 

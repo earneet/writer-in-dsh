@@ -5,7 +5,7 @@
  * 本仓降级为：CJK bigram TF-IDF 关键词先行 + 可选语义档后验，语义后端由 Provider 配置）。
  * 全部纯函数可独立单测。@module dsh-writer-domain/rag
  */
-import { chapterNumberOf, type EntityKind, type WriterEntity } from './index.ts'
+import { chapterNumberOf, projectForeshadow, type EntityKind, type WriterEntity } from './index.ts'
 
 /** 一条检索语料块：实体派生（章节切片/摘要/条目）。 */
 export interface RagChunk {
@@ -50,11 +50,6 @@ export function chunkChapterText(content: string, chunkChars: number, overlap: n
   return chunks
 }
 
-function chapterNumber(entity: WriterEntity): number | undefined {
-  // 单一共用实现见 index.ts chapterNumberOf（组装器与 RAG 防剧透同规则：frontmatter 优先、数字 id 兜底、undefined 保守）
-  return chapterNumberOf(entity)
-}
-
 /**
  * 构建检索语料块：章节原文切片 + 新鲜派生摘要 + 人物/伏笔/世界观条目（长条目切片）。
  * 摘要块排在章节原文块之前（id 序稳定），供关键词阶段统一打分。
@@ -67,7 +62,7 @@ export function buildRagCorpus(input: RagCorpusInput): RagChunk[] {
     if (chunk.text.trim().length > 0) chunks.push(chunk)
   }
   for (const chapter of input.chapters) {
-    const number = chapterNumber(chapter)
+    const number = chapterNumberOf(chapter)
     const title = typeof chapter.frontmatter['title'] === 'string' ? chapter.frontmatter['title'] : undefined
     const summary = input.summaries[chapter.id]
     if (summary !== undefined && summary.trim().length > 0) {
@@ -200,33 +195,26 @@ export function rrfFuse(rankings: readonly (readonly string[])[]): Map<string, n
 export interface SpoilerFilterInput {
   /** 当前写作章号：章节块只保留序号小于本章的。 */
   chapterNumber: number
-  /** 全部伏笔实体（判定未回收伏笔的 planned_chapter 泄漏）。 */
+  /** 原始档案用于构造仅含该章可见信息的检索块。 */
   plots: readonly WriterEntity[]
 }
 
 /**
- * 防剧透过滤（纯函数）：①章节/章节摘要块只保留序号小于当前章的，**章号不可判定（frontmatter 脏
- * 且文件名非数字）的章节块保守剔除**——检索命中早章原文不得以脏数据为通道突破剧透红线；
- * ②未回收伏笔（planned/planted）planned_chapter 晚于本章的 plot 块剔除
- * （与组装器「只注入未回收且 planned_chapter 不晚于本章」一致）。
+ * 防剧透过滤：章节按文件章号取前文，伏笔只将当前章之前已发生的内容交给排序。
  */
 export function filterChunksBySpoiler(chunks: readonly RagChunk[], filter: SpoilerFilterInput): RagChunk[] {
-  return chunks.filter((chunk) => {
+  const plots = new Map(filter.plots.map(item => [item.id, item]))
+  return chunks.flatMap((chunk) => {
     if (chunk.refKind === 'chapter') {
       // chapterNumber===undefined 的章节块（含摘要块）一律不可见（保守红线）
-      return chunk.chapterNumber !== undefined && chunk.chapterNumber < filter.chapterNumber
+      return chunk.chapterNumber !== undefined && chunk.chapterNumber < filter.chapterNumber ? [chunk] : []
     }
     if (chunk.refKind === 'plot') {
-      const plot = filter.plots.find((p) => p.id === chunk.refId)
-      if (plot === undefined) return true
-      const status = String(plot.frontmatter['status'] ?? 'planned')
-      if (status !== 'planned' && status !== 'planted') return true
-      const anchor = Number(plot.frontmatter['planned_chapter'])
-      // planned_chapter 缺失按「不晚于本章」处理（脏值按缺失，与组装器 chapterAnchorOf 同语义）
-      if (!Number.isFinite(anchor)) return true
-      return anchor <= filter.chapterNumber
+      const plot = plots.get(chunk.refId)
+      const visible = plot && projectForeshadow(plot, filter.chapterNumber, 'search')
+      return visible ? [{ ...chunk, text: visible.text }] : []
     }
-    return true
+    return [chunk]
   })
 }
 

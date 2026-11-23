@@ -12,11 +12,11 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 |---|---|---|
 | 写全新一章 | `write_chapter(mode="full")` | 引擎自动组装上下文（准则全量 + 本章大纲 + 前一章原文 + 人物摘要 + 伏笔指令）；可传 `title` 建新章 |
 | 从结尾继续写 | `write_chapter(mode="assist")` | 轻上下文续写，追加到现有正文尾部，不改已有句子 |
-| 改动选中的正文 | `write_chapter(mode="rewrite", instruction=..., selection=...)` | 整组补丁必须在原选区内逐字定位且互不重叠，任何一条失败都保留原稿 |
-| 整章改稿 | `write_chapter(mode="rewrite", instruction=...)` | 作者明确要求整章改稿时使用；补丁优先，全文路径附带丢句告警 |
+| 改动选中的正文 | `write_chapter(mode="rewrite", instruction=..., request_id=...)` | 整组补丁必须在原选区内逐字定位且互不重叠，任何一条失败都保留原稿 |
+| 整章改稿 | `write_chapter(mode="rewrite", instruction=..., request_id=...)` | 作者在工作台发起整章改稿并批准工具请求后执行；全文路径附带丢句告警 |
 
 - 章节 id 是三位序号（`"002"`）。assist/rewrite 要求章节已存在；新章只能用 full。
-- rewrite 必须给 `instruction`（改什么、往哪个方向改）。局部改稿时，从当前正文逐字复制非空、只出现一次的 `selection`。
+- rewrite 必须给 `instruction` 和作者登记的 `request_id`。局部改稿请让作者在工作台从当前正文选择唯一原文。
 
 ## 写作前准备
 
@@ -50,7 +50,7 @@ whenToUse: "调用 write_chapter / review_chapter 工具进行章节生成、续
 writer_read(entity="plot") 盘点伏笔
   → write_chapter(full)
   → review_chapter（3+1 维审稿：情节/人物/设定一致性 + 文学质量）
-  → 有 high 建议则 write_chapter(rewrite, instruction=按建议改)
+  → 有 high 建议则请作者确认修改范围并登记改稿请求，再按建议执行
   → foreshadow_update / timeline_update / writer_update 推进伏笔、人物状态时间线与事件（每条独立一轮，维护必须发生在审稿之后）
   → 章后维护清单（见下节）
 ```
@@ -69,7 +69,7 @@ write_chapter 保存后引擎会**异步**跑维护 pass（摘要 + 事实/伏�
 4. **收尾排空**：任务结束前 `maintenance_flush()` 等待本项目的完整维护任务和版本补跑收敛；停止等待不取消共享后台维护，headless 进程退出仍会截断未完成任务。
 5. **存档点**：重要节点（一卷写完、大改后）用 `archive_point(message)` 建 git 存档点。
 
-改稿后（write_chapter rewrite 大改或手工 writer_update 章节）：`recompute_derived(chapter_range)` 重算下游派生。跨章矛盾怀疑时用 `consistency_check(scope?)` 全书检查。查证设定细节用 `writer_search(query, chapter_limit=当前章号)`。
+改稿后（write_chapter rewrite 或作者手工编辑章节）：`recompute_derived(chapter_range)` 重算下游派生。跨章矛盾怀疑时用 `consistency_check(scope?)` 全书检查。查证设定细节用 `writer_search(query, chapter_limit=当前章号)`。
 
 ## 保存纪律
 

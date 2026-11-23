@@ -1,6 +1,6 @@
 import type { WriterService } from 'dsh-writer-core'
 import {
-    chapterNumberOf, extractChapterOutline, parseTimeline, REVIEW_DIMENSIONS, truncateCodePoints, validateTimeline, visibleEvents,
+    chapterNumberOf, extractChapterOutline, parseTimeline, projectForeshadow, REVIEW_DIMENSIONS, truncateCodePoints, validateTimeline, visibleEvents,
     type ReviewDimension, type ReviewReport, type WriterEntity,
 } from 'dsh-writer-domain'
 
@@ -63,13 +63,15 @@ export async function loadReviewContext(
             return []
         }
     })
+    const plotViews = plots.map(item => ({ item, view: projectForeshadow(item, chapterNumber, 'review') }))
     const groups: Material[] = ([
         { label: '创作准则', dimensions: ['设定一致性', '文学质量'], sources: principles ? entitySources([principles], chapterNumber) : [] },
         { label: '本章大纲', dimensions: plot, sources: chapterOutline ? [{ ref: 'outline/outline', text: chapterOutline }] : [] },
         { label: '前文', dimensions: history, sources: entitySources(earlier, chapterNumber) },
         { label: '关键事件', dimensions: plot, sources: events ? entitySources([events], chapterNumber) : [] },
-        { label: '伏笔档案', dimensions: plot, sources: entitySources(plots.filter(item =>
-            ['planned_chapter', 'planted_chapter', 'resolved_chapter'].every(key => !(Number(item.frontmatter[key]) > chapterNumber))), chapterNumber) },
+        { label: '伏笔档案', dimensions: plot,
+            sources: plotViews.flatMap(({ item, view }) => view ? [{ ref: `plot/${item.id}`, text: view.text }] : []),
+            incomplete: plotViews.some(({ view }) => !view || view.withheld) },
         { label: '人物设定', dimensions: people, sources: entitySources(characters, chapterNumber) },
         { label: '人物时间线', dimensions: people, sources: timelineSources, incomplete: timelineSources.length < characters.length },
         { label: '世界观', dimensions: setting, sources: entitySources(world, chapterNumber) },
@@ -100,7 +102,8 @@ export async function loadReviewContext(
         }
         remaining -= sources.length > 0 ? groupBudget - available : 0
         cropped ||= sources.length < entries.length
-        const limit = `${cropped ? '；材料已裁剪，未提供部分待核对' : ''}${group.incomplete ? '；部分人物缺少可用时间线，待核对' : ''}`
+        const incomplete = group.label === '伏笔档案' ? '；部分档案因章锚未纳入' : '；部分人物缺少可用时间线，待核对'
+        const limit = `${cropped ? '；材料已裁剪，未提供部分待核对' : ''}${group.incomplete ? incomplete : ''}`
         coverage.push(`${group.label}：已提供 ${sources.length}/${entries.length} 处${limit}`)
         materials.push({ ...group, sources })
     }

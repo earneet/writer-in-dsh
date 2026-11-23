@@ -9,6 +9,8 @@
 
 dsh-writer 插件组合的一员：Consumer：TXT / HTML / ePub 导出，发布 ctx.writerExport。
 
+导出文件写入作品内独立目录，默认 `exports/`。自定义输出路径以作品根为基准，须位于配置的导出目录内并匹配文件格式。已有同名产物时自动编号，回执返回实际文件路径。
+
 ## 安装
 
 本组包面向 DeepSeek Harness（dsh）宿主，推荐经组合包安装（其余包由其拉入）：

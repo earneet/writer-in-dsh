@@ -4,7 +4,7 @@
  * @module dsh-writer-engine/logic
  */
 import type { FinishReason } from '@deepseek-ai/dsh-llm'
-import { parseFrontmatter, serializeEntity } from 'dsh-writer-domain'
+import { EXTRACTION_SECTIONS, parseFrontmatter, serializeEntity } from 'dsh-writer-domain'
 import type {
   ChapterWriteRequest, Frontmatter, RewriteModelOutput, RewritePatch, RewritePatchResult, SectionValidation, WriterEntity,
 } from 'dsh-writer-domain'
@@ -22,6 +22,12 @@ export function validateWriteRequest(request: ChapterWriteRequest, existing: Wri
   }
   if (request.selection !== undefined && request.mode !== 'rewrite') {
     rejectSelectionRewrite('selection 参数仅适用于 rewrite 模式')
+  }
+  if (request.createOnly && existing !== undefined) {
+    throw new Error('full 只能新建章节。修改已有章稿请由作者发起整章改稿或选区改稿。')
+  }
+  if (request.expectedChapterHash !== undefined && request.expectedChapterHash !== existing?.hash) {
+    throw new Error('章稿版本已变化，本次未保存。请刷新稿件后重新发起改稿。')
   }
   if (request.mode !== 'full' && existing === undefined) {
     throw new Error(`章节不存在：chapter/${request.chapterId}（assist/rewrite 需已存在章节；新建请用 full 模式）`)
@@ -155,10 +161,10 @@ export function planSectionRetry(validations: {
   facts: Pick<SectionValidation<unknown>, 'errors'>
   foreshadowEvents: Pick<SectionValidation<unknown>, 'errors'>
   characterStates: Pick<SectionValidation<unknown>, 'errors'>
-}): { sections: ('facts' | 'foreshadowEvents' | 'characterStates')[]; feedback: string[] } {
+}, required: readonly (typeof EXTRACTION_SECTIONS)[number][] = EXTRACTION_SECTIONS): { sections: ('facts' | 'foreshadowEvents' | 'characterStates')[]; feedback: string[] } {
   const sections: ('facts' | 'foreshadowEvents' | 'characterStates')[] = []
   const feedback: string[] = []
-  for (const name of ['facts', 'foreshadowEvents', 'characterStates'] as const) {
+  for (const name of required) {
     const errors = validations[name].errors
     if (errors.length > 0) {
       sections.push(name)

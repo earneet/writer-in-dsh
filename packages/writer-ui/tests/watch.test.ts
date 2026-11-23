@@ -191,10 +191,10 @@ test('内容哈希一致的部分维护结果仍显示为待维护，完成后�
         const scan = () => scanNovel('s1', new AbortController().signal)
         fs.set(record, JSON.stringify({ sourceHash, partial: true }))
         assert.deepEqual((await scan()).staleChapters, ['001'])
-        fs.set(record, JSON.stringify({ sourceHash, partial: false }))
+        fs.set(record, JSON.stringify({ sourceHash, validationVersion: 1, partial: false }))
         assert.deepEqual((await scan()).staleChapters ?? [], [])
         fs.set(record, JSON.stringify({ sourceHash }))
-        assert.deepEqual((await scan()).staleChapters ?? [], [])
+        assert.deepEqual((await scan()).staleChapters, ['001'])
     } finally { setBrowserContext(null) }
 })
 

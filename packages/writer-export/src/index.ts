@@ -6,9 +6,9 @@
  */
 import { type Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { isAbsolute, join, parse, relative, sep, win32 } from 'node:path'
 import { ExportService, type ExportRequest, type ExportResult } from 'dsh-writer-core'
 import type { WriterEntity } from 'dsh-writer-domain'
 import {
@@ -19,13 +19,83 @@ import { buildZip } from './zip.ts'
 
 /** 插件配置。 */
 export interface Config {
-  /** 导出输出目录（相对项目根；outputPath 请求参数可覆盖）。 */
+  /** 导出输出目录（相对项目根）。 */
   defaultOutputDir: string
 }
 
 export const Config: Schema<Config> = Schema.object({
   defaultOutputDir: Schema.string().default('exports').description('导出输出目录（相对项目根）'),
 })
+
+const reservedPaths = new Set([
+    'project.md', 'principles.md', 'outline.md', 'events.md', 'ideas.md', 'pending.md', 'pending-archive.md',
+    'chapters', 'characters', 'plots', 'worldbuilding', 'style', '.writer', '.git', '.dsh', '.cordis', '.gitignore', '.initializing',
+])
+
+function exportPathParts(path: string): string[] {
+    const parts = path.split(/[/\\]/)
+    if (isAbsolute(path) || win32.isAbsolute(path) || parts.some(part =>
+        !part || /[. ]$/.test(part) || /[<>:"|?*\u0000-\u001f]/u.test(part)
+        || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part))) {
+        throw new Error(`导出路径非法：${JSON.stringify(path)}`)
+    }
+    return parts
+}
+
+function sameSegment(first: string, second: string): boolean {
+    return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second
+}
+
+async function inspectExportDirectory(root: string, parts: readonly string[], create: boolean): Promise<string> {
+    let dir = root
+    for (const part of parts) {
+        dir = join(dir, part)
+        let info = await lstat(dir).catch(error => {
+            if (error.code !== 'ENOENT') throw error
+        })
+        if (!info && !create) return join(root, ...parts)
+        if (!info) {
+            await mkdir(dir).catch(error => {
+                if (error.code !== 'EEXIST') throw error
+            })
+            info = await lstat(dir)
+        }
+        if (!info.isDirectory() || info.isSymbolicLink() || !sameSegment(dir, await realpath(dir))) {
+            throw new Error(`导出路径含链接、路径别名或非目录项：${relative(root, dir)}`)
+        }
+    }
+    return dir
+}
+
+async function publishExport(root: string, parts: string[], filename: string, data: Uint8Array | string): Promise<string> {
+    const dir = await inspectExportDirectory(root, parts, true)
+    const temporary = join(dir, `.export-${randomUUID()}.tmp`)
+    const file = await open(temporary, 'wx')
+    try {
+        try {
+            await file.writeFile(data)
+        } finally {
+            await file.close()
+        }
+        const { name, ext } = parse(filename)
+        for (let number = 1; ; number++) {
+            await inspectExportDirectory(root, parts, false)
+            const target = join(dir, number === 1 ? filename : `${name}-${number}${ext}`)
+            try {
+                await link(temporary, target)
+                return target
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                const existing = await lstat(target).catch(cause => {
+                    if (cause.code !== 'ENOENT') throw cause
+                })
+                if (existing && !existing.isFile()) throw new Error(`导出路径被非普通文件占用：${relative(root, target)}`)
+            }
+        }
+    } finally {
+        await unlink(temporary)
+    }
+}
 
 /** 章节排序键：frontmatter number 优先，退化为 id 数值。 */
 function numberOf(chapter: WriterEntity): number {
@@ -48,17 +118,31 @@ export default class WriterExportServiceImpl extends ExportService {
   static inject = ['writer']
   static Config = Config
 
-  private readonly defaultOutputDir: string
+  private readonly defaultOutputDir: string[]
 
   constructor(ctx: Context, config: Config) {
+    const directory = exportPathParts(config.defaultOutputDir)
+    if (reservedPaths.has(directory[0].toLowerCase())) {
+        throw new Error('导出路径必须使用独立目录，不能配置到权威资料或项目工作目录')
+    }
     super(ctx)
-    this.defaultOutputDir = config.defaultOutputDir
+    this.defaultOutputDir = directory
   }
 
   async exportBook(request: ExportRequest): Promise<ExportResult> {
     if (request.format !== 'txt' && request.format !== 'html' && request.format !== 'epub') {
       throw new Error(`未知导出格式：${String(request.format)}（可选 txt / html / epub）`)
     }
+    const parts = request.outputPath === undefined
+        ? [...this.defaultOutputDir, `book.${request.format}`]
+        : exportPathParts(request.outputPath)
+    const filename = parts.pop()!
+    if (!this.defaultOutputDir.every((part, index) => parts[index] !== undefined && sameSegment(part, parts[index]))
+        || parse(filename).ext.toLowerCase() !== `.${request.format}`) {
+        throw new Error(`导出路径必须位于 ${this.defaultOutputDir.join('/')} 内，文件扩展名须为 .${request.format}`)
+    }
+    const root = await realpath(this.ctx.writer.root)
+    await inspectExportDirectory(root, parts, false)
     const [project, outline, characters, chapters] = await Promise.all([
         this.ctx.writer.get('project', 'project'),
       this.ctx.writer.get('outline', 'outline'),
@@ -97,29 +181,14 @@ export default class WriterExportServiceImpl extends ExportService {
         : {}),
     }
 
-    const relPath = request.outputPath ?? join(this.defaultOutputDir, `book.${request.format}`)
-    // 输出路径限制在项目根内：绝对路径或 ../ 逃逸拒绝（虽有 ask 门禁，纵深防御）
-    const absPath = join(this.ctx.writer.root, relPath)
-    const relCheck = relative(this.ctx.writer.root, absPath)
-    if (isAbsolute(relPath) || relCheck.startsWith('..') || isAbsolute(relCheck)) {
-      throw new Error(`输出路径必须在项目根内（相对路径，不得含 ../ 或为绝对路径）：${JSON.stringify(relPath)}`)
-    }
-    await mkdir(dirname(absPath), { recursive: true })
-    let bytes: number
-    if (request.format === 'epub') {
-      const zip = buildEpub(book)
-      await writeFile(absPath, zip)
-      bytes = zip.byteLength
-    } else {
-      const text = request.format === 'txt' ? renderTxt(book) : renderHtml(book)
-      await writeFile(absPath, text, 'utf8')
-      bytes = Buffer.byteLength(text, 'utf8')
-    }
+    const data = request.format === 'epub' ? buildEpub(book) : request.format === 'txt' ? renderTxt(book) : renderHtml(book)
+    const absPath = await publishExport(root, parts, filename, data)
+    const bytes = typeof data === 'string' ? Buffer.byteLength(data, 'utf8') : data.byteLength
     const chapterCount = volumes.reduce((sum, v) => sum + v.chapters.length, 0)
     // 卷在章序上交错/重复章号告警（轮次 33 引入、轮次 34 补全）：不拒绝导出，但如实披露
     const warnings = computeSpineWarnings(volumes)
     return {
-      path: relative(this.ctx.writer.root, absPath).split(sep).join('/'),
+      path: relative(root, absPath).split(sep).join('/'),
       chapters: chapterCount,
       bytes,
       ...(warnings.length > 0 ? { warnings } : {}),

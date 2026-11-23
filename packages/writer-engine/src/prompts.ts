@@ -128,6 +128,7 @@ export function buildExtractionSystemPrompt(): string {
     '硬性约束：',
     '- characters / plots / plot / character 字段只能使用「可用实体清单」中给出的 id，禁止编造。',
     '- 伏笔动作词汇只能用列出的六个（与伏笔状态机/里程碑类型对齐）。',
+    '- 每条建议的 quote 字段须逐字摘录本次正文中的依据。若无依据则不要输出建议。',
     '- 本章没有某类信息时该节数组留空；不要编造。',
   ].join('\n')
 }
@@ -138,21 +139,20 @@ export function buildExtractionUserPrompt(
   refs: { characters: readonly string[]; plots: readonly string[] },
   retryFeedback?: readonly string[],
   retrySections?: readonly ('facts' | 'foreshadowEvents' | 'characterStates')[],
-  existing?: { facts: readonly string[]; foreshadowEvents: readonly string[] },
+  existing?: { facts: readonly string[]; foreshadowEvents: readonly string[]; characterStates?: readonly string[] },
 ): string {
   const parts = [
     '## 可用实体清单',
     `人物 id：${refs.characters.length > 0 ? refs.characters.join('、') : '（无）'}`,
     `伏笔 id：${refs.plots.length > 0 ? refs.plots.join('、') : '（无）'}`,
   ]
-  // 轮次 31（吸收上游 T2）：改稿链（full→rewrite 内容已变）重抽时注入改稿前的既有记录，
-  // 防同内容建议重复产出（此前仅靠 UI 端跨 pass 去重兜底）
-  if (existing !== undefined && (existing.facts.length > 0 || existing.foreshadowEvents.length > 0)) {
+  if (existing !== undefined && (existing.facts.length || existing.foreshadowEvents.length || existing.characterStates?.length)) {
     const lines = [
       ...existing.facts.map((f) => `- fact：${f}`),
       ...existing.foreshadowEvents.map((e) => `- foreshadow：${e}`),
+      ...(existing.characterStates ?? []).map(e => `- characterState：${e}`),
     ]
-    parts.push(`## 该章改稿前的既有抽取记录（防重参考：仍成立的不要重复输出；已不成立的可直接忽略，不要输出「已失效」条目）\n${lines.join('\n')}`)
+    parts.push(`## 该章改稿前的既有抽取记录\n逐条按新版正文复核。仍成立的必须重新输出并给出本版逐字引文；已经不成立的省略。旧记录不表示作者已确认。\n${lines.join('\n')}`)
   }
   parts.push(
     `## 章节正文（第 ${String(chapter.frontmatter['number'] ?? chapter.id)} 章 ${chapter.id}）`,

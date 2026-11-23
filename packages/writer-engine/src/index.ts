@@ -16,8 +16,10 @@ import { BlockAssembler, createUserMessage, type GenerateOptions } from '@deepse
 import {
   applyRewritePatches, assembleWritingContext, contentHash, detectDroppedSentences, detectTimeAnchorInversions, inspectTimelines,
   extractChapterOutline, filterSuggestionsByFocus, filterSuggestionsByQuotes, guardContinuation, parseConsistencyBatchOutput,
+  parseMilestones, parseTimeline,
   parseMaintenanceExtraction, parseRewriteModelOutput, parseReviewReport, planConsistencyBatches,
   renderRagSection, renderRecoverySnapshot, truncateBatchBodies, truncateCodePoints, validateExtractionSections,
+  EXTRACTION_SECTIONS, MAINTENANCE_VALIDATION_VERSION,
   type ChapterWriteRequest, type ChapterWriteResult, type ConsistencyReport, type ExtractionSectionName,
   REVIEW_DIMENSIONS, type MaintenanceDerived, type MaintenanceExtraction, type ReviewReport, type TruncatedBody, type WriterEntity,
 } from 'dsh-writer-domain'
@@ -37,6 +39,43 @@ import {
   buildWriteUserPrompt,
 } from './prompts.ts'
 import { loadReviewContext, reviewWithEvidence } from './review.ts'
+
+function mergeAccepted<T>(existing: T[], entries: readonly T[]): T[] {
+    const unique = new Map(existing.map(item => [JSON.stringify(item), item]))
+    for (const entry of entries) unique.set(JSON.stringify(entry), entry)
+    return [...unique.values()]
+}
+
+function unconfirmedExtraction(extraction: MaintenanceExtraction, chapter: WriterEntity, events: WriterEntity | undefined,
+    characters: readonly WriterEntity[], plots: readonly WriterEntity[]): MaintenanceExtraction {
+    const description = extractChapterOutline(events?.content ?? '', Number(chapter.id)) ?? ''
+    const facts = new Set(description.split('\n').flatMap(line => {
+        const match = /^\s*[-*+]\s+(.+)$/.exec(line)
+        return match ? [match[1].trim()] : []
+    }))
+    return {
+        facts: extraction.facts.filter(item => !facts.has(item.description.trim())),
+        foreshadowEvents: extraction.foreshadowEvents.filter(item => {
+            const plot = plots.find(plot => plot.id === item.plot)
+            if (!plot) return true
+            if (item.action === 'planted' || item.action === 'resolved') {
+                const anchor = plot.frontmatter[item.action === 'planted' ? 'planted_chapter' : 'resolved_chapter']
+                return Number(anchor) !== Number(chapter.id)
+            }
+            try {
+                return !parseMilestones(plot.frontmatter.milestones).some(entry =>
+                    entry.type === item.action && entry.chapter === chapter.id && (entry.note ?? '').trim() === (item.note ?? '').trim())
+            } catch { return true }
+        }),
+        characterStates: extraction.characterStates.filter(item => {
+            const character = characters.find(character => character.id === item.character)
+            try {
+                return !parseTimeline(character?.frontmatter.timeline).some(entry =>
+                    entry.chapter === chapter.id && entry.state.trim() === item.state.trim())
+            } catch { return true }
+        }),
+    }
+}
 
 /** 插件配置：LLM 路由与生成参数（可调参数不硬编码，配置错误响亮失败）。 */
 export interface Config {
@@ -179,20 +218,24 @@ export default class WriterEngineServiceImpl extends EngineService {
     if (chapter === undefined) throw new Error(`章节不存在：chapter/${chapterId}`)
     const derived = await this.ctx.writer.readMaintenance(chapterId)
     // 完成 hash 锚定：派生与当前章节内容一致即跳过（防重复触发读己之写）
-    if (derived !== undefined && derived.sourceHash === chapter.hash && !derived.partial && opts?.force !== true) {
+    if (derived !== undefined && derived.sourceHash === chapter.hash && derived.validationVersion === MAINTENANCE_VALIDATION_VERSION && !derived.partial && opts?.force !== true) {
         await this.deliverMaintenance(chapterId, derived)
       return { chapterId, status: 'up-to-date', sourceHash: derived.sourceHash }
     }
-    const [characters, plots] = await Promise.all([
+    const [characters, plots, events] = await Promise.all([
       this.ctx.writer.list('character'),
       this.ctx.writer.list('plot'),
+      this.ctx.writer.get('event', 'event'),
     ])
     const refs = { chapters: [chapterId], characters: characters.map((c) => c.id), plots: plots.map((p) => p.id) }
-    // 既有抽取记录（防重参考）：derived 即使 sourceHash 过期（改稿链）仍是改稿前的有效基线
-    const existingForDedup = derived === undefined || derived.sourceHash === chapter.hash ? undefined : {
-      facts: derived.extraction.facts.slice(0, 12).map((f) => truncateCodePoints(f.description.replace(/\s+/g, ' ').trim(), 80)),
-      foreshadowEvents: derived.extraction.foreshadowEvents.slice(0, 12)
+    const revised = derived !== undefined && derived.sourceHash !== chapter.hash
+    const evidenceRequired = revised || derived?.evidenceRequired === true
+    const previous = revised ? unconfirmedExtraction(derived.extraction, chapter, events, characters, plots) : undefined
+    const previousCandidates = previous === undefined ? undefined : {
+      facts: previous.facts.slice(0, 12).map((f) => truncateCodePoints(f.description.replace(/\s+/g, ' ').trim(), 80)),
+      foreshadowEvents: previous.foreshadowEvents.slice(0, 12)
         .map((e) => truncateCodePoints(`${e.plot} ${e.action}${e.note !== undefined ? `：${e.note}` : ''}`.replace(/\s+/g, ' ').trim(), 80)),
+      characterStates: previous.characterStates.slice(0, 12).map(item => truncateCodePoints(`${item.character}：${item.state}`, 80)),
     }
 
     // 调用①：章节摘要（流畅文本）
@@ -206,26 +249,20 @@ export default class WriterEngineServiceImpl extends EngineService {
     const retriedSections: string[] = []
     let rejected: string[] | undefined
     let feedback: string[] | undefined
-    let retrySections: readonly ExtractionSectionName[] = ['facts', 'foreshadowEvents', 'characterStates']
+    let retrySections: readonly ExtractionSectionName[] = EXTRACTION_SECTIONS
     for (let attempt = 0; attempt <= this.extractionRetries; attempt++) {
       const raw = await this.generate(
-        buildExtractionSystemPrompt(), buildExtractionUserPrompt(chapter, refs, feedback, retrySections, existingForDedup), opts?.signal,
+        buildExtractionSystemPrompt(), buildExtractionUserPrompt(chapter, refs, feedback, retrySections, previousCandidates), opts?.signal,
       )
       const parsed = parseMaintenanceExtraction(raw)
-      if (parsed === undefined) {
-        if (attempt === this.extractionRetries) {
-          throw new Error(`维护 pass 抽取输出无法解析（已重试 ${this.extractionRetries} 次；输出前 200 字：${raw.slice(0, 200)}）`)
-        }
-        feedback = ['上次输出不是合法的 JSON 对象，请只输出规定 schema 的 JSON（可只含需修正的节）']
-        continue
-      }
-      const validations = validateExtractionSections(parsed, refs)
+      const validations = validateExtractionSections(parsed ?? {}, refs, retrySections, { text: chapter.content, required: evidenceRequired })
       for (const section of retrySections) {
-        if (section === 'facts') extraction.facts = validations.facts.entries
-        else if (section === 'foreshadowEvents') extraction.foreshadowEvents = validations.foreshadowEvents.entries
-        else extraction.characterStates = validations.characterStates.entries
+        if (parsed === undefined) validations[section].errors.push('输出不是有效的 JSON 对象')
+        if (section === 'facts') extraction.facts = mergeAccepted(extraction.facts, validations.facts.entries)
+        else if (section === 'foreshadowEvents') extraction.foreshadowEvents = mergeAccepted(extraction.foreshadowEvents, validations.foreshadowEvents.entries)
+        else extraction.characterStates = mergeAccepted(extraction.characterStates, validations.characterStates.entries)
       }
-      const retry = planSectionRetry(validations)
+      const retry = planSectionRetry(validations, retrySections)
       if (retry.sections.length === 0) {
         rejected = undefined
         break
@@ -247,8 +284,10 @@ export default class WriterEngineServiceImpl extends EngineService {
     const record: MaintenanceDerived = {
       sourceHash: chapter.hash,
       summary,
-      extraction,
+      extraction: unconfirmedExtraction(extraction, chapter, events, characters, plots),
       updatedAt: new Date().toISOString(),
+      validationVersion: MAINTENANCE_VALIDATION_VERSION,
+      ...(evidenceRequired ? { evidenceRequired } : {}),
       ...(rejected !== undefined ? { partial: true, rejected } : {}),
     }
     await this.ctx.writer.writeMaintenance(chapterId, record, chapter.hash)
@@ -267,7 +306,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       status: 'done',
       sourceHash: chapter.hash,
       summary,
-      extraction,
+      extraction: record.extraction,
       ...(retriedSections.length > 0 ? { retriedSections } : {}),
       ...(rejected !== undefined ? { partial: true, rejected } : {}),
       ...(changedDuringRun ? { superseded: true } : {}),
@@ -459,7 +498,7 @@ export default class WriterEngineServiceImpl extends EngineService {
       }
       const derived = await this.ctx.writer.readMaintenance(id)
       const fresh = derived !== undefined && derived.sourceHash === chapter.hash
-      if (fresh && !derived.partial && mode === 'recompute') {
+      if (fresh && derived.validationVersion === MAINTENANCE_VALIDATION_VERSION && !derived.partial && mode === 'recompute') {
         await this.maintenancePass(id, { signal: opts?.signal })
         results.push({ chapterId: id, status: 'up-to-date' })
         continue
@@ -626,6 +665,7 @@ export default class WriterEngineServiceImpl extends EngineService {
             return { chapter, mode: 'rewrite-patch', patchStats: { applied: 0, skipped: 0, skippedReasons: ['模型返回空补丁'] } }
         }
         if (decision.action === 'fulltext') return this.rewriteFullText(request, chapter, user)
+        request.signal?.throwIfAborted()
         const saved = await this.ctx.writer.save('chapter', request.chapterId, { content: decision.patch.content }, chapter.hash)
         const result: ChapterWriteResult = {
             chapter: saved,
@@ -648,6 +688,7 @@ export default class WriterEngineServiceImpl extends EngineService {
     ].join('\n')
     const rewritten = await this.generate(system, user, request.signal)
     assertRewriteFullTextPlausible(rewritten)
+    request.signal?.throwIfAborted()
     const guard = detectDroppedSentences(chapter.content, rewritten)
     const saved = await this.ctx.writer.save(
       'chapter', request.chapterId, { content: rewritten }, chapter.hash,
@@ -812,17 +853,21 @@ export function renderPendingSection(chapterId: string, record: MaintenanceDeriv
   const lines = [`## [维护 pass] chapter/${chapterId}（${record.updatedAt}）待人工确认`]
   lines.push(`- 摘要：${record.summary}`)
   for (const fact of record.extraction.facts) {
-    lines.push(`- 事实：${fact.description}${fact.characters !== undefined ? `（人物：${fact.characters.join('、')}）` : ''}${fact.plots !== undefined ? `（伏笔：${fact.plots.join('、')}）` : ''}`)
+    lines.push(`- 事实：${fact.description}${fact.characters !== undefined ? `（人物：${fact.characters.join('、')}）` : ''}${fact.plots !== undefined ? `（伏笔：${fact.plots.join('、')}）` : ''}${evidenceLabel(fact.quote)}`)
   }
   for (const event of record.extraction.foreshadowEvents) {
-    lines.push(`- 伏笔事件建议：plot/${event.plot} ${event.action}${event.note !== undefined ? `——${event.note}` : ''}（如属实请用 foreshadow_update 确认）`)
+    lines.push(`- 伏笔事件建议：plot/${event.plot} ${event.action}${event.note !== undefined ? `——${event.note}` : ''}（如属实请用 foreshadow_update 确认）${evidenceLabel(event.quote)}`)
   }
   for (const state of record.extraction.characterStates) {
-    lines.push(`- 人物状态建议：character/${state.character} 第 ${chapterId} 章末 → ${state.state}（如属实请用 timeline_update 确认写入人物时间线：id=${state.character} chapter=${chapterId} state=..., expectHash 取最新 writer_read）`)
+    lines.push(`- 人物状态建议：character/${state.character} 第 ${chapterId} 章末 → ${state.state}（如属实请用 timeline_update 确认写入人物时间线：id=${state.character} chapter=${chapterId} state=..., expectHash 取最新 writer_read）${evidenceLabel(state.quote)}`)
   }
   if (record.partial === true) {
-    lines.push('- ⚠ 部分抽取条目因引用校验未通过被拒收（重试预算耗尽）：')
+    lines.push('- ⚠ 部分抽取未通过校验（重试预算耗尽）：')
     for (const reason of record.rejected ?? []) lines.push(`  - ${reason}`)
   }
   return lines.map(line => line.replace(/\s*[\r\n]+\s*/g, ' ')).join('\n')
+}
+
+function evidenceLabel(quote: string | undefined): string {
+    return quote === undefined ? '' : `（本版原文：「${quote}」）`
 }

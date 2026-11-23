@@ -8,6 +8,7 @@
 /** 一条事实抽取：描述 + 可选的人物/伏笔引用（id 必须存在于实体集）。 */
 export interface ExtractedFact {
   description: string
+  quote?: string
   characters?: string[]
   plots?: string[]
 }
@@ -20,12 +21,14 @@ export interface ExtractedForeshadowEvent {
   plot: string
   action: 'planted' | 'reinforcement' | 'partial_reveal' | 'callback' | 'red_herring' | 'resolved'
   note?: string
+  quote?: string
 }
 
 /** 一条人物状态抽取：章末该人物的状态快照（人物状态时间线的增量条目）。 */
 export interface ExtractedCharacterState {
   character: string
   state: string
+  quote?: string
 }
 
 /** 维护 pass 第二次调用的分节 schema：三个互不依赖的节，坏一节不拖累其余两节。 */
@@ -45,14 +48,17 @@ export interface ExtractionReferenceIndex {
 /** 分节名（重试与合并以节为单位）。 */
 export type ExtractionSectionName = 'facts' | 'foreshadowEvents' | 'characterStates'
 
+export const EXTRACTION_SECTIONS = ['facts', 'foreshadowEvents', 'characterStates'] as const
+export const MAINTENANCE_VALIDATION_VERSION = 1
 const FORESHADOW_ACTIONS: readonly string[] = ['planted', 'reinforcement', 'partial_reveal', 'callback', 'red_herring', 'resolved']
+
+type ParsedExtraction = Partial<MaintenanceExtraction> & { shapeErrors?: Partial<Record<ExtractionSectionName, string[]>> }
 
 /**
  * 解析维护 pass 抽取输出：宽容提取首个 JSON 对象（允许栅栏与前后缀寒暄），
- * 仅收敛三个已知节的合法条目；无任何合法节返回 undefined（调用方按解析失败处理）。
- * 缺失的节收敛为空数组（模型可判定本章无该类信息）。
+ * 保留可识别的有效条目，并记录无效条目的位置供维护重试。
  */
-export function parseMaintenanceExtraction(raw: string): Partial<MaintenanceExtraction> | undefined {
+export function parseMaintenanceExtraction(raw: string): ParsedExtraction | undefined {
   let text = raw.trim()
   const fenced = text.match(/```[a-zA-Z]*\s*\n([\s\S]*?)\n?```/)
   if (fenced !== null) text = fenced[1].trim()
@@ -65,52 +71,71 @@ export function parseMaintenanceExtraction(raw: string): Partial<MaintenanceExtr
   } catch {
     return undefined
   }
-  if (typeof parsed !== 'object' || parsed === null) return undefined
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
   const source = parsed as Record<string, unknown>
-  const out: Partial<MaintenanceExtraction> = {}
+  const out: ParsedExtraction = {}
+  for (const section of EXTRACTION_SECTIONS) {
+      const value = source[section]
+      if (value !== undefined && !Array.isArray(value)) (out.shapeErrors ??= {})[section] = [`${section} 必须是数组`]
+  }
   if (Array.isArray(source['facts'])) {
     const facts: ExtractedFact[] = []
     for (const entry of source['facts']) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { description, characters, plots } = entry as Record<string, unknown>
-      if (typeof description !== 'string' || description.trim().length === 0) continue
+      const { description, characters, plots, quote } = entry as Record<string, unknown>
+      if (typeof description !== 'string' || !description.trim()
+          || !validQuote(quote) || (characters !== undefined && !isStringArray(characters)) || (plots !== undefined && !isStringArray(plots))) continue
       facts.push({
         description,
+        ...(quote === undefined ? {} : { quote }),
         ...(isStringArray(characters) ? { characters } : {}),
         ...(isStringArray(plots) ? { plots } : {}),
       })
     }
     out.facts = facts
+    recordInvalidEntries('facts', source.facts.length - facts.length, out)
   }
   if (Array.isArray(source['foreshadowEvents'])) {
     const events: ExtractedForeshadowEvent[] = []
     for (const entry of source['foreshadowEvents']) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { plot, action, note } = entry as Record<string, unknown>
-      if (typeof plot !== 'string' || typeof action !== 'string' || !FORESHADOW_ACTIONS.includes(action)) continue
+      const { plot, action, note, quote } = entry as Record<string, unknown>
+      if (typeof plot !== 'string' || !plot.trim() || typeof action !== 'string' || !FORESHADOW_ACTIONS.includes(action)
+          || !validQuote(quote) || (note !== undefined && typeof note !== 'string')) continue
       events.push({
         plot,
         action: action as ExtractedForeshadowEvent['action'],
+        ...(quote === undefined ? {} : { quote }),
         ...(typeof note === 'string' && note.length > 0 ? { note } : {}),
       })
     }
     out.foreshadowEvents = events
+    recordInvalidEntries('foreshadowEvents', source.foreshadowEvents.length - events.length, out)
   }
   if (Array.isArray(source['characterStates'])) {
     const states: ExtractedCharacterState[] = []
     for (const entry of source['characterStates']) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { character, state } = entry as Record<string, unknown>
-      if (typeof character !== 'string' || typeof state !== 'string' || state.trim().length === 0) continue
-      states.push({ character, state })
+      const { character, state, quote } = entry as Record<string, unknown>
+      if (typeof character !== 'string' || !character.trim() || typeof state !== 'string' || !state.trim() || !validQuote(quote)) continue
+      states.push({ character, state, ...(quote === undefined ? {} : { quote }) })
     }
     out.characterStates = states
+    recordInvalidEntries('characterStates', source.characterStates.length - states.length, out)
   }
-  return Object.keys(out).length > 0 ? out : undefined
+  return out
+}
+
+function recordInvalidEntries(section: ExtractionSectionName, count: number, out: ParsedExtraction): void {
+    if (count > 0) (out.shapeErrors ??= {})[section] = [`${section} 有 ${count} 条形状非法`]
 }
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === 'string')
+}
+
+function validQuote(value: unknown): value is string | undefined {
+    return value === undefined || (typeof value === 'string' && value.trim().length > 0)
 }
 
 /** 单节校验结果：合法条目 + 拒收原因（供按节重试的反馈提示词）。 */
@@ -126,8 +151,10 @@ export interface SectionValidation<T> {
  * characterStates 校验 character 引用。引用不存在的条目拒收并给出可读原因（该节整体重试）。
  */
 export function validateExtractionSections(
-  extraction: Partial<MaintenanceExtraction>,
+  extraction: ParsedExtraction,
   refs: ExtractionReferenceIndex,
+  required: readonly ExtractionSectionName[] = EXTRACTION_SECTIONS,
+  evidence?: { text: string; required: boolean },
 ): {
   facts: SectionValidation<ExtractedFact>
   foreshadowEvents: SectionValidation<ExtractedForeshadowEvent>
@@ -165,7 +192,20 @@ export function validateExtractionSections(
     characterStates.entries.push(state)
   }
 
-  return { facts, foreshadowEvents, characterStates }
+  const result = { facts, foreshadowEvents, characterStates }
+  for (const section of required) {
+      result[section].errors.push(...(extraction.shapeErrors?.[section] ?? (extraction[section] === undefined ? [`缺少 ${section} 节`] : [])))
+      if (evidence) {
+          const { entries, errors } = result[section]
+          for (let index = entries.length - 1; index >= 0; index--) {
+              const quote = entries[index].quote
+              if (quote === undefined ? !evidence.required : evidence.text.includes(quote)) continue
+              entries.splice(index, 1)
+              errors.push(`${section} 有条目缺少可在当前章稿逐字核验的引文`)
+          }
+      }
+  }
+  return result
 }
 
 /** 维护 pass 派生记录（store 以 .writer/derived/ JSON 缓存落盘；sourceHash 锚定章节版本）。 */
@@ -175,6 +215,8 @@ export interface MaintenanceDerived {
   summary: string
   extraction: MaintenanceExtraction
   updatedAt: string
+  validationVersion?: number
+  evidenceRequired?: boolean
   /** 重试预算耗尽仍有条目被拒收时为 true（rejected 记录拒收原因；pending.md 同步提示）。 */
   partial?: boolean
   rejected?: string[]

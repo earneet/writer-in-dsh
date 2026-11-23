@@ -35,6 +35,8 @@ function isMaintenanceDerived(value: unknown): value is MaintenanceDerived {
     const record = value as Record<string, unknown>
     if (typeof record.sourceHash !== 'string' || typeof record.summary !== 'string' || typeof record.updatedAt !== 'string') return false
     if (record.partial !== undefined && typeof record.partial !== 'boolean') return false
+    if (record.validationVersion !== undefined && typeof record.validationVersion !== 'number') return false
+    if (record.evidenceRequired !== undefined && typeof record.evidenceRequired !== 'boolean') return false
     const strings = (items: unknown) => Array.isArray(items) && items.every(item => typeof item === 'string')
     if (record.rejected !== undefined && !strings(record.rejected)) return false
     if (typeof record.extraction !== 'object' || record.extraction === null || Array.isArray(record.extraction)) return false
@@ -369,7 +371,8 @@ export default class WriterStoreService extends WriterService {
         await withWriteChain(this.projectRoot, `entity:chapter/${chapterId}`, async () => {
             if (expectedChapterHash !== undefined && (await this.readFromDisk('chapter', chapterId))?.hash !== expectedChapterHash) return
             const current = await this.readMaintenance(chapterId)
-            if (record.partial && current?.sourceHash === record.sourceHash && !current.partial) return
+            if (record.partial && current?.sourceHash === record.sourceHash
+                && current.validationVersion === record.validationVersion && !current.partial) return
             await this.writeDerived(MAINTENANCE_KIND, chapterId, record)
         })
   }

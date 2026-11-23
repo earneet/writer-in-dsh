@@ -131,25 +131,25 @@ test('maintenancePass 按节重试：重试只回修正节，已通过节不被�
   }
 })
 
-test('maintenancePass 重试耗尽：partial 标记 + 拒收原因入派生与 pending', async () => {
+test('maintenancePass 定向重试遗漏目标节：partial 标记 + 拒收原因入派生与 pending', async () => {
   const setup = await makeSetup()
   try {
     await seedChapter(setup, '001', '正文。')
     await seedRefs(setup)
     setup.llm.reply(
       '摘要。',
-      JSON.stringify({ facts: [{ description: '好事实' }], foreshadowEvents: [{ plot: 'ghost', action: 'planted' }] }),
-      JSON.stringify({ foreshadowEvents: [{ plot: 'ghost', action: 'planted' }] }), // 重试仍坏
+      JSON.stringify({ facts: [{ description: '好事实' }], foreshadowEvents: [{ plot: 'ghost', action: 'planted' }], characterStates: [] }),
+      JSON.stringify({ facts: [] }),
     )
     const done = await setup.engine.maintenancePass('001')
     assert.equal(done.partial, true)
-    assert.ok((done.rejected ?? []).some((r) => r.includes('plot/ghost')))
+    assert.ok((done.rejected ?? []).some((r) => r.includes('缺少 foreshadowEvents')))
     assert.deepEqual(done.extraction!.facts, [{ description: '好事实' }], '通过节保留')
     assert.deepEqual(done.extraction!.foreshadowEvents, [], '拒收节为空')
     const derived = await setup.store.readDerived('maintenance', '001') as { partial?: boolean }
     assert.equal(derived.partial, true)
     const pending = await readFile(join(setup.root, 'pending.md'), 'utf8')
-    assert.match(pending, /部分抽取条目因引用校验未通过被拒收/)
+    assert.match(pending, /部分抽取未通过校验/)
   } finally {
     await rm(setup.root, { recursive: true, force: true })
   }

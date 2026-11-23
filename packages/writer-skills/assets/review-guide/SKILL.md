@@ -23,7 +23,7 @@ whenToUse: "调用 review_chapter 工具、解读审稿建议报告、按建议�
 
 ## severity 分级与处理
 
-- **high**：一致性硬伤（矛盾、ooc、设定冲突）——必须处理：`write_chapter(mode="rewrite", instruction=按建议改)` 后复审。
+- **high**：一致性硬伤（矛盾、ooc、设定冲突）——请作者确认范围并登记改稿请求，执行 `write_chapter(mode="rewrite", request_id=..., instruction=按建议改)` 后复审。
 - **medium**：可疑但不确定——向用户报告并给判断。标为「待核对」时先定位缺少的原文或依据，核实之后再考虑改稿。
 - **low / 文学质量类**：润色建议——批量汇总给用户，不建议逐条自动改稿（避免风格漂移）。
 
@@ -31,7 +31,7 @@ whenToUse: "调用 review_chapter 工具、解读审稿建议报告、按建议�
 
 ```
 review_chapter(chapter, focus?)
-  → 有 high：write_chapter(rewrite, instruction 逐条引用建议)
+  → 有 high：请作者登记改稿请求，执行时逐条引用确认的建议
   → rewrite 后对改过的维度复审一次（focus 收窄）
   → 维护类更新（伏笔/时间线/事件）在审稿收敛后进行（见 chapter-writing「审稿先行」）
 ```
