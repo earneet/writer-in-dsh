@@ -5,7 +5,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, mkdir, readdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -41,8 +41,9 @@ for (const format of ['txt', 'html', 'epub'] as const) {
             await exporter.exportBook({ format })
             assert.ok((await readFile(join(root, `exports/book.${format}`))).includes(Buffer.from('灯塔街异闻')))
             await store.save('project', 'project', { content: '项目简介。', frontmatter: { title: '项目中的正式书名', author: '项目作者' } })
-            await exporter.exportBook({ format })
-            const output = await readFile(join(root, `exports/book.${format}`))
+            const updated = await exporter.exportBook({ format })
+            assert.equal(updated.path, `exports/book-2.${format}`)
+            const output = await readFile(join(root, updated.path))
             assert.ok(output.includes(Buffer.from('项目中的正式书名')))
             assert.ok(output.includes(Buffer.from('项目作者')))
             assert.ok(!output.includes(Buffer.from('灯塔街异闻')))
@@ -107,9 +108,9 @@ test('卷过滤 + 自定义输出路径；未知卷响亮失败；空项目拒�
   const { exporter, store, root } = await makeSetup()
   try {
     await seedProject(store)
-    const filtered = await exporter.exportBook({ format: 'txt', volume: '第一卷', outputPath: 'out/vol1.txt' })
+    const filtered = await exporter.exportBook({ format: 'txt', volume: '第一卷', outputPath: 'exports/out/vol1.txt' })
     assert.equal(filtered.chapters, 2)
-    const text = await readFile(join(root, 'out/vol1.txt'), 'utf8')
+    const text = await readFile(join(root, filtered.path), 'utf8')
     assert.ok(!text.includes('第 3 章'))
     await assert.rejects(() => exporter.exportBook({ format: 'txt', volume: '不存在的卷' }), /没有名为/)
   } finally {
@@ -121,4 +122,56 @@ test('卷过滤 + 自定义输出路径；未知卷响亮失败；空项目拒�
   } finally {
     await rm(empty.root, { recursive: true, force: true })
   }
+})
+
+test('导出拒绝原稿路径与目录联接，原稿字节保持一致', async () => {
+    const { exporter, store, root } = await makeSetup()
+    try {
+        await seedProject(store)
+        const chapterPath = join(root, 'chapters/001.md')
+        const before = await readFile(chapterPath)
+        for (const path of ['chapters/001.md', 'CHAPTERS/001.md', 'project.md', 'pending.md', 'pending-archive.md', 'exports/../chapters/001.txt', join(root, 'exports/x.txt')]) {
+            await assert.rejects(exporter.exportBook({ format: 'txt', outputPath: path }), /导出路径/)
+        }
+        await mkdir(join(root, 'exports'))
+        await symlink(join(root, 'chapters'), join(root, 'exports/source'), process.platform === 'win32' ? 'junction' : 'dir')
+        await assert.rejects(exporter.exportBook({ format: 'txt', outputPath: 'exports/source/x.txt' }), /导出路径/)
+        assert.deepEqual(await readFile(chapterPath), before)
+        await assert.rejects(readFile(join(root, 'chapters/x.txt')), { code: 'ENOENT' })
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
+test('并发导出生成不同完整成品，旧文件不变', async () => {
+    const { exporter, store, root } = await makeSetup()
+    try {
+        await seedProject(store)
+        const original = await exporter.exportBook({ format: 'epub' })
+        const before = await readFile(join(root, original.path))
+        const results = await Promise.all([exporter.exportBook({ format: 'epub' }), exporter.exportBook({ format: 'epub' })])
+        assert.deepEqual(results.map(result => result.path).sort(), ['exports/book-2.epub', 'exports/book-3.epub'])
+        for (const result of results) assert.equal((await readFile(join(root, result.path))).byteLength, result.bytes)
+        assert.deepEqual(await readFile(join(root, original.path)), before)
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
+
+test('配置拒绝权威目录，发布冲突失败后清理临时文件', async () => {
+    const { exporter, store, root } = await makeSetup()
+    try {
+        for (const dir of ['CHAPTERS', '.writer/out', 'project.md/sub']) {
+            assert.throws(() => new WriterExportServiceImpl(store.ctx, { defaultOutputDir: dir }), /独立目录/)
+        }
+        await seedProject(store)
+        const existing = await exporter.exportBook({ format: 'txt' })
+        const original = await readFile(join(root, existing.path))
+        await mkdir(join(root, 'exports/blocked.txt'))
+        await assert.rejects(exporter.exportBook({ format: 'txt', outputPath: 'exports/blocked.txt' }), /非普通文件/)
+        assert.deepEqual((await readdir(join(root, 'exports'))).sort(), ['blocked.txt', 'book.txt'])
+        assert.deepEqual(await readFile(join(root, existing.path)), original)
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
 })

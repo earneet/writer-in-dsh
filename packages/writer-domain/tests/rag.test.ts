@@ -76,7 +76,7 @@ test('rrfFuse：双路一致的块排最前', () => {
   assert.ok(!fused.has('w') || fused.get('w')! < fused.get('x')!)
 })
 
-test('filterChunksBySpoiler：未来章不可见；未回收晚置伏笔剔除；已回收保留；章号不可判定保守剔除', () => {
+test('filterChunksBySpoiler：未来章和未来伏笔不可见，章号不可判定时剔除', () => {
   const chapters = [entity('chapter', '001', '', { number: 1 }), entity('chapter', '002', '', { number: 2 })]
   const plots = [
     entity('plot', 'early', '', { status: 'planned' }),
@@ -98,10 +98,26 @@ test('filterChunksBySpoiler：未来章不可见；未回收晚置伏笔剔除�
   assert.ok(ids.includes('c1'), '早章可见')
   assert.ok(!ids.includes('c2') && !ids.includes('c2s'), '未来章一律不可见（含摘要块）')
   assert.ok(!ids.includes('c-dirty'), '章号不可判定的章节块保守剔除（脏 frontmatter 不得绕过红线）')
-  assert.ok(ids.includes('p-early'))
+  assert.ok(!ids.includes('p-early'), '无实际埋设章时不投放档案')
   assert.ok(!ids.includes('p-late'), '未回收且 planned_chapter 晚于本章的伏笔块剔除')
-  assert.ok(ids.includes('p-resolved'), '已回收伏笔不构成剧透')
+  assert.ok(!ids.includes('p-resolved'), '当前终态无法证明早章已可见')
   assert.ok(ids.includes('ch'), '人物块不受章号约束')
+})
+
+test('伏笔按实际章锚投影，检索正文及摘要也不能由展示章号提前曝光', () => {
+    const plot = entity('plot', 'key', '无锚剧透\n\n## 第 3 章\n藏钥匙\n\n## 第 6 章\n钥匙的身份', {
+        status: 'resolved', planned_chapter: '001', planted_chapter: '003', resolved_chapter: '006',
+        milestones: JSON.stringify([{ type: 'callback', chapter: '004', note: '隐约听见响动' }, { type: 'partial_reveal', chapter: '006', note: '钥匙开启密室' }]),
+    })
+    const plots = [plot]
+    const chapters = [entity('chapter', '020', '遥远后文', { number: 1 })]
+    const chunks = buildRagCorpus({ chapters, plots, characters: [], worldbuilding: [], summaries: { '020': '遥远摘要' } })
+    const visibleAt = (chapterNumber: number) => filterChunksBySpoiler(chunks, { chapterNumber, plots }).map(hit => hit.text).join('\n')
+    assert.equal(visibleAt(3), '')
+    assert.match(visibleAt(5), /藏钥匙[\s\S]*|隐约听见响动/)
+    assert.doesNotMatch(visibleAt(6), /钥匙的身份|钥匙开启密室|无锚剧透|遥远/)
+    assert.match(visibleAt(7), /钥匙开启密室[\s\S]*钥匙的身份/)
+    assert.doesNotMatch(visibleAt(7), /无锚剧透|遥远/)
 })
 
 test('renderRagSection / snippetOf：来源标注与码点安全截断', () => {

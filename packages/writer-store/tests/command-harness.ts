@@ -24,7 +24,7 @@ export async function commandHarness(tempParent = tmpdir()) {
     const scopes: ReturnType<typeof createScope>[] = []
     const detachers: (() => void)[] = []
     return {
-        agents, commands, store, root,
+        agents, commands, store, root, ctx: suite.ctx,
         async createAgent(id: string, inside = true) {
             const cwd = join(root, id)
             await mkdir(cwd)

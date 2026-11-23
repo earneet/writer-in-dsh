@@ -44,6 +44,7 @@ export function appendRequest(sessionId: string, prompt: string, owner: ActionOw
 export function pendingConfirmationRequest(section: PendingSection, line: string, pendingPath: string): string | undefined {
     const { chapterId, sourceHash, heading, state } = section
     if (state !== 'current' || chapterId === undefined || sourceHash === undefined) return undefined
+    if (/^(?:摘要：|⚠ 部分抽取|(?:facts|foreshadowEvents|characterStates)(?: |$)|缺少 .*节|输出不是有效的 JSON 对象)/.test(line)) return undefined
     return [
         `请用宿主文件工具重读 ${pendingPath}，核对“${heading}”一节仍在活跃清单中，下列建议及其源章稿哈希仍一致，并确认该节之后没有 chapter/${chapterId} 的重算标记。`,
         `用 writer_read(entity="chapter", id="${chapterId}") 核对当前章稿的完整 hash。源章稿哈希：${sourceHash}。`,

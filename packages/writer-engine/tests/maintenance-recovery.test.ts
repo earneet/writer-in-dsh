@@ -35,6 +35,45 @@ async function setup(existingRoot?: string) {
     return { root, store, llm, engine, chapter }
 }
 
+test('抽取缺节不能记作完成，保留通过条目并可重算', async t => {
+    const x = await setup()
+    t.after(() => rm(x.root, { recursive: true, force: true }))
+    x.llm.replies.push('摘要。', '{"facts":[{"description":"有效"},null],"foreshadowEvents":{}}')
+    const partial = await x.engine.maintenancePass('001')
+    assert.equal(partial.partial, true)
+    assert.equal(partial.extraction?.facts[0]?.description, '有效')
+    assert.match(partial.rejected?.join(' ') ?? '', /缺少 characterStates/)
+    x.llm.replies.push('重算摘要。', empty)
+    assert.equal((await x.engine.recomputeDerived('001'))[0].status, 'recomputed')
+    assert.equal((await x.engine.maintenancePass('001')).status, 'up-to-date')
+})
+
+test('改稿后只有仍成立且未确认的候选带新哈希和引句续接', async t => {
+    const x = await setup()
+    t.after(() => rm(x.root, { recursive: true, force: true }))
+    const draft = await x.store.save('chapter', '001', { content: '纸上画了一只钟。\n旧伞仍挂在墙上。\n门锁是黄铜的。' }, x.chapter.hash)
+    const facts = [
+        { description: '钟画在纸上', quote: '纸上画了一只钟。' },
+        { description: '伞挂在墙上', quote: '旧伞仍挂在墙上。' },
+        { description: '门锁是黄铜的', quote: '门锁是黄铜的。' },
+    ]
+    const response = (facts: unknown[]) => JSON.stringify({ facts, foreshadowEvents: [], characterStates: [] })
+    x.llm.replies.push('旧摘要。', response(facts))
+    await x.engine.maintenancePass('001')
+    await x.store.save('event', 'event', { content: '## 第 1 章\n- 门锁是黄铜的' })
+    const revised = await x.store.save('chapter', '001', { content: '纸上画了一只钟。\n外面起风了。\n门锁是黄铜的。' }, draft.hash)
+    x.llm.replies.push('新摘要。', response([facts[0], facts[2]]))
+    const result = await x.engine.maintenancePass('001')
+    assert.deepEqual(result.extraction?.facts, [facts[0]])
+    assert.match(x.llm.requests.at(-1) ?? '', /仍成立的必须重新输出/)
+    const pending = await readFile(join(x.root, 'pending.md'), 'utf8')
+    const current = pending.split(`<!-- writer-pending-source:${revised.hash} -->`)[1]
+    assert.match(current, /钟画在纸上.*纸上画了一只钟。/)
+    assert.doesNotMatch(current, /门锁是黄铜的|伞挂在墙上/)
+    assert.equal((await x.engine.maintenancePass('001')).status, 'up-to-date')
+    assert.equal(await readFile(join(x.root, 'pending.md'), 'utf8'), pending)
+})
+
 test('维护待办读取失败后普通重试补投，已归档结果不回流', async () => {
     const x = await setup()
     try {

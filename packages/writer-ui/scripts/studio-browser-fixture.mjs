@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { watch } from 'chokidar'
 import { commandHarness } from '../../writer-store/tests/command-harness.ts'
+import { registerRewriteRequests } from '../../writer-tools/src/rewrite-requests.ts'
+import WriterEngine from '../../writer-engine/src/index.ts'
+import { parseFrontmatter } from 'dsh-writer-domain'
+import assert from 'node:assert/strict'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 const defaultOutput = resolve(repo, '.tmp/ui-implementation/browser')
@@ -41,6 +45,21 @@ export async function startStudioFixture({ output = defaultOutput, port = 63438,
     await buildStudioAssets(output)
     const routes = new Map([['/', resolve(output, 'index.html')], ['/index.html', resolve(output, 'index.html')], ['/fixture.js', resolve(output, 'fixture.js')], ['/assets/host.js', resolve(output, 'host.js')], ['/theme.css', resolve(output, 'theme.css')], ['/writer.js', resolve(repo, 'packages/writer-ui/lib/client.js')], ['/conversation-fixture.js', resolve(output, 'conversation-fixture.js')]])
     const harness = await commandHarness(tempParent)
+    let rewriteReply = ''
+    harness.ctx.provide('llm', {
+        async *stream() {
+            yield { type: 'block-start', index: 0, blockType: 'text' }
+            yield { type: 'text-delta', index: 0, text: rewriteReply }
+            yield { type: 'block-end', index: 0, block: { type: 'text', text: rewriteReply } }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+    })
+    const engine = new WriterEngine(harness.ctx, {
+        provider: 'fixture', model: 'fixture', maxOutputTokens: 1024, temperature: 0,
+        contextBudgetChars: 4000, autoMaintenance: false, extractionRetries: 0,
+    })
+    const rewrites = registerRewriteRequests(harness.ctx)
+    await harness.ctx.fiber.await()
     const fixtureAgents = new Map()
     try {
         for (const id of ['init-empty', 'init-blank', 'init-other', 'init-nonempty', 'init-hidden', 'init-race', 'init-error', 'init-watch', 'init-git', 'init-retry']) {
@@ -78,6 +97,15 @@ export async function startStudioFixture({ output = defaultOutput, port = 63438,
                 const agent = fixtureAgents.get(args.sessionId)
                 if (!agent) throw new Error('未知的测试会话')
                 const signal = new AbortController().signal
+                if (url.pathname === '/project-rewrite' && args.sessionId === 'init-watch') {
+                    const chapterPath = resolve(agent.session.header.cwd, 'novel/chapters/001.md')
+                    const before = parseFrontmatter(await readFile(chapterPath, 'utf8'))
+                    rewriteReply = JSON.stringify({ patches: args.patches })
+                    await harness.agents.withInitiator(agent, () => rewrites.execute(engine, '001', args.id, '验证工作台选区', { agent, signal }))
+                    assert.deepEqual(parseFrontmatter(await readFile(chapterPath, 'utf8')).frontmatter, before.frontmatter)
+                    response.end(JSON.stringify({ ok: true }))
+                    return
+                }
                 if (url.pathname === '/project-command') {
                     if (args.sessionId === 'init-error') throw new Error('模拟目录读取失败：权限不足')
                     const value = await harness.commands.execute(agent, args.line, [], signal)

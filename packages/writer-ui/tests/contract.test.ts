@@ -40,7 +40,7 @@ test('契约：writer_stats 回执 ↔ parseWriterStats', async () => {
           : [],
     get: async (_k: string, id: string) => (id === 'event' ? { content: '事件' } : undefined),
     root: '.',
-    readMaintenance: async (id: string) => (id === '001' ? { sourceHash: 'h1' } : { sourceHash: 'stale' }),
+    readMaintenance: async (id: string) => (id === '001' ? { sourceHash: 'h1', validationVersion: 1 } : { sourceHash: 'stale' }),
   })
   const out = await tools.get('writer_stats')!.execute({})
   const parsed = parseWriterStats(out)
@@ -121,11 +121,25 @@ test('契约：review_chapter 回执 ↔ parseReview（quote/建议/改写方案
 })
 
 test('契约：空补丁回执说明原稿保留，不判定原稿无需修改', async () => {
-  const tools = makeCtx({}, { writeChapter: async () => ({
+  const chapter = { id: '003', content: '原稿。', hash: 'f'.repeat(64) }
+  const tools = new Map<string, CapturedTool>()
+  const commands = new Map<string, { handler(input: unknown): Promise<{ text: string }> }>()
+  const engine = { writeChapter: async () => ({
     chapter: { id: '003', content: '原稿。', hash: 'chapter-hash' },
     mode: 'rewrite-patch', patchStats: { applied: 0, skipped: 0, skippedReasons: [] },
-  }) })
-  const out = await tools.get('write_chapter')!.execute({ chapter: '003', mode: 'rewrite', selection: '原稿。' }, exec)
+  }) }
+  const ctx = {
+    on: () => {}, get: () => engine, writer: { root: '.', get: async () => chapter },
+    tools: { register: (tool: CapturedTool) => tools.set(tool.name, tool) },
+    commands: { register: (command: { name: string; handler: never }) => commands.set(command.name, command) },
+    agents: { withInitiator: (_: unknown, action: () => unknown) => action() },
+    inject: (_: unknown, callback: (ctx: unknown) => void) => callback(ctx),
+  }
+  apply(ctx as unknown as Context)
+  const agent = { session: {} }
+  const signal = new AbortController().signal
+  const request = await commands.get('writer-rewrite')!.handler({ agent, signal, rawInput: JSON.stringify({ chapter: '003', scope: 'selection', hash: chapter.hash, selection: chapter.content }) })
+  const out = await tools.get('write_chapter')!.execute({ chapter: '003', mode: 'rewrite', request_id: request.text, instruction: '润色' }, { agent, signal, concludeTurn() {} })
   const parsed = parseWriteChapter(out)
   assert.equal(parsed?.chapterId, '003')
   assert.match(parsed?.note ?? '', /未返回可应用补丁.*未落盘/)

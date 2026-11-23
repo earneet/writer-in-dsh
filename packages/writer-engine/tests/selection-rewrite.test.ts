@@ -7,9 +7,89 @@ import { Context } from '@deepseek-ai/cordis'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import WriterStoreService from 'dsh-writer-store/src/index.ts'
 import WriterEngineService from '../src/index.ts'
+import { apply as writerTools } from '../../writer-tools/src/index.ts'
 
 const selection = '选区第一句。\n选区第二句。'
 const original = `章首  字距。\n\n${selection}\n\n章尾  字距。\n`
+
+test('作者命令与真实写作服务联动：拒绝扩大范围，整章须批准', async t => {
+    const { chapter, store, engine, file, replies, requests, events } = await setup(t, original, false)
+    const tools = new Map<string, { execute(args: Record<string, unknown>, exec: unknown): Promise<string> }>()
+    const commands = new Map<string, { handler(input: unknown): Promise<{ kind: string; text: string }> }>()
+    let approved = false
+    let approvals = 0
+    const ctx = {
+        writer: store,
+        tools: { register: (tool: { name: string; execute: never }) => tools.set(tool.name, tool) },
+        commands: { register: (command: { name: string; handler: never }) => commands.set(command.name, command) },
+        agents: { withInitiator: (_agent: unknown, action: () => unknown) => action() },
+        inject: (_keys: string[], action: (ctx: unknown) => void) => action(ctx),
+        get: (name: string) => name === 'writerEngine' ? engine : name === 'approval'
+            ? { request: async () => { approvals++; return approved ? 'allowed-once' : 'rejected' } } : undefined,
+        on: () => {},
+    }
+    writerTools(ctx as unknown as Context)
+    const agent = { session: {} }
+    const signal = new AbortController().signal
+    let concluded = 0
+    const exec = { agent, signal, name: 'write_chapter', concludeTurn: () => { concluded++ } }
+    const register = (scope: string, hash = chapter.hash) => commands.get('writer-rewrite')!.handler({
+        agent, signal, rawInput: JSON.stringify({ chapter: '001', scope, hash, selection }),
+    })
+    const write = tools.get('write_chapter')!
+    const start = { chapter: '001', mode: 'rewrite', instruction: '改稿' }
+    const initial = await readFile(file)
+    await assert.rejects(write.execute(start, exec), /由作者/)
+    assert.equal((await register('selection', 'a'.repeat(64))).kind, 'error')
+    const local = await register('selection')
+    assert.equal(local.kind, 'success')
+    await assert.rejects(write.execute({ ...start, mode: 'assist' }, exec), /待执行/)
+    await assert.rejects(write.execute({ ...start, request_id: local.text, chapter: '002' }, exec), /不符/)
+    await assert.rejects(write.execute({ ...start, request_id: local.text }, { ...exec, agent: { session: {} } }), /不符/)
+    await assert.rejects(tools.get('writer_update')!.execute({ entity: 'chapter', id: '001', content: '越界', expectHash: chapter.hash }, exec), /待执行/)
+    replies.push(patches(['章尾  字距。', '越界。']))
+    await assert.rejects(write.execute({ ...start, request_id: local.text, selection: '章尾  字距。' }, exec), /选区原文/)
+    assert.deepEqual(await readFile(file), initial)
+    assert.deepEqual(events, [])
+    replies.push(patches(['选区第二句。', '改过的第二句。']))
+    await write.execute({ ...start, request_id: local.text }, exec)
+    assert.equal(await readFile(file, 'utf8'), original.replace('选区第二句。', '改过的第二句。'))
+    assert.equal(concluded, 1)
+    await assert.rejects(write.execute({ ...start, request_id: local.text }, exec), /已用完/)
+
+    const current = (await store.get('chapter', '001'))!
+    const whole = await register('chapter', current.hash)
+    const before = await readFile(file)
+    await assert.rejects(write.execute({ ...start, request_id: whole.text }, exec), /未获批准/)
+    assert.deepEqual(await readFile(file), before)
+    assert.equal(requests.length, 2)
+    assert.equal(approvals, 1)
+    await assert.rejects(write.execute({ ...start, request_id: whole.text }, exec), /已用完/)
+    approved = true
+    const approvedRequest = await register('chapter', current.hash)
+    replies.push(patches(['章尾  字距。', '作者批准的新结尾。']))
+    await write.execute({ ...start, request_id: approvedRequest.text }, exec)
+    assert.match(await readFile(file, 'utf8'), /作者批准的新结尾。/)
+    assert.equal(approvals, 2)
+})
+
+test('早章写作与审稿只收到当前可见的伏笔阶段', async t => {
+    const { engine, store, replies, requests } = await setup(t, original, false)
+    await store.save('chapter', '002', { content: '核对钥匙去向。', frontmatter: { number: 8 } })
+    await store.save('chapter', '020', { content: '未来叙事内容。', frontmatter: { number: 1 } })
+    await store.save('plot', 'key', {
+        content: '档案首段泄密\n\n## 第 1 章\n箱底的钥匙\n\n## 第 8 章\n开启密室的钥匙',
+        frontmatter: { status: 'resolved', planted_chapter: '001', resolved_chapter: '008' },
+    })
+    replies.push('事物还静静地躺在那儿。', '{"suggestions":[],"summary":"已核对。"}')
+    await engine.writeChapter({ chapterId: '002', mode: 'assist' })
+    const review = await engine.reviewChapter('002', ['情节一致性'])
+    for (const { user } of requests) {
+        assert.match(user, /箱底的钥匙/)
+        assert.doesNotMatch(user, /开启密室的钥匙|档案首段泄密|未来叙事内容/)
+    }
+    assert.match(review.coverage?.join('\n') ?? '', /部分档案因章锚未纳入/)
+})
 
 const patches = (...items: readonly [string, string][]): string =>
     JSON.stringify({ patches: items.map(([find, replace]) => ({ find, replace })) })

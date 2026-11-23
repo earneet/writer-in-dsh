@@ -78,6 +78,17 @@ function remote(): WorkspaceFilesApi | null {
 
 export class ProjectCommandUnavailableError extends Error {}
 
+export async function rewriteCommand(sessionId: string, request?: { chapter: string; hash: string; scope: 'selection' | 'chapter'; selection?: string }): Promise<string> {
+    const commands = browserCtx?.remote?.commands
+    if (!commands) throw new Error('当前会话没有改稿命令，请使用已启用写作插件的会话。')
+    const result = await commands.execute(sessionId, request ? `/writer-rewrite ${JSON.stringify(request)}` : '/writer-rewrite-cancel', [])
+    const outcome = result?.value?.result
+    if (!result?.ok || outcome?.kind !== 'success' || typeof outcome.text !== 'string') {
+        throw new Error(outcome?.text ?? result?.error?.message ?? '无法登记或取消改稿请求。')
+    }
+    return outcome.text
+}
+
 export async function projectCommand(sessionId: string, action: 'status' | 'init', signal: AbortSignal): Promise<WorkspaceProjectState> {
     const commands = browserCtx?.remote?.commands
     if (!commands) throw new ProjectCommandUnavailableError('当前会话没有项目初始化服务，请选择“写作模式”，并确认已更新 writer-store 插件。')
@@ -335,7 +346,7 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   const style: any[] = []
   const worldbuilding: any[] = []
   const singletons = new Map<string, { frontmatter: any; content: string }>()
-  const maintenance = new Map<string, { sourceHash?: string; partial?: boolean }>()
+  const maintenance = new Map<string, { sourceHash?: string; partial?: boolean; validationVersion?: number }>()
   for (const { task, raw } of readResults) {
     if (raw === null) continue
     const parsed = splitSource(raw)
@@ -349,11 +360,13 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
     else if (task.dir === join(root, 'worldbuilding')) worldbuilding.push(record)
     else if (task.dir === maintenanceDir) {
       try {
-        const json = JSON.parse(raw) as { sourceHash?: string; partial?: boolean }
+        const json = JSON.parse(raw) as { sourceHash?: string; partial?: boolean; validationVersion?: number }
         // 键 = 章节文件名去 .json（与 store 派生落盘口径一致，扁平不分子目录）；
         // 跨卷同名章节共享同一条派生记录（store 侧同样按 id 扁平落盘）——比对结果
         // 逐章独立：内容哈希匹配者为新鲜，另一章计待维护（合理信号而非误报）
-        maintenance.set(task.name.replace(/\.json$/i, ''), { sourceHash: json.sourceHash, partial: json.partial })
+        maintenance.set(task.name.replace(/\.json$/i, ''), {
+            sourceHash: json.sourceHash, partial: json.partial, validationVersion: json.validationVersion,
+        })
       } catch { /* 坏派生 JSON：按缺失处理（该章计待维护），不使扫描失败 */ }
     } else singletons.set(task.key ?? task.name, parsed)
   }
@@ -383,27 +396,26 @@ export async function scanNovel(sessionId: string, signal: AbortSignal, onProgre
   // 章节缺失派生、部分完成或哈希不一致 = 待维护 pass（与服务端 writer_stats staleChapters 同语义；
   // 分歧留痕：remote 读取失败的章节不入本清单（计入 failedFiles），服务端按全量章节判）。
   const staleChapters: string[] = []
-  const pendingChapterHashes = new Map<string, string>()
-  const hasSourceVersions = pendingSource?.includes('<!-- writer-pending-source:') === true
+  const chapterHashes = new Map<string, string>()
   {
     const hashed = await mapPool(chapters, READ_CONCURRENCY, async (chapter) => {
       if (signal.aborted) throw new DOMException('aborted', 'AbortError')
       const id = String(chapter.name).replace(/\.md$/, '')
       const derived = maintenance.get(id)
-      const canVerifyPending = hasSourceVersions && chapter.subdir === undefined && /^\d{3}\.md$/.test(chapter.name) && !malformedChapterFiles.has(chapter.name)
-      if (!canVerifyPending && (derived?.sourceHash === undefined || derived.partial === true)) return id
+      const verified = chapter.subdir === undefined && /^\d{3}\.md$/.test(chapter.name) && !malformedChapterFiles.has(chapter.name)
+      if (!verified && (derived?.sourceHash === undefined || derived.partial === true)) return id
       const hash = await contentHashClient(chapter.frontmatter, chapter.content)
-      if (canVerifyPending) pendingChapterHashes.set(id, hash)
-      return hash === derived?.sourceHash && derived?.partial !== true ? null : id
+      if (verified) chapterHashes.set(id, hash)
+      return hash === derived?.sourceHash && derived?.validationVersion === 1 && derived?.partial !== true ? null : id
     }, signal)
     for (const id of hashed) if (id !== null) staleChapters.push(id)
     staleChapters.sort()
   }
-  const pending = pendingSource === undefined ? [] : extractPendingSections(pendingSource, pendingChapterHashes)
+  const pending = pendingSource === undefined ? [] : extractPendingSections(pendingSource, chapterHashes)
 
   const singleton = (name: string) => singletons.get(name)
   return {
-    root: root === '' ? '.' : root, watchDirectories: watchDirectories.sort(), project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingTotal, pending,
+    root: root === '' ? '.' : root, watchDirectories: watchDirectories.sort(), project, outline, chapters, plots, characters, worldbuildingCount: worldbuildingTotal, pending, chapterHashes,
     ...(singleton('principles.md') !== undefined ? { principles: singleton('principles.md')! } : {}),
     ...(singleton('events.md') !== undefined ? { events: singleton('events.md')! } : {}),
     ...(singleton('ideas.md') !== undefined ? { ideas: singleton('ideas.md')! } : {}),

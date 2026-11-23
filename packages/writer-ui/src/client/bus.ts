@@ -36,6 +36,7 @@ export interface WriterLiveState {
 
 /** 冷扫描在总线中的快照部分。 */
 export interface ScanState {
+  chapterHashes?: ReadonlyMap<string, string>
   root: string
   overview: NovelOverview
   graph: EntityGraph
@@ -106,6 +107,7 @@ export function publishScan(scan: NovelScan, sessionId?: string): void {
     root: scan.root,
     overview: buildOverview(scan),
     graph,
+    chapterHashes: scan.chapterHashes,
     warnings: graph.warnings,
     failedFiles: scan.failedFiles ?? [],
     staleChapters: scan.staleChapters ?? [],

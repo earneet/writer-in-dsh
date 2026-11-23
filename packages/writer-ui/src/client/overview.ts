@@ -52,6 +52,7 @@ export type SingletonSource = { frontmatter: Frontmatter; content: string }
 
 /** 扫描结果（load.ts 产出，本模块与 graph/project 消费）。 */
 export interface NovelScan {
+  chapterHashes?: ReadonlyMap<string, string>
   root: string
   project: ProjectSource
   outline: OutlineSource | null

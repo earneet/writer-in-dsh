@@ -64,12 +64,17 @@ test('validateExtractionSections：引用不存在的实体被拒收并给出原
   assert.equal(result.characterStates.errors.length, 0)
 })
 
-test('validateExtractionSections：空抽取全部通过（无信息章节）', () => {
-  const result = validateExtractionSections({}, REFS)
+test('validateExtractionSections：显式空数组通过，缺节及坏形状可重试', () => {
+  const result = validateExtractionSections({ facts: [], foreshadowEvents: [], characterStates: [] }, REFS)
   assert.deepEqual(result.facts.entries, [])
   assert.deepEqual(result.facts.errors, [])
   assert.deepEqual(result.foreshadowEvents.errors, [])
   assert.deepEqual(result.characterStates.errors, [])
+  const failed = validateExtractionSections(parseMaintenanceExtraction('{"facts":[null,{"description":"有效"}],"foreshadowEvents":{}}')!, REFS)
+  assert.equal(failed.facts.entries[0].description, '有效')
+  assert.match(failed.facts.errors[0], /形状非法/)
+  assert.match(failed.foreshadowEvents.errors[0], /必须是数组/)
+  assert.match(failed.characterStates.errors[0], /缺少/)
 })
 
 test('validateExtractionSections：facts 双引用（人物+伏笔）都校验', () => {

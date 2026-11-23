@@ -9,14 +9,19 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type PreToolDecision, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-user-approval'
 import {
   arcCoverageOf, appendTimelineEntry, ENTITY_KINDS, parseChapterRange, parseMilestones, parseTimeline,
+  MAINTENANCE_VALIDATION_VERSION,
   partitionPendingByChapter, REVIEW_DIMENSIONS, serializeTimeline, transitionForeshadow, validateTimeline,
   type EntityKind, type ForeshadowMilestoneType, type Frontmatter,
 } from 'dsh-writer-domain'
 import { EngineService, ExportService } from 'dsh-writer-core'
 // 引入 dsh-writer-core 的模块副作用类型（ctx.writer 的 declaration merging 单包编译也可见）
 import type {} from 'dsh-writer-core'
+import { registerRewriteRequests } from './rewrite-requests.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -24,10 +29,14 @@ export const name = 'writer-tools'
 export const inject = ['tools', 'writer']
 
 export function apply(ctx: Context): void {
+  const rewrites = registerRewriteRequests(ctx)
   // export_book 默认走 ask 权限路径（R-改进：落点在 pre-execute 决策层而非 policy 旋钮；
   // 审批策略 never 时宿主会自动拒绝，allow 时放行——本插件不自带 PermissionManager）
   ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
-    if (exec.name === 'export_book') return { kind: 'ask', reason: '导出整本书并写入项目目录文件' }
+    if (exec.name === 'export_book') {
+      const { format, output_path: path } = exec.arguments as { format?: string; output_path?: string }
+      return { kind: 'ask', reason: `导出 ${format ?? ''} 到 ${path ?? '配置的导出目录'}，同名文件自动编号` }
+    }
     return next()
   })
 
@@ -76,10 +85,16 @@ export function apply(ctx: Context): void {
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       const kind = assertKind(args.entity)
       if (args.content === undefined && args.frontmatter === undefined) {
         throw new Error('content 与 frontmatter 至少提供其一')
+      }
+      if (kind === 'chapter') {
+        rewrites.assertNoRequest(exec?.agent)
+        if (args.content !== undefined && args.expectHash !== 'new') {
+          throw new Error('已有章稿正文请通过作者发起的改稿请求修改。')
+        }
       }
       const frontmatter = sanitizeFrontmatter(args.frontmatter)
       // timeline 是人确认的权威数据：写入 character.timeline 前过领域校验，坏值响亮拒绝（防脏值逃逸到弧线/一致性检查）
@@ -108,13 +123,13 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'write_chapter',
-    description: '写作引擎：按准则+大纲生成/续写/改写一章并保存。mode=full（整章生成，可建新章，可传 title）/ assist（从现有正文结尾续写）/ rewrite（按 instruction 改写现有章节）。rewrite 提供 selection 时，整组补丁均须在选区内唯一命中；被拒绝后请让作者重新选定范围或明确要求整章改稿。作者明确要求整章改稿时省略 selection，允许全文路径并检查丢句。章节不存在时只能用 full。',
+    description: '写作引擎：full 新建章节，assist 续写，rewrite 执行作者在工作台或宿主命令中登记的改稿请求。rewrite 必须提供 request_id，范围和章稿版本由请求绑定。整章改稿还会请求作者批准。',
     parameters: {
       chapter: { type: 'string', required: true, description: '章节 id（三位序号，如 "002"）' },
       mode: { type: 'string', required: true, description: 'full / assist / rewrite' },
       instruction: { type: 'string', description: '写作/续写/改写指令（rewrite 必填；full/assist 可选补充要求）' },
       title: { type: 'string', description: 'full 创建新章时的标题' },
-      selection: { type: 'string', description: 'rewrite 可选：从当前章稿逐字复制的非空、唯一正文选区，只在该范围内应用补丁' },
+      request_id: { type: 'string', description: 'rewrite 必填：作者发起改稿后得到的请求编号' },
     },
     output: {
       schema: { type: 'string' },
@@ -124,12 +139,19 @@ export function apply(ctx: Context): void {
       exec.signal.throwIfAborted()
       const engine = getEngine(ctx)
       if ('unavailable' in engine) return engine.unavailable
+      const mode = assertMode(args.mode)
+      if (mode === 'rewrite') {
+        const result = await rewrites.execute(engine, args.chapter, args.request_id, args.instruction, exec)
+        exec.concludeTurn()
+        return renderWriteResult(result)
+      }
+      rewrites.assertNoRequest(exec.agent)
       const result = await engine.writeChapter({
         chapterId: args.chapter,
-        mode: assertMode(args.mode),
+        mode,
         instruction: args.instruction,
         title: args.title,
-        selection: args.selection,
+        createOnly: mode === 'full',
         signal: exec.signal,
       })
       return renderWriteResult(result)
@@ -138,7 +160,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'review_chapter',
-    description: '3+1 维 AI 审稿（情节一致性/人物一致性/设定一致性 + 文学质量）：结构化建议（quote 定位 + 修改建议 + 可选改写方案），只出报告不改稿。建议随后用 write_chapter rewrite 按建议改写。',
+    description: '3+1 维 AI 审稿（情节一致性/人物一致性/设定一致性 + 文学质量）：结构化建议（quote 定位 + 修改建议 + 可选改写方案），只出报告。作者登记改稿请求后可用 write_chapter 执行。',
     parameters: {
       chapter: { type: 'string', required: true, description: '章节 id（三位序号）' },
       focus: { type: 'string', description: '审稿维度过滤（逗号分隔，如 "情节一致性,文学质量"；缺省全维度）' },
@@ -301,7 +323,8 @@ export function apply(ctx: Context): void {
       // 覆盖率按新鲜度计：派生存在且 sourceHash 与当前章节 hash 一致才算覆盖（过期派生 = 待维护）
       const derivedEntries = await Promise.all(chapters.map(async (c) => {
         const derived = await ctx.writer.readMaintenance(c.id)
-        return derived !== undefined && derived.sourceHash === c.hash && !derived.partial
+        return derived !== undefined && derived.sourceHash === c.hash
+          && derived.validationVersion === MAINTENANCE_VALIDATION_VERSION && !derived.partial
       }))
       const stale = chapters.filter((_, i) => !derivedEntries[i]).map((c) => c.id)
       const volumes = new Map<string, number>()
@@ -508,7 +531,7 @@ export function apply(ctx: Context): void {
       volume: { type: 'string', description: '只导出该卷（卷名；缺省全书）' },
       include_outline: { type: 'boolean', description: '附大纲附录（默认否）' },
       include_characters: { type: 'boolean', description: '附人物小传附录（默认否）' },
-      output_path: { type: 'string', description: '输出文件相对路径（缺省 exports/book.<format>）' },
+      output_path: { type: 'string', description: '配置的导出目录内的项目相对路径（默认 exports/book.<format>，同名自动编号）' },
     },
     output: {
       schema: { type: 'string' },
